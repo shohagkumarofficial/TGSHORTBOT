@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: tgshortbot
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn runner:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false          # set in Render dashboard, do not commit
+      - key: OWNER_TELEGRAM_ID
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false          # e.g. https://tgshortbot.onrender.com/webhook
+      - key: WEBAPP_BASE_URL
+        sync: false          # e.g. https://tgshortbot.onrender.com
+      - key: ADSGRAM_BLOCK_ID
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO
