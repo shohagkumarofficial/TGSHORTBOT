@@ -399,7 +399,7 @@
             <!-- Tab 6: CPM -->
             <div id="tab-cpm" class="tab-content">
                 <div class="glass-card">
-                    <h3>সিপিএম সেটিংস</h3>
+                    <h3>সিপিএম ও উইথড্র সেটিংস</h3>
                     <label class="balance-title">মোড</label>
                     <select id="cpmMode">
                         <option value="realtime">Real-time (রিয়েল-টাইম)</option>
@@ -407,7 +407,10 @@
                     </select>
 
                     <label class="balance-title">সিপিএম রেট ($ প্রতি ১০০০ ভিউ)</label>
-                    <input type="number" id="cpmRate" step="0.01">
+                    <input type="number" id="cpmRate" step="0.01" placeholder="0.50">
+
+                    <label class="balance-title">মিনিমাম উইথড্র লিমিট ($)</label>
+                    <input type="number" id="cpmMinWithdrawal" step="1" placeholder="50.0">
 
                     <div id="scheduledSettings" class="hidden mt-2">
                         <label class="balance-title">সাইকেল ডিউরেশন</label>
@@ -873,6 +876,7 @@
                 if (res.ok) {
                     document.getElementById('cpmMode').value = data.mode || 'realtime';
                     document.getElementById('cpmRate').value = data.cpm || data.current_cpm || 0.50;
+                    document.getElementById('cpmMinWithdrawal').value = data.min_withdrawal_amount || 50.0;
                     if (data.mode === 'scheduled') {
                         document.getElementById('scheduledSettings').classList.remove('hidden');
                     } else {
@@ -886,15 +890,16 @@
             const mode = document.getElementById('cpmMode').value;
             const current_cpm = parseFloat(document.getElementById('cpmRate').value || 0.50);
             const cycle_duration_hours = parseInt(document.getElementById('cpmCycle').value || 24);
+            const min_withdrawal_amount = parseFloat(document.getElementById('cpmMinWithdrawal').value || 50.0);
             
             try {
                 const res = await fetch(`${API_BASE_URL}/api/admin/cpm`, {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify({ mode, current_cpm, cycle_duration_hours })
+                    body: JSON.stringify({ mode, current_cpm, cycle_duration_hours, min_withdrawal_amount })
                 });
                 if (res.ok) {
-                    showToast('সিপিএম সেটিং সেভ হয়েছে!');
+                    showToast('সিপিএম ও উইথড্র সেটিং সেভ হয়েছে!');
                 }
             } catch(e) { showToast('ত্রুটি ঘটেছে', 'error'); }
         }
