@@ -240,6 +240,20 @@ async def handle_phone_number_input(message: types.Message):
     method_name = "bKash (বিকাশ)" if method == "bkash" else "Nagad (নগদ)"
     safe_account = html.escape(account_number)
 
+    # Notify Owner on Telegram
+    if config and config.OWNER_TELEGRAM_ID:
+        try:
+            owner_msg = (
+                f"🔔 <b>নতুন উইথড্র রিকোয়েস্ট এসেছে!</b>\n\n"
+                f"👤 <b>ইউজার Telegram ID:</b> <code>{admin.telegram_id}</code>\n"
+                f"💰 <b>পরিমাণ:</b> <b>${amount:.4f}</b>\n"
+                f"📱 <b>মেথড:</b> <b>{method_name}</b> (<code>{safe_account}</code>)\n\n"
+                f"💻 ওনার ড্যাশবোর্ডে গিয়ে পেমেন্ট এপ্রুভ করুন।"
+            )
+            await message.bot.send_message(config.OWNER_TELEGRAM_ID, owner_msg)
+        except Exception as e:
+            logger.error(f"Failed to notify owner: {e}")
+
     await message.answer(
         f"✅ <b>আপনার উইথড্র রিকোয়েস্ট সফল হয়েছে!</b>\n\n"
         f"💰 <b>পরিমাণ:</b> ${amount:.4f}\n"

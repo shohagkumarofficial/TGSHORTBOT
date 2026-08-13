@@ -358,6 +358,22 @@ async def admin_update_cpm(req: UpdateCPMRequest, user: dict = Depends(require_o
         
     return cpm_engine.get_cycle_info()
 
+async def notify_owner_withdrawal(withdrawal: WithdrawRequest):
+    if not bot or not settings.OWNER_TELEGRAM_ID:
+        return
+    try:
+        method_name = withdrawal.method.upper()
+        msg = (
+            f"🔔 <b>নতুন উইথড্র রিকোয়েস্ট এসেছে!</b>\n\n"
+            f"👤 <b>ইউজার Telegram ID:</b> <code>{withdrawal.admin_telegram_id}</code>\n"
+            f"💰 <b>পরিমাণ:</b> <b>${withdrawal.amount:.4f}</b>\n"
+            f"📱 <b>মেথড:</b> <b>{method_name}</b> (<code>{html.escape(withdrawal.account_number)}</code>)\n\n"
+            f"💻 ওনার ড্যাশবোর্ডে (পেন্ডিং পেমেন্ট) গিয়ে এপ্রুভ করুন।"
+        )
+        await bot.send_message(settings.OWNER_TELEGRAM_ID, msg)
+    except Exception as e:
+        logger.error(f"Error sending owner notification: {e}")
+
 @app.post("/api/withdraw")
 async def create_withdrawal(req: CreateWithdrawalRequest, user: dict = Depends(get_telegram_user)):
     admin_id = user["id"]
@@ -379,6 +395,10 @@ async def create_withdrawal(req: CreateWithdrawalRequest, user: dict = Depends(g
         status="pending"
     )
     storage.create_withdraw_request(withdrawal)
+    
+    # Notify owner instantly via Telegram message
+    await notify_owner_withdrawal(withdrawal)
+    
     return withdrawal.model_dump()
 
 @app.get("/api/admin/withdrawals")
@@ -394,11 +414,11 @@ async def admin_resolve_withdrawal(request_id: str, request: Request, user: dict
         raise HTTPException(status_code=400, detail="Invalid UUID")
         
     body = await request.json()
-    status = body.get("status")
+    status = body.get("status") or body.get("decision")
     
     if status == "paid":
         withdrawal_list = storage.get_pending_withdrawals()
-        withdrawal = next((w for w in withdrawal_list if w.request_id == req_id), None)
+        withdrawal = next((w for w in withdrawal_list if str(w.request_id) == str(req_id)), None)
         if not withdrawal:
             raise HTTPException(status_code=404, detail="Not found")
             
