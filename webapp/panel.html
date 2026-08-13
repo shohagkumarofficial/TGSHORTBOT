@@ -308,30 +308,77 @@
             
             <!-- Tab 1: Dashboard -->
             <div id="tab-dashboard" class="tab-content active">
+                
+                <!-- Financial Summary Cards -->
                 <div class="glass-card">
-                    <div class="balance-title">কনফার্মড ব্যালেন্স</div>
-                    <div class="balance-amount balance-confirmed">$<span id="confirmedBalance">0.0000</span></div>
+                    <div class="flex-between mb-3">
+                        <div>
+                            <div class="balance-title">কনফার্মড ব্যালেন্স (উইথড্র যোগ্য)</div>
+                            <div class="balance-amount balance-confirmed">$<span id="confirmedBalance">0.0000</span></div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div class="balance-title">পেন্ডিং ব্যালেন্স</div>
+                            <div class="balance-amount balance-pending" style="font-size: 20px;">$<span id="pendingBalance">0.0000</span></div>
+                        </div>
+                    </div>
                     
-                    <div class="balance-title mt-4">পেন্ডিং ব্যালেন্স</div>
-                    <div class="balance-amount balance-pending" style="font-size: 24px;">$<span id="pendingBalance">0.0000</span></div>
-                    
-                    <div class="stats-grid">
-                        <div class="stat-item">
+                    <div class="stats-grid mt-4">
+                        <div class="stat-item" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);">
+                            <div class="stat-value" id="lifetimeEarned" style="color: #34d399;">$0.00</div>
+                            <div class="stat-label"><i class="fas fa-coins"></i> মোট অর্জিত আয়</div>
+                        </div>
+                        <div class="stat-item" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);">
+                            <div class="stat-value" id="totalWithdrawn" style="color: #f87171;">$0.00</div>
+                            <div class="stat-label"><i class="fas fa-hand-holding-usd"></i> মোট উইথড্র করা</div>
+                        </div>
+                        <div class="stat-item" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3);">
                             <div class="stat-value" id="dashCpm" style="color: #38bdf8;">$0.50</div>
-                            <div class="stat-label"><i class="fas fa-chart-line"></i> বর্তমান CPM</div>
+                            <div class="stat-label"><i class="fas fa-chart-line"></i> বর্তমান CPM রেট</div>
                         </div>
-                        <div class="stat-item">
-                            <div class="stat-value" id="totalLinks">0</div>
-                            <div class="stat-label"><i class="fas fa-link"></i> মোট লিংক</div>
-                        </div>
-                        <div class="stat-item">
+                        <div class="stat-item" style="background: rgba(167, 139, 250, 0.1); border: 1px solid rgba(167, 139, 250, 0.3);">
                             <div class="stat-value" id="totalViews">0</div>
-                            <div class="stat-label"><i class="fas fa-eye"></i> মোট ভিউ</div>
+                            <div class="stat-label"><i class="fas fa-eye"></i> সর্বমোট ভিউ</div>
                         </div>
-                        <div class="stat-item">
-                            <div class="stat-value" id="totalEarned">$0.00</div>
-                            <div class="stat-label"><i class="fas fa-wallet"></i> মোট আয়</div>
+                    </div>
+                </div>
+
+                <!-- Date Analytics Section -->
+                <div class="glass-card mt-4">
+                    <h3><i class="fas fa-chart-bar text-warning"></i> ভিউ ও ইনকাম এনালাইটিক্স</h3>
+                    
+                    <!-- Date Filter Pills -->
+                    <div class="action-buttons mt-3 mb-3" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                        <button class="btn btn-outline period-btn" id="btnPeriod24h" onclick="selectPeriod('24h')">⚡ ২৪ ঘণ্টা</button>
+                        <button class="btn btn-primary period-btn active" id="btnPeriod7d" onclick="selectPeriod('7d')">📅 ৭ দিন</button>
+                        <button class="btn btn-outline period-btn" id="btnPeriod30d" onclick="selectPeriod('30d')">📆 ৩০ দিন</button>
+                        <button class="btn btn-outline period-btn" id="btnPeriodCustom" onclick="toggleCustomDate()">🗓️ কাস্টম তারিখ</button>
+                    </div>
+
+                    <!-- Custom Date Picker Fields -->
+                    <div id="customDatePicker" class="hidden mb-3" style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px;">
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <input type="date" id="analyticsStartDate" style="margin: 0;">
+                            <span class="text-muted">থেকে</span>
+                            <input type="date" id="analyticsEndDate" style="margin: 0;">
                         </div>
+                        <button class="btn btn-success mt-2" style="width: 100%; font-size: 13px;" onclick="fetchCustomAnalytics()">ডাটা ফিল্টার করুন</button>
+                    </div>
+
+                    <!-- Analytics Summary Header -->
+                    <div class="flex-between" style="background: rgba(255,255,255,0.03); padding: 10px 14px; border-radius: 10px; margin-bottom: 12px;">
+                        <div>
+                            <span class="text-muted" style="font-size: 12px;">ভিউ সংখ্যা:</span>
+                            <strong id="periodViews" style="color: #38bdf8; font-size: 16px; margin-left: 4px;">0</strong>
+                        </div>
+                        <div>
+                            <span class="text-muted" style="font-size: 12px;">আনুকূলিক আয়:</span>
+                            <strong id="periodEarnings" style="color: #34d399; font-size: 16px; margin-left: 4px;">$0.0000</strong>
+                        </div>
+                    </div>
+
+                    <!-- Daily Analytics Breakdown List -->
+                    <div id="analyticsBreakdownList">
+                        <p class="text-center text-muted" style="font-size: 13px;">ডেটা লোড হচ্ছে...</p>
                     </div>
                 </div>
             </div>
@@ -600,17 +647,18 @@
             }
         }
 
+        let currentAnalyticsPeriod = '7d';
+
         function updateDashboard(data) {
             const userName = tg.initDataUnsafe?.user?.first_name || 'Admin';
             document.getElementById('userName').innerText = userName;
             document.getElementById('confirmedBalance').innerText = formatMoney(data.balance_confirmed);
             document.getElementById('pendingBalance').innerText = formatMoney(data.balance_pending);
-            document.getElementById('totalLinks').innerText = data.links ? data.links.length : 0;
             document.getElementById('totalViews').innerText = data.total_views || 0;
             
-            const totalEarned = (data.balance_confirmed || 0) + (data.balance_pending || 0);
-            document.getElementById('totalEarned').innerText = `$${formatMoney(totalEarned)}`;
-            
+            document.getElementById('totalWithdrawn').innerText = `$${formatMoney(data.total_withdrawn || 0)}`;
+            document.getElementById('lifetimeEarned').innerText = `$${formatMoney(data.lifetime_earned || 0)}`;
+
             document.getElementById('withdrawAvail').innerText = formatMoney(data.balance_confirmed);
             document.getElementById('withdrawAmount').value = data.balance_confirmed || 0;
 
@@ -625,6 +673,96 @@
                     document.getElementById('payoutHoursLabel').innerText = `${data.cycle_info.payout_processing_hours} ঘণ্টা`;
                 }
             }
+
+            if (data.analytics) {
+                renderAnalytics(data.analytics);
+            }
+        }
+
+        function selectPeriod(period) {
+            currentAnalyticsPeriod = period;
+            document.querySelectorAll('.period-btn').forEach(b => {
+                b.classList.remove('active', 'btn-primary');
+                b.classList.add('btn-outline');
+            });
+
+            const activeBtn = document.getElementById(`btnPeriod${period.charAt(0).toUpperCase() + period.slice(1)}`);
+            if (activeBtn) {
+                activeBtn.classList.remove('btn-outline');
+                activeBtn.classList.add('btn-primary', 'active');
+            }
+
+            document.getElementById('customDatePicker').classList.add('hidden');
+            fetchAnalytics(period);
+        }
+
+        function toggleCustomDate() {
+            document.querySelectorAll('.period-btn').forEach(b => {
+                b.classList.remove('active', 'btn-primary');
+                b.classList.add('btn-outline');
+            });
+            document.getElementById('btnPeriodCustom').classList.remove('btn-outline');
+            document.getElementById('btnPeriodCustom').classList.add('btn-primary', 'active');
+
+            const datePicker = document.getElementById('customDatePicker');
+            datePicker.classList.toggle('hidden');
+        }
+
+        async function fetchAnalytics(period) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/my/analytics?period=${period}`, { headers });
+                const data = await res.json();
+                if (res.ok) {
+                    renderAnalytics(data);
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function fetchCustomAnalytics() {
+            const start = document.getElementById('analyticsStartDate').value;
+            const end = document.getElementById('analyticsEndDate').value;
+            if (!start || !end) return showToast('শুরু ও শেষ তারিখ নির্বাচন করুন', 'error');
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/my/analytics?period=custom&start_date=${start}&end_date=${end}`, { headers });
+                const data = await res.json();
+                if (res.ok) {
+                    renderAnalytics(data);
+                }
+            } catch(e) { showToast('ডাটা আনতে সমস্যা হয়েছে', 'error'); }
+        }
+
+        function renderAnalytics(data) {
+            document.getElementById('periodViews').innerText = data.period_views || 0;
+            document.getElementById('periodEarnings').innerText = `$${formatMoney(data.period_earnings || 0)}`;
+
+            const listContainer = document.getElementById('analyticsBreakdownList');
+            if (!data.daily_breakdown || data.daily_breakdown.length === 0) {
+                listContainer.innerHTML = '<p class="text-center text-muted mt-3 mb-2" style="font-size: 13px;">নির্বাচন করা সময়ে কোনো ভিউ আসেনি</p>';
+                return;
+            }
+
+            const maxViews = Math.max(...data.daily_breakdown.map(d => d.views), 1);
+
+            const html = data.daily_breakdown.map(item => {
+                const pct = Math.min(100, Math.round((item.views / maxViews) * 100));
+                return `
+                    <div class="list-item mb-2" style="padding: 10px 12px; background: rgba(255,255,255,0.02); border-radius: 8px;">
+                        <div class="flex-between mb-1" style="font-size: 13px;">
+                            <span style="color: #cbd5e1; font-weight: 500;"><i class="far fa-calendar-alt text-muted mr-1"></i> ${item.date}</span>
+                            <div>
+                                <strong style="color: #38bdf8;">${item.views} ভিউ</strong>
+                                <span style="color: #34d399; margin-left: 8px; font-weight: bold;">($${formatMoney(item.earned)})</span>
+                            </div>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.08); height: 6px; border-radius: 3px; overflow: hidden; margin-top: 6px;">
+                            <div style="width: ${pct}%; background: linear-gradient(90deg, #38bdf8, #34d399); height: 100%; border-radius: 3px;"></div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            listContainer.innerHTML = html;
         }
 
         let timerInterval;
