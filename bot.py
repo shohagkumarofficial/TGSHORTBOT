@@ -76,7 +76,6 @@ async def cmd_start(message: types.Message):
         "আমার মাধ্যমে আপনি খুব সহজেই লিংক তৈরি করে আয় করতে পারেন।\n\n"
         "উপলব্ধ কমান্ডসমূহ:\n"
         "🔗 <code>/newlink &lt;url&gt;</code> - নতুন শর্ট লিংক তৈরি করুন\n"
-        "✅ <code>/proof &lt;code&gt; &lt;proof_url&gt;</code> - প্রুফ সাবমিট করুন\n"
         "📊 <code>/mylinks</code> - আপনার লিংকসমূহ দেখুন\n"
         "💰 <code>/mybalance</code> - আপনার ব্যালেন্স চেক করুন\n"
         "💸 <code>/withdraw &lt;method&gt; &lt;account&gt;</code> - টাকা উত্তোলন করুন\n"
@@ -88,7 +87,7 @@ async def cmd_start(message: types.Message):
 
 @router.message(Command("newlink"))
 async def cmd_newlink(message: types.Message, command: CommandObject):
-    """Create a new short link."""
+    """Create a new short link (auto-verified instantly)."""
     admin = await ensure_admin(message)
     target_url = command.args
 
@@ -106,6 +105,7 @@ async def cmd_newlink(message: types.Message, command: CommandObject):
         short_code=short_code,
         owner_telegram_id=admin.telegram_id,
         destination_url=target_url,
+        verification_status="verified",
     )
     storage.create_link(link)
 
@@ -117,47 +117,12 @@ async def cmd_newlink(message: types.Message, command: CommandObject):
     ])
 
     await message.answer(
-        f"✅ <b>আপনার শর্ট লিংক সফলভাবে তৈরি হয়েছে!</b>\n\n"
-        f"🔗 <b>শর্ট লিংক (কপি করতে টাচ করুন):</b>\n<code>{short_url}</code>\n\n"
-        f"⚠️ অনুগ্রহ করে <code>/proof {short_code} &lt;proof_url&gt;</code> কমান্ড ব্যবহার করে প্রুফ জমা দিন।",
+        f"✅ <b>আপনার শর্ট লিংক প্রস্তুত! (সরাসরি অ্যাক্টিভ)</b>\n\n"
+        f"🔗 <b>কপি করতে টাচ করুন:</b>\n<code>{short_url}</code>\n\n"
+        f"💡 লিংকটি যেকোনো চ্যানেল বা গ্রুপে শেয়ার করে ইনকাম শুরু করুন!",
         reply_markup=kb,
         disable_web_page_preview=True
     )
-
-
-@router.message(Command("proof"))
-async def cmd_proof(message: types.Message, command: CommandObject):
-    """Submit a proof URL for a link."""
-    admin = await ensure_admin(message)
-    args = command.args
-
-    if not args:
-        await message.answer("❌ ব্যবহারবিধি: <code>/proof &lt;short_code&gt; &lt;proof_url&gt;</code>")
-        return
-
-    parts = args.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer("❌ ব্যবহারবিধি: <code>/proof &lt;short_code&gt; &lt;proof_url&gt;</code>")
-        return
-
-    short_code, proof_url = parts
-
-    link = storage.get_link(short_code)
-    if not link:
-        await message.answer("❌ লিংকটি পাওয়া যায়নি!")
-        return
-
-    if link.owner_telegram_id != admin.telegram_id:
-        await message.answer("❌ আপনি এই লিংকের মালিক নন!")
-        return
-
-    if not (proof_url.startswith("http://") or proof_url.startswith("https://")):
-        await message.answer("❌ প্রুফ URL সঠিক নয়! (http:// বা https:// দিয়ে শুরু হতে হবে)")
-        return
-
-    storage.update_link_proof(short_code, proof_url)
-
-    await message.answer("✅ প্রুফ URL সফলভাবে যুক্ত করা হয়েছে। Owner ভেরিফাই করার পর আপনার লিংক সক্রিয় হবে।")
 
 
 @router.message(Command("mylinks"))
@@ -170,20 +135,23 @@ async def cmd_mylinks(message: types.Message):
         await message.answer("📭 আপনি এখনো কোনো লিংক তৈরি করেননি।")
         return
 
-    response = "📊 আপনার লিংকসমূহ:\n\n"
     for link in links:
-        status_emoji = {"verified": "✅", "pending": "⏳", "rejected": "❌"}.get(
-            link.verification_status, "❓"
-        )
+        short_url = f"https://t.me/{bot_username}?start={link.short_code}"
+        share_url = f"https://t.me/share/url?url={short_url}&text={html.escape('লিংকটি দেখতে নিচের লিংকে ক্লিক করুন:')}"
         view_count = storage.count_views_by_link(link.short_code)
-        safe_url = html.escape(link.destination_url[:50])
-        response += (
-            f"🔹 কোড: <code>{link.short_code}</code>\n"
-            f"   🌐 URL: {safe_url}...\n"
-            f"   📋 স্ট্যাটাস: {status_emoji} {link.verification_status}\n"
-            f"   👁️ ভিউ: {view_count}\n"
-            f"   📎 প্রুফ: {'✅ আছে' if link.proof_url else '❌ নেই'}\n\n"
+        safe_url = html.escape(link.destination_url[:40])
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📢 শেয়ার করুন", url=share_url)]
+        ])
+
+        msg = (
+            f"🔹 <b>লিংক কোড:</b> <code>{link.short_code}</code>\n"
+            f"   🌐 <b>আসল URL:</b> {safe_url}...\n"
+            f"   👁️ <b>ভিউ:</b> {view_count}\n"
+            f"   🔗 <b>শর্ট লিংক (কপি করতে টাচ করুন):</b>\n<code>{short_url}</code>"
         )
+        await message.answer(msg, reply_markup=kb, disable_web_page_preview=True)
 
     await message.answer(response)
 

@@ -19,7 +19,7 @@ class Link(BaseModel):
     owner_telegram_id: int
     destination_url: str
     proof_url: Optional[str] = None
-    verification_status: Literal["pending", "verified", "rejected"] = "pending"
+    verification_status: Literal["pending", "verified", "rejected"] = "verified"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     model_config = ConfigDict(populate_by_name=True)
 
