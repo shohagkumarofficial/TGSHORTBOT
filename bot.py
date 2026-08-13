@@ -261,7 +261,7 @@ async def cmd_withdraw(message: types.Message, command: CommandObject):
         f"💰 পরিমাণ: {amount:.4f} $\n"
         f"📱 মেথড: {method}\n"
         f"📞 অ্যাকাউন্ট: {safe_account}\n\n"
-        f"⏳ Owner অনুমোদনের পর আপনার অ্যাকাউন্টে পাঠানো হবে।"
+        f"⏳ Owner অনুমোদনের পর your অ্যাকাউন্টে পাঠানো হবে।"
     )
 
 
