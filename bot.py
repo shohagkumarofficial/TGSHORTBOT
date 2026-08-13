@@ -110,10 +110,18 @@ async def cmd_newlink(message: types.Message, command: CommandObject):
     storage.create_link(link)
 
     short_url = f"https://t.me/{bot_username}?start={short_code}"
+    share_url = f"https://t.me/share/url?url={short_url}&text={html.escape('লিংকটি দেখতে নিচের লিংকে ক্লিক করুন:')}"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📢 টেলিগ্রামে শেয়ার করুন", url=share_url)]
+    ])
+
     await message.answer(
-        f"✅ আপনার শর্ট লিংক সফলভাবে তৈরি হয়েছে!\n\n"
-        f"🔗 লিংক: {short_url}\n\n"
-        f"⚠️ অনুগ্রহ করে <code>/proof {short_code} &lt;proof_url&gt;</code> কমান্ড ব্যবহার করে প্রুফ জমা দিন।"
+        f"✅ <b>আপনার শর্ট লিংক সফলভাবে তৈরি হয়েছে!</b>\n\n"
+        f"🔗 <b>শর্ট লিংক (কপি করতে টাচ করুন):</b>\n<code>{short_url}</code>\n\n"
+        f"⚠️ অনুগ্রহ করে <code>/proof {short_code} &lt;proof_url&gt;</code> কমান্ড ব্যবহার করে প্রুফ জমা দিন।",
+        reply_markup=kb,
+        disable_web_page_preview=True
     )
 
 
@@ -261,7 +269,7 @@ async def cmd_withdraw(message: types.Message, command: CommandObject):
         f"💰 পরিমাণ: {amount:.4f} $\n"
         f"📱 মেথড: {method}\n"
         f"📞 অ্যাকাউন্ট: {safe_account}\n\n"
-        f"⏳ Owner অনুমোদনের পর your অ্যাকাউন্টে পাঠানো হবে।"
+        f"⏳ Owner অনুমোদনের পর আপনার অ্যাকাউন্টে পাঠানো হবে।"
     )
 
 
