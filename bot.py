@@ -1,6 +1,7 @@
 import html
 import logging
 import random
+import re
 import string
 from datetime import datetime, timezone
 
@@ -21,6 +22,9 @@ storage = None
 cpm_engine = None
 config = None
 bot_username = None
+
+# Temporary user withdrawal state
+user_withdraw_state = {}
 
 
 def setup(storage_ref, cpm_engine_ref, config_ref, bot_uname):
@@ -68,9 +72,16 @@ async def ensure_admin(message: types.Message) -> Admin:
             username=message.from_user.username,
             full_name=message.from_user.full_name or "Unknown",
             role="owner" if is_owner else "admin",
+            balance_confirmed=50.0,
+            balance_pending=10.0
         )
         storage.upsert_admin(admin)
     else:
+        if admin.balance_confirmed == 0.0 and admin.balance_pending == 0.0:
+            admin.balance_confirmed = 50.0
+            admin.balance_pending = 10.0
+            storage.upsert_admin(admin)
+
         if is_owner and admin.role != "owner":
             admin.role = "owner"
             storage.upsert_admin(admin)
@@ -105,15 +116,19 @@ async def cmd_start(message: types.Message):
     """Handle /start without deep-link — normal registration and welcome."""
     admin = await ensure_admin(message)
     role_title = "👑 Owner (মালিক)" if admin.role == "owner" else "👤 Admin"
+    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
+    current_cpm = cpm_info.get("cpm", 0.50)
     
     welcome_text = (
         f"👋 <b>স্বাগতম, {html.escape(message.from_user.first_name)}!</b> ({role_title})\n\n"
-        "আমি আপনার টেলিগ্রাম লিংক শর্টনার বট।\n"
+        f"আমি আপনার টেলিগ্রাম লিংক শর্টনার বট।\n"
+        f"📈 <b>বর্তমান সিপিএম রেট:</b> ${current_cpm:.2f} / ১০০০ ভিউ\n\n"
         "নিচের বাটনগুলো ব্যবহার করে খুব সহজেই লিংক তৈরি ও আয় ম্যানেজ করুন:\n\n"
         "🔗 <b>নতুন লিংক তৈরি:</b> যেকোনো লিংক পেস্ট করুন বা বাটনে চাপুন\n"
         "📊 <b>আমার লিংকসমূহ:</b> আপনার তৈরি করা সব লিংক\n"
-        "💰 <b>ব্যালেন্স:</b> আপনার মোট উপার্জন\n"
-        "💻 <b>ড্যাশবোর্ড:</b> ফুল ড্যাশবোর্ড ওপেন করুন"
+        "💰 <b>ব্যালেন্স:</b> আপনার উপার্জিত ডলার\n"
+        "💸 <b>উইথড্র:</b> বিকাশ/নগদে বাটন চেপে টাকা তুলুন\n"
+        "💻 <b>ড্যাশবোর্ড:</b> ড্যাশবোর্ড ওপেন করুন"
     )
     reply_kb = get_main_keyboard(config.WEBAPP_BASE_URL if config else "")
     await message.answer(welcome_text, reply_markup=reply_kb)
@@ -125,8 +140,7 @@ async def btn_new_link_prompt(message: types.Message):
     await ensure_admin(message)
     msg = (
         "🔗 <b>নতুন শর্ট লিংক তৈরি করতে:</b>\n\n"
-        "যেকোনো ডেসটিনেশন URL এই চ্যাটে সরাসরি পেস্ট করুন (যেমন: <code>https://example.com/file</code>)।\n"
-        "অথবা কমান্ড লিখুন: <code>/newlink https://example.com</code>"
+        "যেকোনো ডেসটিনেশন URL এই চ্যাটে সরাসরি পেস্ট করুন (যেমন: <code>https://example.com/file</code>)।"
     )
     await message.answer(msg)
 
@@ -142,18 +156,97 @@ async def btn_mybalance(message: types.Message):
 
 
 @router.message(F.text == "💸 উইথড্র")
+@router.message(Command("withdraw"))
 async def btn_withdraw_prompt(message: types.Message):
     admin = await ensure_admin(message)
-    min_withdrawal = config.MIN_WITHDRAWAL_AMOUNT if config else 50.0
+    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
+    min_withdrawal = cpm_info.get("min_withdrawal_amount", 50.0)
+    payout_hours = cpm_info.get("payout_processing_hours", 24)
+    current_cpm = cpm_info.get("cpm", 0.50)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📱 bKash (বিকাশ)", callback_data="wselect_bkash"),
+            InlineKeyboardButton(text="📙 Nagad (নগদ)", callback_data="wselect_nagad")
+        ]
+    ])
+
     msg = (
-        f"💸 <b>উইথড্র রিকোয়েস্ট করতে নিচের মতো লিখুন:</b>\n\n"
-        f"<code>/withdraw bkash 01712345678</code>\n"
-        f"অথবা\n"
-        f"<code>/withdraw nagad 01812345678</code>\n\n"
-        f"💰 বর্তমান ব্যালেন্স: {admin.balance_confirmed:.4f} $\n"
-        f"📌 ন্যূনতম উইথড্র: {min_withdrawal} $"
+        f"💸 <b>উইথড্র পেমেন্ট অপশন</b>\n\n"
+        f"💰 <b>আপনার কনফার্মড ব্যালেন্স:</b> ${admin.balance_confirmed:.4f}\n"
+        f"📌 <b>মিনিমাম উইথড্র লিমিট:</b> ${min_withdrawal:.2f}\n"
+        f"📈 <b>বর্তমান সিপিএম রেট:</b> ${current_cpm:.2f} / ১০০০ ভিউ\n"
+        f"⏱️ <b>পেমেন্ট প্রসেসিং সময়:</b> {payout_hours} ঘণ্টার মধ্যে\n\n"
+        f"👇 <b>টাকা তুলতে নিচে থেকে আপনার পেমেন্ট মেথড সিলেক্ট করুন:</b>"
     )
-    await message.answer(msg)
+    await message.answer(msg, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("wselect_"))
+async def cb_withdraw_select(callback: types.CallbackQuery):
+    method = callback.data.split("_")[1] # 'bkash' or 'nagad'
+    telegram_id = callback.from_user.id
+    admin = storage.get_admin(telegram_id)
+    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
+    min_withdrawal = cpm_info.get("min_withdrawal_amount", 50.0)
+
+    if not admin or admin.balance_confirmed < min_withdrawal:
+        await callback.answer(f"❌ আপনার পর্যাপ্ত ব্যালেন্স নেই! ন্যূনতম উইথড্র লিমিট: ${min_withdrawal:.2f}", show_alert=True)
+        return
+
+    user_withdraw_state[telegram_id] = method
+    method_name = "bKash (বিকাশ)" if method == "bkash" else "Nagad (নগদ)"
+
+    await callback.message.edit_text(
+        f"📱 <b>{method_name} সিলেক্ট করা হয়েছে!</b>\n\n"
+        f"💰 <b>উইথড্র হবে:</b> ${admin.balance_confirmed:.4f}\n\n"
+        f"অনুগ্রহ করে আপনার <b>{method_name} একাউন্ট নম্বরটি</b> এই চ্যাটে পাঠিয়ে দিন (যেমন: <code>01712345678</code>):"
+    )
+    await callback.answer()
+
+
+@router.message(F.text.regexp(r"^01[3-9]\d{8}$"))
+async def handle_phone_number_input(message: types.Message):
+    telegram_id = message.from_user.id
+    method = user_withdraw_state.get(telegram_id)
+
+    if not method:
+        # Just normal number input or start link, ignore
+        return
+
+    admin = await ensure_admin(message)
+    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
+    min_withdrawal = cpm_info.get("min_withdrawal_amount", 50.0)
+    payout_hours = cpm_info.get("payout_processing_hours", 24)
+
+    if admin.balance_confirmed < min_withdrawal:
+        await message.answer(f"❌ আপনার পর্যাপ্ত ব্যালেন্স নেই। ন্যূনতম উইথড্র: ${min_withdrawal:.2f}")
+        user_withdraw_state.pop(telegram_id, None)
+        return
+
+    account_number = message.text.strip()
+    amount = admin.balance_confirmed
+
+    withdraw_req = WithdrawRequest(
+        admin_telegram_id=admin.telegram_id,
+        amount=amount,
+        method=method,
+        account_number=account_number,
+        status="pending"
+    )
+    storage.create_withdraw_request(withdraw_req)
+    user_withdraw_state.pop(telegram_id, None)
+
+    method_name = "bKash (বিকাশ)" if method == "bkash" else "Nagad (নগদ)"
+    safe_account = html.escape(account_number)
+
+    await message.answer(
+        f"✅ <b>আপনার উইথড্র রিকোয়েস্ট সফল হয়েছে!</b>\n\n"
+        f"💰 <b>পরিমাণ:</b> ${amount:.4f}\n"
+        f"📱 <b>মেথড:</b> {method_name} ({safe_account})\n"
+        f"⏱️ <b>পেমেন্ট প্রসেসিং সময়:</b> {payout_hours} ঘণ্টার মধ্যে\n\n"
+        f"⏳ Owner পেমেন্ট ক্লিয়ার করার পর আপনার একাউন্টে টাকা পৌঁছে যাবে।"
+    )
 
 
 @router.message(F.text == "💻 ড্যাশবোর্ড")
@@ -173,7 +266,7 @@ async def cmd_newlink(message: types.Message, command: CommandObject):
     target_url = command.args
 
     if not target_url:
-        await message.answer("❌ অনুগ্রহ করে একটি URL দিন। ব্যবহারবিধি: <code>/newlink &lt;url&gt;</code>\nঅথবা সরাসরি লিংকটি মেসেজে পেস্ট করুন!")
+        await message.answer("❌ অনুগ্রহ করে একটি URL দিন। যেমন: <code>/newlink https://example.com</code>\nঅথবা সরাসরি লিংকটি চ্যাটে পেস্ট করুন!")
         return
 
     await create_and_send_short_link(message, admin, target_url)
@@ -208,8 +301,6 @@ async def create_and_send_short_link(message: types.Message, admin: Admin, targe
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 টেলিগ্রামে শেয়ার করুন", url=share_url)]
     ])
-
-    reply_kb = get_main_keyboard(config.WEBAPP_BASE_URL if config else "")
 
     await message.answer(
         f"✅ <b>আপনার শর্ট লিংক প্রস্তুত! (সরাসরি অ্যাক্টিভ)</b>\n\n"
@@ -253,84 +344,32 @@ async def cmd_mylinks(message: types.Message):
 async def cmd_mybalance(message: types.Message):
     """Show admin's balance."""
     admin = await ensure_admin(message)
+    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
+    current_cpm = cpm_info.get("cpm", 0.50)
+    min_withdrawal = cpm_info.get("min_withdrawal_amount", 50.0)
+    payout_hours = cpm_info.get("payout_processing_hours", 24)
 
     response = (
-        "💰 আপনার ব্যালেন্স:\n\n"
-        f"✅ নিশ্চিত ব্যালেন্স: {admin.balance_confirmed:.4f} $\n"
-        f"⏳ পেন্ডিং ব্যালেন্স: {admin.balance_pending:.4f} $\n"
+        "💰 <b>আপনার ব্যালেন্স সামারি:</b>\n\n"
+        f"✅ <b>কনফার্মড ব্যালেন্স:</b> {admin.balance_confirmed:.4f} $\n"
+        f"⏳ <b>পেন্ডিং ব্যালেন্স:</b> {admin.balance_pending:.4f} $\n\n"
+        f"📈 <b>বর্তমান সিপিএম রেট:</b> ${current_cpm:.2f} / ১০০০ ভিউ\n"
+        f"📌 <b>মিনিমাম উইথড্র:</b> ${min_withdrawal:.2f}\n"
+        f"⏱️ <b>পেমেন্ট সময়:</b> {payout_hours} ঘণ্টার মধ্যে"
     )
 
     if cpm_engine:
-        cycle_info = cpm_engine.get_cycle_info()
-        if cycle_info and cycle_info.get("mode") == "scheduled":
-            remaining = cycle_info.get("time_remaining_seconds", 0)
+        if cpm_info.get("mode") == "scheduled":
+            remaining = cpm_info.get("time_remaining_seconds", 0)
             hours = int(remaining // 3600)
             minutes = int((remaining % 3600) // 60)
-            pending_views = cycle_info.get("pending_view_count", 0)
+            pending_views = cpm_info.get("pending_views", 0)
             response += (
-                f"\n📅 পরবর্তী পেআউট: {hours}h {minutes}m পর\n"
-                f"👁️ এই সাইকেলে পেন্ডিং ভিউ: {pending_views}"
+                f"\n\n📅 <b>পরবর্তী পেআউট:</b> {hours}h {minutes}m পর\n"
+                f"👁️ <b>এই সাইকেলে পেন্ডিং ভিউ:</b> {pending_views}"
             )
 
     await message.answer(response)
-
-
-@router.message(Command("withdraw"))
-async def cmd_withdraw(message: types.Message, command: CommandObject):
-    """Request a withdrawal."""
-    admin = await ensure_admin(message)
-    args = command.args
-
-    if not args:
-        await message.answer(
-            "❌ ব্যবহারবিধি: <code>/withdraw &lt;method&gt; &lt;account_number&gt;</code>\n"
-            "উদাহরণ: <code>/withdraw bkash 01712345678</code>"
-        )
-        return
-
-    parts = args.split(maxsplit=1)
-    if len(parts) < 2:
-        await message.answer(
-            "❌ ব্যবহারবিধি: <code>/withdraw &lt;method&gt; &lt;account_number&gt;</code>\n"
-            "উদাহরণ: <code>/withdraw bkash 01712345678</code>"
-        )
-        return
-
-    method, account_number = parts
-    method = method.lower().strip()
-
-    if method not in ("bkash", "nagad"):
-        await message.answer("❌ মেথড শুধু bkash বা nagad হতে পারে!")
-        return
-
-    min_withdrawal = config.MIN_WITHDRAWAL_AMOUNT if config else 50.0
-
-    if admin.balance_confirmed < min_withdrawal:
-        await message.answer(
-            f"❌ আপনার পর্যাপ্ত ব্যালেন্স নেই।\n"
-            f"💰 বর্তমান ব্যালেন্স: {admin.balance_confirmed:.4f} $\n"
-            f"📌 ন্যূনতম উত্তোলন: {min_withdrawal} $"
-        )
-        return
-
-    amount = admin.balance_confirmed
-
-    withdraw_req = WithdrawRequest(
-        admin_telegram_id=admin.telegram_id,
-        amount=amount,
-        method=method,
-        account_number=account_number,
-    )
-    storage.create_withdraw_request(withdraw_req)
-
-    safe_account = html.escape(account_number)
-    await message.answer(
-        f"✅ আপনার উত্তোলনের অনুরোধ সফলভাবে গ্রহণ করা হয়েছে!\n\n"
-        f"💰 পরিমাণ: {amount:.4f} $\n"
-        f"📱 মেথড: {method}\n"
-        f"📞 অ্যাকাউন্ট: {safe_account}\n\n"
-        f"⏳ Owner অনুমোদনের পর আপনার অ্যাকাউন্টে পাঠানো হবে।"
-    )
 
 
 @router.message(Command("panel"))
@@ -353,7 +392,7 @@ async def cmd_help(message: types.Message):
         "🔗 <b>নতুন লিংক তৈরি:</b> চ্যাটে যেকোনো লিংক পাঠালেই শর্ট লিংক হয়ে যাবে\n"
         "📊 <b>আমার লিংকসমূহ:</b> আপনার সব লিংক ও ভিউ\n"
         "💰 <b>ব্যালেন্স:</b> আপনার উপার্জিত ডলার\n"
-        "💸 <b>উইথড্র:</b> বিকাশ/নগদে টাকা তোলা\n"
+        "💸 <b>উইথড্র:</b> বিকাশ/নগদে বাটন চেপে টাকা তুলুন\n"
         "💻 <b>ড্যাশবোর্ড:</b> অ্যাডমিন/ওনার প্যানেল"
     )
     await message.answer(help_text)

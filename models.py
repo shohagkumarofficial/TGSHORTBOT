@@ -38,6 +38,7 @@ class CPMSetting(BaseModel):
     current_cpm: float = 0.50
     cycle_duration_hours: int = 24
     min_withdrawal_amount: float = 50.0
+    payout_processing_hours: int = 24
     cycle_started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     cycle_id: UUID = Field(default_factory=uuid4)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

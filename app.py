@@ -143,6 +143,7 @@ class UpdateCPMRequest(BaseModel):
     current_cpm: Optional[float] = None
     cycle_duration_hours: Optional[int] = None
     min_withdrawal_amount: Optional[float] = None
+    payout_processing_hours: Optional[int] = None
 
 class CreateWithdrawalRequest(BaseModel):
     amount: float
@@ -352,6 +353,8 @@ async def admin_update_cpm(req: UpdateCPMRequest, user: dict = Depends(require_o
         cpm_engine.change_mode(req.mode, owner_id, req.cycle_duration_hours or 24)
     if req.min_withdrawal_amount is not None:
         cpm_engine.set_min_withdrawal_amount(req.min_withdrawal_amount, owner_id)
+    if req.payout_processing_hours is not None:
+        cpm_engine.set_payout_processing_hours(req.payout_processing_hours, owner_id)
         
     return cpm_engine.get_cycle_info()
 

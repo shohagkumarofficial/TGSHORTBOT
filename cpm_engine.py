@@ -147,15 +147,16 @@ class CPMEngine:
         logger.info(f"Processed {len(views)} views for cycle {cycle_id} at ${cpm} CPM.")
 
     def get_cycle_info(self) -> Dict[str, Any]:
-        """Returns current cycle info: time remaining, pending view count, mode, min_withdrawal_amount."""
+        """Returns current cycle info: time remaining, pending view count, mode, min_withdrawal_amount, payout_processing_hours."""
         settings = self.storage.get_cpm_setting()
         if not settings:
-            return {"mode": "realtime", "cpm": 0.50, "min_withdrawal_amount": 50.0}
+            return {"mode": "realtime", "cpm": 0.50, "min_withdrawal_amount": 50.0, "payout_processing_hours": 24}
             
         info = {
             "mode": settings.mode,
             "cpm": settings.current_cpm,
-            "min_withdrawal_amount": getattr(settings, "min_withdrawal_amount", 50.0)
+            "min_withdrawal_amount": getattr(settings, "min_withdrawal_amount", 50.0),
+            "payout_processing_hours": getattr(settings, "payout_processing_hours", 24)
         }
         
         if settings.mode == 'scheduled':
@@ -179,6 +180,16 @@ class CPMEngine:
         if not settings:
             return
         settings.min_withdrawal_amount = amount
+        settings.updated_at = datetime.now(timezone.utc)
+        settings.updated_by = owner_id
+        self.storage.update_cpm_setting(settings)
+
+    def set_payout_processing_hours(self, hours: int, owner_id: int):
+        """Owner updates payment processing duration (hours)."""
+        settings = self.storage.get_cpm_setting()
+        if not settings:
+            return
+        settings.payout_processing_hours = hours
         settings.updated_at = datetime.now(timezone.utc)
         settings.updated_by = owner_id
         self.storage.update_cpm_setting(settings)
