@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: tgshortbot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: ADSGRAM_BLOCK_ID
+        sync: false
+      - key: OWNER_TELEGRAM_ID
+        sync: false
+      - key: WEBAPP_BASE_URL
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.9
+    healthCheckPath: /health
+    autoDeploy: true
+    repo: https://github.com/YOUR_USERNAME/tgshortbot
+    branch: main
+    rootDir: tgshortbot
