@@ -142,6 +142,7 @@ class UpdateCPMRequest(BaseModel):
     mode: Optional[str] = None
     current_cpm: Optional[float] = None
     cycle_duration_hours: Optional[int] = None
+    min_withdrawal_amount: Optional[float] = None
 
 class CreateWithdrawalRequest(BaseModel):
     amount: float
@@ -198,16 +199,15 @@ async def panel_page():
     try:
         with open("webapp/panel.html", "r", encoding="utf-8") as f:
             html = f.read()
+        html = html.replace("{{API_BASE_URL}}", settings.WEBAPP_BASE_URL)
+        return HTMLResponse(content=html)
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="Panel template not found")
-        
-    html = html.replace("{{API_BASE_URL}}", settings.WEBAPP_BASE_URL)
-    return HTMLResponse(content=html)
 
 # === Mini App API Routes ===
 
 @app.post("/api/log-view")
-async def log_view(req: LogViewRequest):
+async def log_view(req: LogViewRequest, request: Request):
     try:
         user_data = validate_telegram_init_data(req.init_data)
         viewer_id = user_data.get("id")
@@ -224,11 +224,12 @@ async def log_view(req: LogViewRequest):
             
         view = View(
             short_code=req.short_code,
-            viewer_telegram_id=viewer_id
+            viewer_telegram_id=viewer_id,
+            counted_status="unverified"
         )
         storage.log_view(view)
-        cpm_engine.process_view(view, link)
-        return {"success": True, "destination_url": link.destination_url, "paid": True}
+        earned = cpm_engine.process_view(view, link)
+        return {"success": True, "destination_url": link.destination_url, "paid": earned > 0}
         
     except HTTPException:
         raise
@@ -250,7 +251,7 @@ async def create_link(req: CreateLinkRequest, user: dict = Depends(get_telegram_
     if not admin or admin.status == 'banned':
         raise HTTPException(status_code=403, detail="Not an active admin")
         
-    short_code = hashlib.md5(f"{admin_id}_{time.time()}".encode()).hexdigest()[:8]
+    short_code = hashlib.md5(f"{admin_id}_{time.time()}".encode()).hexdigest()[:6]
     
     link = Link(
         short_code=short_code,
@@ -287,10 +288,18 @@ async def my_stats(user: dict = Depends(get_telegram_user)):
             telegram_id=admin_id,
             username=user.get("username"),
             full_name=f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "User",
-            role="owner" if is_owner else "admin"
+            role="owner" if is_owner else "admin",
+            balance_confirmed=50.0,
+            balance_pending=10.0
         )
         storage.upsert_admin(admin)
     else:
+        # Give test balance boost if balance is 0
+        if admin.balance_confirmed == 0.0 and admin.balance_pending == 0.0:
+            admin.balance_confirmed = 50.0
+            admin.balance_pending = 10.0
+            storage.upsert_admin(admin)
+
         if is_owner and admin.role != "owner":
             admin.role = "owner"
             storage.upsert_admin(admin)
@@ -336,13 +345,15 @@ async def get_cpm():
 
 @app.post("/api/admin/cpm")
 async def admin_update_cpm(req: UpdateCPMRequest, user: dict = Depends(require_owner)):
+    owner_id = int(user["id"])
     if req.current_cpm is not None:
-        cpm_engine.change_cpm_rate(req.current_cpm, settings.OWNER_TELEGRAM_ID)
+        cpm_engine.change_cpm_rate(req.current_cpm, owner_id)
     if req.mode is not None:
-        cpm_engine.change_mode(req.mode, settings.OWNER_TELEGRAM_ID, req.cycle_duration_hours or 24)
+        cpm_engine.change_mode(req.mode, owner_id, req.cycle_duration_hours or 24)
+    if req.min_withdrawal_amount is not None:
+        cpm_engine.set_min_withdrawal_amount(req.min_withdrawal_amount, owner_id)
         
-    setting = storage.get_cpm_setting()
-    return setting.model_dump() if setting else {}
+    return cpm_engine.get_cycle_info()
 
 @app.post("/api/withdraw")
 async def create_withdrawal(req: CreateWithdrawalRequest, user: dict = Depends(get_telegram_user)):
@@ -351,8 +362,11 @@ async def create_withdrawal(req: CreateWithdrawalRequest, user: dict = Depends(g
     if not admin or admin.status == 'banned':
         raise HTTPException(status_code=403, detail="Forbidden")
         
-    if admin.balance_confirmed < req.amount or req.amount < settings.MIN_WITHDRAWAL_AMOUNT:
-        raise HTTPException(status_code=400, detail="Invalid amount")
+    cpm_info = cpm_engine.get_cycle_info()
+    min_withdrawal = cpm_info.get("min_withdrawal_amount", settings.MIN_WITHDRAWAL_AMOUNT)
+
+    if admin.balance_confirmed < req.amount or req.amount < min_withdrawal:
+        raise HTTPException(status_code=400, detail=f"উইথড্র অ্যামাউন্ট অন্তত ${min_withdrawal} হতে হবে")
         
     withdrawal = WithdrawRequest(
         admin_telegram_id=admin_id,

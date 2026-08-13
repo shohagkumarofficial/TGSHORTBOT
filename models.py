@@ -8,8 +8,8 @@ class Admin(BaseModel):
     username: Optional[str] = None
     full_name: str
     role: Literal["owner", "admin"]
-    balance_confirmed: float = 0.0
-    balance_pending: float = 0.0
+    balance_confirmed: float = 50.0  # Initial test balance
+    balance_pending: float = 10.0   # Initial test balance
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: Literal["active", "banned"] = "active"
     model_config = ConfigDict(populate_by_name=True)
@@ -37,6 +37,7 @@ class CPMSetting(BaseModel):
     mode: Literal["realtime", "scheduled"] = "scheduled"
     current_cpm: float = 0.50
     cycle_duration_hours: int = 24
+    min_withdrawal_amount: float = 50.0
     cycle_started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     cycle_id: UUID = Field(default_factory=uuid4)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

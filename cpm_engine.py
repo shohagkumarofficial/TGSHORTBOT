@@ -147,14 +147,15 @@ class CPMEngine:
         logger.info(f"Processed {len(views)} views for cycle {cycle_id} at ${cpm} CPM.")
 
     def get_cycle_info(self) -> Dict[str, Any]:
-        """Returns current cycle info: time remaining, pending view count, mode."""
+        """Returns current cycle info: time remaining, pending view count, mode, min_withdrawal_amount."""
         settings = self.storage.get_cpm_setting()
         if not settings:
-            return {}
+            return {"mode": "realtime", "cpm": 0.50, "min_withdrawal_amount": 50.0}
             
         info = {
             "mode": settings.mode,
             "cpm": settings.current_cpm,
+            "min_withdrawal_amount": getattr(settings, "min_withdrawal_amount", 50.0)
         }
         
         if settings.mode == 'scheduled':
@@ -171,6 +172,16 @@ class CPMEngine:
             })
             
         return info
+
+    def set_min_withdrawal_amount(self, amount: float, owner_id: int):
+        """Owner updates minimum withdrawal requirement."""
+        settings = self.storage.get_cpm_setting()
+        if not settings:
+            return
+        settings.min_withdrawal_amount = amount
+        settings.updated_at = datetime.now(timezone.utc)
+        settings.updated_by = owner_id
+        self.storage.update_cpm_setting(settings)
 
     def change_cpm_rate(self, new_rate: float, owner_id: int):
         """Owner changes CPM rate. Logs audit event."""
