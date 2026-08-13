@@ -256,3 +256,69 @@ class Storage:
             if tid_str in data["admins"]:
                 data["admins"][tid_str]["balance_confirmed"] -= amount
                 self._save(data)
+
+    def get_analytics_data(self, telegram_id: int, period: str = "24h", start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> dict:
+        with self._lock:
+            data = self._load()
+            user_links = {l["short_code"] for l in data["links"].values() if l["owner_telegram_id"] == telegram_id}
+            user_views = [v for v in data["views"] if v["short_code"] in user_links]
+            user_withdrawals = [w for w in data["withdraw_requests"] if w["admin_telegram_id"] == telegram_id]
+            
+            total_withdrawn = sum(w["amount"] for w in user_withdrawals if w["status"] == "paid")
+            
+            now = datetime.now(timezone.utc)
+            filtered_views = []
+            
+            for v in user_views:
+                v_time_str = v.get("created_at")
+                if not v_time_str:
+                    continue
+                try:
+                    v_time = datetime.fromisoformat(str(v_time_str).replace("Z", "+00:00"))
+                    if v_time.tzinfo is None:
+                        v_time = v_time.replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
+
+                if period == "24h":
+                    if (now - v_time).total_seconds() <= 86400:
+                        filtered_views.append((v, v_time))
+                elif period == "7d":
+                    if (now - v_time).total_seconds() <= 7 * 86400:
+                        filtered_views.append((v, v_time))
+                elif period == "30d":
+                    if (now - v_time).total_seconds() <= 30 * 86400:
+                        filtered_views.append((v, v_time))
+                elif period == "custom" and start_date_str and end_date_str:
+                    try:
+                        s_dt = datetime.fromisoformat(start_date_str).replace(tzinfo=timezone.utc)
+                        e_dt = datetime.fromisoformat(end_date_str).replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+                        if s_dt <= v_time <= e_dt:
+                            filtered_views.append((v, v_time))
+                    except Exception:
+                        pass
+                else:
+                    filtered_views.append((v, v_time))
+
+            daily_dict = {}
+            total_period_earned = 0.0
+            for v, v_time in filtered_views:
+                day_key = v_time.strftime("%Y-%m-%d")
+                earned = v.get("earned_amount", 0.0)
+                total_period_earned += earned
+                
+                if day_key not in daily_dict:
+                    daily_dict[day_key] = {"date": day_key, "views": 0, "earned": earned}
+                else:
+                    daily_dict[day_key]["views"] += 1
+                    daily_dict[day_key]["earned"] += earned
+
+            daily_breakdown = sorted(daily_dict.values(), key=lambda x: x["date"], reverse=True)
+            
+            return {
+                "period": period,
+                "period_views": len(filtered_views),
+                "period_earnings": total_period_earned,
+                "total_withdrawn": total_withdrawn,
+                "daily_breakdown": daily_breakdown
+            }

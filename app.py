@@ -311,15 +311,32 @@ async def my_stats(user: dict = Depends(get_telegram_user)):
     total_views = sum(storage.count_views_by_link(l.short_code) for l in links)
     cycle_info = cpm_engine.get_cycle_info()
     
+    total_withdrawn = sum(w.amount for w in withdrawals if w.status == "paid")
+    lifetime_earned = admin.balance_confirmed + admin.balance_pending + total_withdrawn
+    initial_analytics = storage.get_analytics_data(admin_id, "7d")
+    
     return {
         "role": "owner" if is_owner else admin.role,
         "balance_confirmed": admin.balance_confirmed,
         "balance_pending": admin.balance_pending,
+        "total_withdrawn": total_withdrawn,
+        "lifetime_earned": lifetime_earned,
         "total_views": total_views,
         "cycle_info": cycle_info,
+        "analytics": initial_analytics,
         "links": [l.model_dump() for l in links],
         "withdrawals": [w.model_dump() for w in withdrawals]
     }
+
+@app.get("/api/my/analytics")
+async def get_my_analytics(
+    period: str = "7d",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    user: dict = Depends(get_telegram_user)
+):
+    admin_id = int(user["id"])
+    return storage.get_analytics_data(admin_id, period, start_date, end_date)
 
 @app.get("/api/admin/links")
 async def admin_list_links(user: dict = Depends(require_owner)):
