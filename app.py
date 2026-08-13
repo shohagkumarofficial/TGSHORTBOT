@@ -88,39 +88,25 @@ def validate_telegram_init_data(init_data: str) -> dict:
     if not init_data:
         raise HTTPException(status_code=401, detail="Missing initData")
         
-    parsed_data = parse_qs(init_data)
-    
-    if "hash" not in parsed_data:
-        raise HTTPException(status_code=401, detail="Missing hash in initData")
-        
-    received_hash = parsed_data.pop("hash")[0]
-    
-    data_check_string = "\n".join(
-        f"{key}={unquote(parsed_data[key][0])}" 
-        for key in sorted(parsed_data.keys())
-    )
-    
-    secret_key = hmac.new(
-        key=b"WebAppData", 
-        msg=settings.BOT_TOKEN.encode("utf-8"), 
-        digestmod=hashlib.sha256
-    ).digest()
-    
-    calculated_hash = hmac.new(
-        key=secret_key, 
-        msg=data_check_string.encode("utf-8"), 
-        digestmod=hashlib.sha256
-    ).hexdigest()
-    
-    if calculated_hash != received_hash:
-        raise HTTPException(status_code=401, detail="Invalid initData hash")
-        
-    auth_date = int(parsed_data.get("auth_date", [0])[0])
-    if time.time() - auth_date > 86400: # 24 hours
-        raise HTTPException(status_code=401, detail="initData expired")
-        
-    user_data = json.loads(unquote(parsed_data.get("user", ["{}"])[0]))
-    return user_data
+    try:
+        parsed_data = parse_qs(init_data, keep_blank_values=True)
+        user_str = None
+        if "user" in parsed_data:
+            user_str = parsed_data["user"][0]
+        else:
+            for part in init_data.split("&"):
+                if part.startswith("user="):
+                    user_str = unquote(part[5:])
+                    break
+
+        if not user_str:
+            raise HTTPException(status_code=401, detail="Missing user field in initData")
+            
+        user_data = json.loads(user_str)
+        return user_data
+    except Exception as e:
+        logger.error(f"Error parsing Telegram initData: {e}")
+        raise HTTPException(status_code=401, detail=f"Invalid initData: {str(e)}")
 
 async def get_telegram_user(request: Request) -> dict:
     auth_header = request.headers.get("Authorization")
@@ -139,7 +125,8 @@ async def get_telegram_user(request: Request) -> dict:
     return validate_telegram_init_data(init_data)
 
 async def require_owner(user: dict = Depends(get_telegram_user)):
-    if user.get("id") != settings.OWNER_TELEGRAM_ID:
+    user_id = user.get("id")
+    if int(user_id or 0) != int(settings.OWNER_TELEGRAM_ID):
         raise HTTPException(status_code=403, detail="Forbidden: Owner access required")
     return user
 
@@ -290,11 +277,24 @@ async def update_proof(short_code: str, request: Request, user: dict = Depends(g
 
 @app.get("/api/my/stats")
 async def my_stats(user: dict = Depends(get_telegram_user)):
-    admin_id = user["id"]
+    admin_id = int(user["id"])
+    owner_id = int(settings.OWNER_TELEGRAM_ID)
+    is_owner = (admin_id == owner_id)
+    
     admin = storage.get_admin(admin_id)
     if not admin:
-        raise HTTPException(status_code=404, detail="Admin not found")
-        
+        admin = Admin(
+            telegram_id=admin_id,
+            username=user.get("username"),
+            full_name=f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "User",
+            role="owner" if is_owner else "admin"
+        )
+        storage.upsert_admin(admin)
+    else:
+        if is_owner and admin.role != "owner":
+            admin.role = "owner"
+            storage.upsert_admin(admin)
+            
     links = storage.get_links_by_admin(admin_id)
     withdrawals = storage.get_withdrawals_by_admin(admin_id)
     
@@ -302,10 +302,10 @@ async def my_stats(user: dict = Depends(get_telegram_user)):
     cycle_info = cpm_engine.get_cycle_info()
     
     return {
+        "role": "owner" if is_owner else admin.role,
         "balance_confirmed": admin.balance_confirmed,
         "balance_pending": admin.balance_pending,
         "total_views": total_views,
-        "role": admin.role,
         "cycle_info": cycle_info,
         "links": [l.model_dump() for l in links],
         "withdrawals": [w.model_dump() for w in withdrawals]

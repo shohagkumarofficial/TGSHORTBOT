@@ -6,7 +6,10 @@ from datetime import datetime, timezone
 
 from aiogram import Router, types, F
 from aiogram.filters import Command, CommandStart, CommandObject
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo,
+    ReplyKeyboardMarkup, KeyboardButton
+)
 
 from models import Admin, Link, WithdrawRequest
 
@@ -29,19 +32,49 @@ def setup(storage_ref, cpm_engine_ref, config_ref, bot_uname):
     bot_username = bot_uname
 
 
+def get_main_keyboard(base_url: str):
+    """Creates a persistent reply keyboard for easy 1-tap bot navigation."""
+    panel_url = f"{base_url}/panel" if base_url else "https://example.com"
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="🔗 নতুন লিংক তৈরি"),
+                KeyboardButton(text="📊 আমার লিংকসমূহ")
+            ],
+            [
+                KeyboardButton(text="💰 ব্যালেন্স"),
+                KeyboardButton(text="💸 উইথড্র")
+            ],
+            [
+                KeyboardButton(text="💻 ড্যাশবোর্ড", web_app=WebAppInfo(url=panel_url)),
+                KeyboardButton(text="❓ সাহায্য")
+            ]
+        ],
+        resize_keyboard=True,
+        persistent=True
+    )
+
+
 async def ensure_admin(message: types.Message) -> Admin:
-    """Auto-registers a Telegram user as admin if they don't exist in storage.
+    """Auto-registers a Telegram user as admin/owner if they don't exist in storage.
     Returns the Admin object."""
     telegram_id = message.from_user.id
     admin = storage.get_admin(telegram_id)
+    is_owner = (int(telegram_id) == int(config.OWNER_TELEGRAM_ID)) if config else False
+
     if not admin:
         admin = Admin(
             telegram_id=telegram_id,
             username=message.from_user.username,
             full_name=message.from_user.full_name or "Unknown",
-            role="owner" if telegram_id == config.OWNER_TELEGRAM_ID else "admin",
+            role="owner" if is_owner else "admin",
         )
         storage.upsert_admin(admin)
+    else:
+        if is_owner and admin.role != "owner":
+            admin.role = "owner"
+            storage.upsert_admin(admin)
+
     return admin
 
 
@@ -70,19 +103,67 @@ async def cmd_start_deeplink(message: types.Message, command: CommandObject):
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
     """Handle /start without deep-link — normal registration and welcome."""
-    await ensure_admin(message)
+    admin = await ensure_admin(message)
+    role_title = "👑 Owner (মালিক)" if admin.role == "owner" else "👤 Admin"
+    
     welcome_text = (
-        "👋 স্বাগতম! আমি আপনার টেলিগ্রাম লিংক শর্টনার বট।\n\n"
-        "আমার মাধ্যমে আপনি খুব সহজেই লিংক তৈরি করে আয় করতে পারেন।\n\n"
-        "উপলব্ধ কমান্ডসমূহ:\n"
-        "🔗 <code>/newlink &lt;url&gt;</code> - নতুন শর্ট লিংক তৈরি করুন\n"
-        "📊 <code>/mylinks</code> - আপনার লিংকসমূহ দেখুন\n"
-        "💰 <code>/mybalance</code> - আপনার ব্যালেন্স চেক করুন\n"
-        "💸 <code>/withdraw &lt;method&gt; &lt;account&gt;</code> - টাকা উত্তোলন করুন\n"
-        "💻 <code>/panel</code> - ড্যাশবোর্ড ওপেন করুন\n"
-        "❓ <code>/help</code> - সাহায্য"
+        f"👋 <b>স্বাগতম, {html.escape(message.from_user.first_name)}!</b> ({role_title})\n\n"
+        "আমি আপনার টেলিগ্রাম লিংক শর্টনার বট।\n"
+        "নিচের বাটনগুলো ব্যবহার করে খুব সহজেই লিংক তৈরি ও আয় ম্যানেজ করুন:\n\n"
+        "🔗 <b>নতুন লিংক তৈরি:</b> যেকোনো লিংক পেস্ট করুন বা বাটনে চাপুন\n"
+        "📊 <b>আমার লিংকসমূহ:</b> আপনার তৈরি করা সব লিংক\n"
+        "💰 <b>ব্যালেন্স:</b> আপনার মোট উপার্জন\n"
+        "💻 <b>ড্যাশবোর্ড:</b> ফুল ড্যাশবোর্ড ওপেন করুন"
     )
-    await message.answer(welcome_text)
+    reply_kb = get_main_keyboard(config.WEBAPP_BASE_URL if config else "")
+    await message.answer(welcome_text, reply_markup=reply_kb)
+
+
+# Button text handlers for Reply Keyboard
+@router.message(F.text == "🔗 নতুন লিংক তৈরি")
+async def btn_new_link_prompt(message: types.Message):
+    await ensure_admin(message)
+    msg = (
+        "🔗 <b>নতুন শর্ট লিংক তৈরি করতে:</b>\n\n"
+        "যেকোনো ডেসটিনেশন URL এই চ্যাটে সরাসরি পেস্ট করুন (যেমন: <code>https://example.com/file</code>)।\n"
+        "অথবা কমান্ড লিখুন: <code>/newlink https://example.com</code>"
+    )
+    await message.answer(msg)
+
+
+@router.message(F.text == "📊 আমার লিংকসমূহ")
+async def btn_mylinks(message: types.Message):
+    await cmd_mylinks(message)
+
+
+@router.message(F.text == "💰 ব্যালেন্স")
+async def btn_mybalance(message: types.Message):
+    await cmd_mybalance(message)
+
+
+@router.message(F.text == "💸 উইথড্র")
+async def btn_withdraw_prompt(message: types.Message):
+    admin = await ensure_admin(message)
+    min_withdrawal = config.MIN_WITHDRAWAL_AMOUNT if config else 50.0
+    msg = (
+        f"💸 <b>উইথড্র রিকোয়েস্ট করতে নিচের মতো লিখুন:</b>\n\n"
+        f"<code>/withdraw bkash 01712345678</code>\n"
+        f"অথবা\n"
+        f"<code>/withdraw nagad 01812345678</code>\n\n"
+        f"💰 বর্তমান ব্যালেন্স: {admin.balance_confirmed:.4f} $\n"
+        f"📌 ন্যূনতম উইথড্র: {min_withdrawal} $"
+    )
+    await message.answer(msg)
+
+
+@router.message(F.text == "💻 ড্যাশবোর্ড")
+async def btn_panel(message: types.Message):
+    await cmd_panel(message)
+
+
+@router.message(F.text == "❓ সাহায্য")
+async def btn_help(message: types.Message):
+    await cmd_help(message)
 
 
 @router.message(Command("newlink"))
@@ -92,9 +173,21 @@ async def cmd_newlink(message: types.Message, command: CommandObject):
     target_url = command.args
 
     if not target_url:
-        await message.answer("❌ অনুগ্রহ করে একটি URL দিন। ব্যবহারবিধি: <code>/newlink &lt;url&gt;</code>")
+        await message.answer("❌ অনুগ্রহ করে একটি URL দিন। ব্যবহারবিধি: <code>/newlink &lt;url&gt;</code>\nঅথবা সরাসরি লিংকটি মেসেজে পেস্ট করুন!")
         return
 
+    await create_and_send_short_link(message, admin, target_url)
+
+
+# Auto-create short link if user directly sends a URL starting with http:// or https://
+@router.message(F.text.startswith("http://") | F.text.startswith("https://"))
+async def auto_create_link_from_url(message: types.Message):
+    admin = await ensure_admin(message)
+    target_url = message.text.strip()
+    await create_and_send_short_link(message, admin, target_url)
+
+
+async def create_and_send_short_link(message: types.Message, admin: Admin, target_url: str):
     if not (target_url.startswith("http://") or target_url.startswith("https://")):
         await message.answer("❌ URL টি সঠিক নয়! (http:// বা https:// দিয়ে শুরু হতে হবে)")
         return
@@ -115,6 +208,8 @@ async def cmd_newlink(message: types.Message, command: CommandObject):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📢 টেলিগ্রামে শেয়ার করুন", url=share_url)]
     ])
+
+    reply_kb = get_main_keyboard(config.WEBAPP_BASE_URL if config else "")
 
     await message.answer(
         f"✅ <b>আপনার শর্ট লিংক প্রস্তুত! (সরাসরি অ্যাক্টিভ)</b>\n\n"
@@ -153,8 +248,6 @@ async def cmd_mylinks(message: types.Message):
         )
         await message.answer(msg, reply_markup=kb, disable_web_page_preview=True)
 
-    await message.answer(response)
-
 
 @router.message(Command("mybalance"))
 async def cmd_mybalance(message: types.Message):
@@ -167,7 +260,6 @@ async def cmd_mybalance(message: types.Message):
         f"⏳ পেন্ডিং ব্যালেন্স: {admin.balance_pending:.4f} $\n"
     )
 
-    # Show cycle info if scheduled mode
     if cpm_engine:
         cycle_info = cpm_engine.get_cycle_info()
         if cycle_info and cycle_info.get("mode") == "scheduled":
@@ -254,15 +346,14 @@ async def cmd_panel(message: types.Message):
 
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
-    """Show help text with all available commands."""
+    """Show help text with all available buttons and commands."""
     help_text = (
-        "❓ সাহায্য মেনু\n\n"
-        "🔗 <code>/newlink &lt;url&gt;</code> - নতুন লিংক তৈরি করুন\n"
-        "✅ <code>/proof &lt;code&gt; &lt;proof_url&gt;</code> - ভেরিফিকেশনের জন্য প্রুফ দিন\n"
-        "📊 <code>/mylinks</code> - আপনার সব লিংক দেখুন\n"
-        "💰 <code>/mybalance</code> - ব্যালেন্স দেখুন\n"
-        "💸 <code>/withdraw &lt;method&gt; &lt;account&gt;</code> - ব্যালেন্স উইথড্র করুন\n"
-        "💻 <code>/panel</code> - ড্যাশবোর্ড ওপেন করুন\n\n"
-        "যেকোনো সমস্যার জন্য Owner-এর সাথে যোগাযোগ করুন।"
+        "❓ <b>সাহায্য মেনু</b>\n\n"
+        "বটের নিচের বাটনগুলো ব্যবহার করে সবকিছু করতে পারবেন:\n\n"
+        "🔗 <b>নতুন লিংক তৈরি:</b> চ্যাটে যেকোনো লিংক পাঠালেই শর্ট লিংক হয়ে যাবে\n"
+        "📊 <b>আমার লিংকসমূহ:</b> আপনার সব লিংক ও ভিউ\n"
+        "💰 <b>ব্যালেন্স:</b> আপনার উপার্জিত ডলার\n"
+        "💸 <b>উইথড্র:</b> বিকাশ/নগদে টাকা তোলা\n"
+        "💻 <b>ড্যাশবোর্ড:</b> অ্যাডমিন/ওনার প্যানেল"
     )
     await message.answer(help_text)
