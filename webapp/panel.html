@@ -317,24 +317,22 @@
                     
                     <div class="stats-grid">
                         <div class="stat-item">
+                            <div class="stat-value" id="dashCpm" style="color: #38bdf8;">$0.50</div>
+                            <div class="stat-label"><i class="fas fa-chart-line"></i> বর্তমান CPM</div>
+                        </div>
+                        <div class="stat-item">
                             <div class="stat-value" id="totalLinks">0</div>
-                            <div class="stat-label">মোট লিংক</div>
+                            <div class="stat-label"><i class="fas fa-link"></i> মোট লিংক</div>
                         </div>
                         <div class="stat-item">
                             <div class="stat-value" id="totalViews">0</div>
-                            <div class="stat-label">মোট ভিউ</div>
+                            <div class="stat-label"><i class="fas fa-eye"></i> মোট ভিউ</div>
                         </div>
                         <div class="stat-item">
                             <div class="stat-value" id="totalEarned">$0.00</div>
-                            <div class="stat-label">মোট আয়</div>
+                            <div class="stat-label"><i class="fas fa-wallet"></i> মোট আয়</div>
                         </div>
                     </div>
-                </div>
-
-                <div id="scheduledModeCard" class="glass-card hidden">
-                    <h3><i class="fas fa-clock text-warning"></i> পরবর্তী পেআউট</h3>
-                    <div class="balance-amount text-center" id="payoutTimer">--:--:--</div>
-                    <p class="text-center mt-2">এই সাইকেলে পেন্ডিং ভিউ: <strong id="cyclePendingViews">0</strong></p>
                 </div>
             </div>
 
@@ -360,13 +358,21 @@
 
                 <div class="glass-card">
                     <h3>উইথড্র রিকোয়েস্ট</h3>
-                    <div class="flex-between mb-4 mt-2">
+                    <div class="flex-between mb-3 mt-2">
                         <button class="btn btn-success" id="btnMethodBkash" onclick="setWithdrawMethod('bKash')">bKash</button>
                         <div style="width: 10px;"></div>
                         <button class="btn btn-outline" id="btnMethodNagad" onclick="setWithdrawMethod('Nagad')">Nagad</button>
                     </div>
-                    <input type="text" id="withdrawAccount" placeholder="একাউন্ট নম্বর (যেমন: 017...)">
-                    <input type="number" id="withdrawAmount" placeholder="পরিমাণ ($)" readonly>
+                    <label class="balance-title">একাউন্ট নম্বর</label>
+                    <input type="text" id="withdrawAccount" placeholder="যেমন: 01712345678">
+                    
+                    <label class="balance-title mt-2">উইথড্র পরিমাণ ($)</label>
+                    <input type="number" id="withdrawAmount" step="0.5" placeholder="উইথড্র পরিমাণ ($)">
+                    
+                    <div class="text-muted mt-2 mb-3" style="font-size: 12px; color: #a78bfa;">
+                        📌 মিনিমাম লিমিট: <strong>$<span id="minWithdrawLabel">50.00</span></strong> | ⏱️ পেমেন্ট সময়: <strong><span id="payoutHoursLabel">২৪ ঘণ্টা</span></strong>
+                    </div>
+                    
                     <button class="btn mt-2" id="withdrawSubmitBtn" onclick="submitWithdraw()">রিকোয়েস্ট সাবমিট করুন</button>
                 </div>
 
@@ -610,14 +616,13 @@
 
             if (data.cycle_info) {
                 const cpmVal = data.cycle_info.cpm || 0.50;
+                document.getElementById('dashCpm').innerText = `$${formatMoney(cpmVal)}`;
                 document.getElementById('cpmBadge').innerText = `CPM: $${formatMoney(cpmVal)} | ${data.cycle_info.mode || 'realtime'}`;
-                if (data.cycle_info.mode === 'scheduled') {
-                    document.getElementById('scheduledModeCard').classList.remove('hidden');
-                    document.getElementById('cyclePendingViews').innerText = data.cycle_info.pending_views || 0;
-                    if (data.cycle_info.time_remaining_seconds) {
-                        const targetTime = Date.now() + (data.cycle_info.time_remaining_seconds * 1000);
-                        startTimer(targetTime);
-                    }
+                if (data.cycle_info.min_withdrawal_amount) {
+                    document.getElementById('minWithdrawLabel').innerText = formatMoney(data.cycle_info.min_withdrawal_amount);
+                }
+                if (data.cycle_info.payout_processing_hours) {
+                    document.getElementById('payoutHoursLabel').innerText = `${data.cycle_info.payout_processing_hours} ঘণ্টা`;
                 }
             }
         }
@@ -869,11 +874,15 @@
                 const res = await fetch(`${API_BASE_URL}/api/admin/withdrawals/${reqId}/resolve`, {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify({ decision })
+                    body: JSON.stringify({ status: decision, decision })
                 });
                 if (res.ok) {
-                    showToast(`পেমেন্ট ${decision === 'paid' ? 'অনুমোদিত' : 'রিজেক্ট'} হয়েছে!`);
+                    showToast(`পেমেন্ট ${decision === 'paid' ? 'অনুমোদিত (Paid)' : 'রিজেক্ট'} হয়েছে!`);
                     loadPaymentsList();
+                    fetchAppInit();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || 'অনুমোদন ব্যর্থ হয়েছে', 'error');
                 }
             } catch(e) { showToast('ত্রুটি ঘটেছে', 'error'); }
         }
