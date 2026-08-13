@@ -164,6 +164,10 @@ class CreateWithdrawalRequest(BaseModel):
     account_number: str
 
 # Routes
+@app.get("/")
+async def root():
+    return RedirectResponse(url="/panel")
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "timestamp": time.time()}
