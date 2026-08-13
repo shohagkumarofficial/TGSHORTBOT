@@ -74,11 +74,11 @@ async def cmd_start(message: types.Message):
         "👋 স্বাগতম! আমি আপনার টেলিগ্রাম লিংক শটনার বট।\n\n"
         "আমার মাধ্যমে আপনি খুব সহজেই লিংক তৈরি করে আয় করতে পারেন।\n\n"
         "উপলব্ধ কমান্ডসমূহ:\n"
-        "🔗 /newlink <url> - নতুন শর্ট লিংক তৈরি করুন\n"
-        "✅ /proof <code> <proof_url> - প্রুফ সাবমিট করুন\n"
+        "🔗 /newlink [url] - নতুন শর্ট লিংক তৈরি করুন\n"
+        "✅ /proof [code] [proof_url] - প্রুফ সাবমিট করুন\n"
         "📊 /mylinks - আপনার লিংকসমূহ দেখুন\n"
         "💰 /mybalance - আপনার ব্যালেন্স চেক করুন\n"
-        "💸 /withdraw <method> <account> - টাকা উত্তোলন করুন\n"
+        "💸 /withdraw [method] [account] - টাকা উত্তোলন করুন\n"
         "💻 /panel - ড্যাশবোর্ড ওপেন করুন\n"
         "❓ /help - সাহায্য"
     )
@@ -92,7 +92,7 @@ async def cmd_newlink(message: types.Message, command: CommandObject):
     target_url = command.args
 
     if not target_url:
-        await message.answer("❌ অনুগ্রহ করে একটি URL দিন। ব্যবহারবিধি: /newlink <url>")
+        await message.answer("❌ অনুগ্রহ করে একটি URL দিন। ব্যবহারবিধি: /newlink [url]")
         return
 
     if not (target_url.startswith("http://") or target_url.startswith("https://")):
@@ -112,7 +112,7 @@ async def cmd_newlink(message: types.Message, command: CommandObject):
     await message.answer(
         f"✅ আপনার শর্ট লিংক সফলভাবে তৈরি হয়েছে!\n\n"
         f"🔗 লিংক: {short_url}\n\n"
-        f"⚠️ অনুগ্রহ করে /proof {short_code} <proof_url> কমান্ড ব্যবহার করে প্রুফ জমা দিন।"
+        f"⚠️ অনুগ্রহ করে /proof {short_code} [proof_url] কমান্ড ব্যবহার করে প্রুফ জমা দিন।"
     )
 
 
@@ -123,12 +123,12 @@ async def cmd_proof(message: types.Message, command: CommandObject):
     args = command.args
 
     if not args:
-        await message.answer("❌ ব্যবহারবিধি: /proof <short_code> <proof_url>")
+        await message.answer("❌ ব্যবহারবিধি: /proof [short_code] [proof_url]")
         return
 
     parts = args.split(maxsplit=1)
     if len(parts) < 2:
-        await message.answer("❌ ব্যবহারবিধি: /proof <short_code> <proof_url>")
+        await message.answer("❌ ব্যবহারবিধি: /proof [short_code] [proof_url]")
         return
 
     short_code, proof_url = parts
@@ -213,7 +213,7 @@ async def cmd_withdraw(message: types.Message, command: CommandObject):
 
     if not args:
         await message.answer(
-            "❌ ব্যবহারবিধি: /withdraw <method> <account_number>\n"
+            "❌ ব্যবহারবিধি: /withdraw [method] [account_number]\n"
             "উদাহরণ: /withdraw bkash 01712345678"
         )
         return
@@ -221,7 +221,7 @@ async def cmd_withdraw(message: types.Message, command: CommandObject):
     parts = args.split(maxsplit=1)
     if len(parts) < 2:
         await message.answer(
-            "❌ ব্যবহারবিধি: /withdraw <method> <account_number>\n"
+            "❌ ব্যবহারবিধি: /withdraw [method] [account_number]\n"
             "উদাহরণ: /withdraw bkash 01712345678"
         )
         return
@@ -278,11 +278,11 @@ async def cmd_help(message: types.Message):
     """Show help text with all available commands."""
     help_text = (
         "❓ সাহায্য মেনু\n\n"
-        "🔗 /newlink <url> - নতুন লিংক তৈরি করুন\n"
-        "✅ /proof <code> <proof_url> - ভেরিফিকেশনের জন্য প্রুফ দিন\n"
+        "🔗 /newlink [url] - নতুন লিংক তৈরি করুন\n"
+        "✅ /proof [code] [proof_url] - ভেরিফিকেশনের জন্য প্রুফ দিন\n"
         "📊 /mylinks - আপনার সব লিংক দেখুন\n"
         "💰 /mybalance - ব্যালেন্স দেখুন\n"
-        "💸 /withdraw <method> <account> - ব্যালেন্স উইথড্র করুন\n"
+        "💸 /withdraw [method] [account] - ব্যালেন্স উইথড্র করুন\n"
         "💻 /panel - ড্যাশবোর্ড ওপেন করুন\n\n"
         "যেকোনো সমস্যার জন্য Owner-এর সাথে যোগাযোগ করুন।"
     )
