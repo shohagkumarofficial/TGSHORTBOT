@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TGShortBot Viewer</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0a0a1a;
+            --bg-grad: linear-gradient(135deg, #0a0a1a 0%, #1a1a3e 100%);
+            --card-bg: rgba(255, 255, 255, 0.05);
+            --text-color: #ffffff;
+            --accent-1: #4a00e0;
+            --accent-2: #8e2de2;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg-grad);
+            background-attachment: fixed;
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 400px;
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 20px;
+            color: #fff;
+        }
+
+        .progress-text {
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+            margin-bottom: 30px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+            transition: width 0.5s ease;
+        }
+
+        .btn {
+            background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
+            border: none;
+            color: white;
+            padding: 15px 30px;
+            font-size: 1.1rem;
+            border-radius: 30px;
+            cursor: pointer;
+            width: 100%;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(142, 45, 226, 0.4);
+            transition: transform 0.2s, box-shadow 0.2s;
+            animation: pulse 2s infinite;
+        }
+
+        .btn:active {
+            transform: scale(0.95);
+        }
+
+        .btn:disabled {
+            background: #555;
+            animation: none;
+            cursor: not-allowed;
+            box-shadow: none;
+        }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(142, 45, 226, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(142, 45, 226, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(142, 45, 226, 0); }
+        }
+
+        .spinner {
+            display: none;
+            width: 40px;
+            height: 40px;
+            border: 4px solid rgba(255,255,255,0.1);
+            border-left-color: var(--accent-2);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .success-icon {
+            display: none;
+            font-size: 4rem;
+            color: #4CAF50;
+            margin-bottom: 20px;
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes popIn {
+            0% { transform: scale(0); }
+            100% { transform: scale(1); }
+        }
+        
+        #error-msg {
+            color: #ff5252;
+            margin-top: 15px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container" id="main-container">
+        <h1 id="title">লিংক আনলক করুন</h1>
+        
+        <div class="success-icon" id="success-icon">✅</div>
+
+        <div id="ad-content">
+            <div class="progress-text" id="progress-text">বিজ্ঞাপন 1/3</div>
+            
+            <div class="progress-bar-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            
+            <button class="btn" id="action-btn" onclick="showNextAd()">বিজ্ঞাপন দেখুন</button>
+            <div class="spinner" id="spinner"></div>
+            <div id="error-msg">কোনো একটি সমস্যা হয়েছে, আবার চেষ্টা করুন।</div>
+        </div>
+
+        <div id="success-content" style="display: none;">
+            <h2 style="color: #4CAF50;">✅ সম্পন্ন হয়েছে!</h2>
+            <p id="redirect-text">রিডাইরেক্ট করা হচ্ছে 3... 2... 1...</p>
+        </div>
+    </div>
+
+    <script>
+        // Config injected by server
+        const SHORT_CODE = '{{SHORT_CODE}}';
+        const ADSGRAM_BLOCK_ID = '{{ADSGRAM_BLOCK_ID}}';
+        const API_BASE_URL = '{{API_BASE_URL}}';
+
+        // Initialize Telegram WebApp
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+        tg.expand();
+        
+        // Theme config
+        if (tg.themeParams.bg_color) {
+            document.documentElement.style.setProperty('--bg-color', tg.themeParams.bg_color);
+        }
+        if (tg.themeParams.text_color) {
+            document.documentElement.style.setProperty('--text-color', tg.themeParams.text_color);
+        }
+
+        let currentAd = 0;
+        const totalAds = 3;
+        
+        const actionBtn = document.getElementById('action-btn');
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const spinner = document.getElementById('spinner');
+        const errorMsg = document.getElementById('error-msg');
+        
+        let AdController;
+
+        try {
+            AdController = window.Adsgram.init({ blockId: ADSGRAM_BLOCK_ID });
+        } catch (e) {
+            console.error("Adsgram init error", e);
+            errorMsg.innerText = "বিজ্ঞাপন লোড করতে ব্যর্থ হয়েছে।";
+            errorMsg.style.display = 'block';
+        }
+
+        function updateUI() {
+            const percent = (currentAd / totalAds) * 100;
+            progressBar.style.width = `${percent}%`;
+            if (currentAd < totalAds) {
+                progressText.innerText = `বিজ্ঞাপন ${currentAd + 1}/${totalAds}`;
+            }
+        }
+
+        function setBtnLoading(isLoading) {
+            if (isLoading) {
+                actionBtn.style.display = 'none';
+                spinner.style.display = 'block';
+                errorMsg.style.display = 'none';
+            } else {
+                actionBtn.style.display = 'block';
+                spinner.style.display = 'none';
+            }
+        }
+
+        async function showNextAd() {
+            if (!AdController) {
+                errorMsg.style.display = 'block';
+                return;
+            }
+            
+            setBtnLoading(true);
+            
+            try {
+                const result = await AdController.show();
+                // Ad completed successfully
+                currentAd++;
+                updateUI();
+                
+                if (currentAd >= totalAds) {
+                    await logView();
+                } else {
+                    setBtnLoading(false);
+                    actionBtn.innerText = "পরবর্তী বিজ্ঞাপন দেখুন";
+                }
+            } catch (err) {
+                console.error("Ad error/skipped:", err);
+                setBtnLoading(false);
+                errorMsg.style.display = 'block';
+            }
+        }
+
+        async function logView() {
+            progressText.innerText = "যাচাই করা হচ্ছে...";
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/log-view`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        short_code: SHORT_CODE,
+                        init_data: tg.initData
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showSuccess(data.destination_url);
+                } else {
+                    throw new Error("Failed");
+                }
+            } catch (error) {
+                setBtnLoading(false);
+                errorMsg.innerText = "সার্ভার এরর, রিফ্রেশ করুন।";
+                errorMsg.style.display = 'block';
+            }
+        }
+
+        function showSuccess(destinationUrl) {
+            document.getElementById('ad-content').style.display = 'none';
+            document.getElementById('title').style.display = 'none';
+            document.getElementById('success-icon').style.display = 'block';
+            document.getElementById('success-content').style.display = 'block';
+            
+            let timeLeft = 3;
+            const redirectText = document.getElementById('redirect-text');
+            
+            const timer = setInterval(() => {
+                timeLeft--;
+                redirectText.innerText = `রিডাইরেক্ট করা হচ্ছে ${timeLeft}...`;
+                if (timeLeft <= 0) {
+                    clearInterval(timer);
+                    window.location.href = destinationUrl;
+                }
+            }, 1000);
+        }
+        
+        // Initial setup
+        updateUI();
+    </script>
+</body>
+</html>
