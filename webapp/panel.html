@@ -717,6 +717,20 @@
             }
         }
 
+        function copyToClipboard(text) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).then(() => showToast('লিংক কপি করা হয়েছে!'));
+            } else {
+                const input = document.createElement('input');
+                input.value = text;
+                document.body.appendChild(input);
+                input.select();
+                document.execCommand('copy');
+                document.body.removeChild(input);
+                showToast('লিংক কপি করা হয়েছে!');
+            }
+        }
+
         function loadMyLinks(links) {
             if (!links || links.length === 0) {
                 document.getElementById('myLinksList').innerHTML = '<p class="text-center mt-4">কোনো লিংক পাওয়া যায়নি</p>';
@@ -724,21 +738,28 @@
             }
 
             const html = links.map(l => {
-                const statusBadge = l.verification_status === 'verified' 
-                    ? '<span class="badge badge-verified">✅ ভেরিফায়ড</span>'
-                    : (l.verification_status === 'rejected' ? '<span class="badge badge-rejected">❌ রিজেক্টেড</span>' : '<span class="badge badge-pending">⏳ পেন্ডিং</span>');
+                const botUname = tg.initDataUnsafe?.bot?.username || 'TGSHORTBOT';
+                const shortUrl = `https://t.me/${botUname}?start=${l.short_code}`;
+                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(shortUrl)}&text=${encodeURIComponent('লিংকটি দেখতে নিচের লিংকে ক্লিক করুন:')}`;
                 
                 return `
                     <div class="list-item">
                         <div class="flex-between mb-2">
-                            ${statusBadge}
-                            <span class="text-muted"><i class="fas fa-link"></i> ${l.short_code}</span>
+                            <span class="badge badge-verified">✅ সরাসরি অ্যাক্টিভ</span>
+                            <span class="text-muted"><i class="fas fa-code"></i> ${l.short_code}</span>
                         </div>
                         <div class="list-item-title">${l.destination_url}</div>
-                        <div class="list-item-meta" style="margin-top: 8px;">
-                            ${l.proof_url ? `📎 প্রুফ: <a href="${l.proof_url}" target="_blank" style="color: #60a5fa">${l.proof_url}</a>` : '<span style="color: #f87171">প্রুফ দেওয়া হয়নি</span>'}
+                        <div class="list-item-meta" style="margin-top: 8px; color: #a78bfa; font-family: monospace; font-size: 13px;">
+                            ${shortUrl}
                         </div>
-                        ${!l.proof_url ? `<button class="btn btn-outline mt-2" style="padding: 4px 10px; font-size: 12px;" onclick="openProofModal('${l.short_code}')">প্রুফ দিন</button>` : ''}
+                        <div class="action-buttons mt-2" style="display: flex; gap: 8px; margin-top: 10px;">
+                            <button class="btn btn-outline" style="padding: 6px 12px; font-size: 12px; flex: 1;" onclick="copyToClipboard('${shortUrl}')">
+                                <i class="fas fa-copy"></i> কপি করুন
+                            </button>
+                            <a class="btn" style="padding: 6px 12px; font-size: 12px; flex: 1; text-decoration: none;" href="${shareUrl}" target="_blank">
+                                <i class="fas fa-paper-plane"></i> শেয়ার করুন
+                            </a>
+                        </div>
                     </div>
                 `;
             }).join('');
