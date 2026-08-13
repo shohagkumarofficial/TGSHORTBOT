@@ -1,6 +1,5 @@
 import os
-import secrets
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 @dataclass
 class Settings:
@@ -11,7 +10,7 @@ class Settings:
     ADSGRAM_BLOCK_ID: str = ""
     PORT: int = 10000
     WEBAPP_BASE_URL: str = ""
-    WEBHOOK_SECRET: str = field(default_factory=lambda: secrets.token_hex(16))
+    WEBHOOK_SECRET: str = "tgshortbot_secret_key"
     MIN_WITHDRAWAL_AMOUNT: float = 50.0
 
     @classmethod
@@ -31,6 +30,7 @@ class Settings:
             ADSGRAM_BLOCK_ID=os.environ.get("ADSGRAM_BLOCK_ID", ""),
             PORT=int(os.environ.get("PORT", "10000")),
             WEBAPP_BASE_URL=os.environ.get("WEBAPP_BASE_URL", ""),
+            WEBHOOK_SECRET=os.environ.get("WEBHOOK_SECRET", "tgshortbot_secret_key"),
             MIN_WITHDRAWAL_AMOUNT=float(os.environ.get("MIN_WITHDRAWAL_AMOUNT", "50.0"))
         )
 
