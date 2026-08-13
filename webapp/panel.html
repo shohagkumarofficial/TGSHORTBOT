@@ -99,90 +99,121 @@
             border: 1px solid var(--glass-border);
             color: white;
             padding: 12px 16px;
-            border-radius: 12px;
+            border-radius: 10px;
             font-size: 14px;
-            font-family: inherit;
             margin-bottom: 12px;
             outline: none;
-            transition: border-color 0.3s;
         }
-        input:focus, select:focus { border-color: var(--accent-start); }
-        
+        input:focus, select:focus {
+            border-color: var(--accent-start);
+        }
+
+        /* Buttons */
         .btn {
+            width: 100%;
+            padding: 14px;
+            border-radius: 12px;
+            border: none;
             background: linear-gradient(90deg, var(--accent-start), var(--accent-end));
             color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 12px;
             font-weight: 600;
-            font-size: 14px;
+            font-size: 15px;
             cursor: pointer;
-            width: 100%;
+            box-shadow: 0 4px 15px rgba(124, 58, 237, 0.4);
             display: inline-flex;
             justify-content: center;
             align-items: center;
             gap: 8px;
-            transition: opacity 0.2s, transform 0.1s;
         }
-        .btn:active { transform: scale(0.98); }
-        .btn-outline { background: transparent; border: 1px solid var(--accent-start); }
-        .btn-success { background: linear-gradient(90deg, var(--success-start), var(--success-end)); }
-        .btn-danger { background: linear-gradient(90deg, #ef4444, #b91c1c); }
-        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-outline {
+            background: transparent;
+            border: 1px solid var(--glass-border);
+            box-shadow: none;
+        }
+        .btn-success {
+            background: linear-gradient(90deg, var(--success-start), var(--success-end));
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+        }
+        .btn-warning {
+            background: linear-gradient(90deg, var(--warning-start), var(--warning-end));
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);
+        }
 
-        /* Bottom Nav */
+        /* Badges */
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            display: inline-block;
+        }
+        .badge-verified { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+        .badge-pending { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+        .badge-rejected { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+
+        /* Navigation Bar */
         .bottom-nav {
             position: fixed;
             bottom: 0;
             left: 0;
             right: 0;
+            height: var(--navbar-height);
             background: rgba(10, 10, 26, 0.85);
-            backdrop-filter: blur(20px);
+            backdrop-filter: blur(25px);
             border-top: 1px solid var(--glass-border);
             display: flex;
             justify-content: space-around;
-            padding: 12px 0;
-            height: var(--navbar-height);
-            z-index: 100;
+            align-items: center;
+            z-index: 1000;
+            padding: 0 10px;
         }
-        
         .nav-item {
             display: flex;
             flex-direction: column;
             align-items: center;
+            font-size: 11px;
             color: var(--text-muted);
-            font-size: 11px;
-            gap: 4px;
             cursor: pointer;
-            transition: color 0.3s;
-            flex: 1;
-            text-align: center;
-        }
-        .nav-item i { font-size: 20px; margin-bottom: 2px; transition: transform 0.3s; }
-        .nav-item.active { color: var(--accent-start); }
-        .nav-item.active i { transform: translateY(-2px); }
-
-        .owner-nav-rows { flex-direction: column; height: auto; padding: 0; }
-        .nav-row { display: flex; justify-content: space-around; width: 100%; padding: 10px 0; border-bottom: 1px solid var(--glass-border); }
-        .nav-row:last-child { border-bottom: none; }
-
-        /* Tabs */
-        .tab-content { display: none; animation: fadeIn 0.3s ease; }
-        .tab-content.active { display: block; }
-
-        /* Badges */
-        .badge {
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 11px;
-            font-weight: 600;
-            display: inline-flex;
-            align-items: center;
             gap: 4px;
+            flex: 1;
         }
-        .badge-verified { background: rgba(16, 185, 129, 0.2); color: #34d399; }
-        .badge-pending { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
-        .badge-rejected { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+        .nav-item i { font-size: 18px; }
+        .nav-item.active {
+            color: #a78bfa;
+        }
+
+        /* Owner Nav Row Layout */
+        .owner-nav-rows {
+            flex-direction: column;
+            height: auto;
+            padding: 8px 0;
+        }
+        .nav-row {
+            display: flex;
+            width: 100%;
+            justify-content: space-around;
+            margin: 4px 0;
+        }
+
+        /* Tabs Visibility */
+        .tab-content { display: none; }
+        .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* List Items */
+        .list-item {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 14px;
+            margin-bottom: 10px;
+        }
+        .list-item-title { font-weight: 600; font-size: 14px; word-break: break-all; }
+        .list-item-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; word-break: break-all; }
 
         /* Modals */
         .modal-overlay {
@@ -190,85 +221,60 @@
             top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0, 0, 0, 0.7);
             backdrop-filter: blur(5px);
-            display: flex;
-            align-items: center;
+            z-index: 2000;
+            display: none;
             justify-content: center;
-            z-index: 1000;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.3s;
+            align-items: center;
+            padding: 20px;
         }
-        .modal-overlay.active { opacity: 1; pointer-events: all; }
+        .modal-overlay.active { display: flex; }
         .modal {
-            background: linear-gradient(135deg, #16162e, #1a1a3e);
+            background: #12122b;
             border: 1px solid var(--glass-border);
             border-radius: 20px;
             padding: 24px;
-            width: 90%;
+            width: 100%;
             max-width: 400px;
-            transform: translateY(20px);
-            transition: transform 0.3s;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
         }
-        .modal-overlay.active .modal { transform: translateY(0); }
-        
-        /* Toast */
+
+        /* Skeleton Loading */
+        .skeleton {
+            background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 37%, rgba(255,255,255,0.05) 63%);
+            background-size: 400% 100%;
+            animation: skeleton-loading 1.4s ease infinite;
+            border-radius: 8px;
+        }
+        @keyframes skeleton-loading {
+            0% { background-position: 100% 50%; }
+            100% { background-position: 0 50%; }
+        }
+        .hidden { display: none !important; }
+
+        /* Toast Notifications */
         .toast-container {
             position: fixed;
             top: 20px;
             left: 50%;
             transform: translateX(-50%);
-            z-index: 2000;
+            z-index: 3000;
             display: flex;
             flex-direction: column;
             gap: 10px;
         }
         .toast {
-            background: rgba(30, 41, 59, 0.9);
-            backdrop-filter: blur(10px);
+            background: rgba(18, 18, 43, 0.95);
             border: 1px solid var(--glass-border);
+            color: white;
             padding: 12px 20px;
             border-radius: 30px;
             font-size: 13px;
-            font-weight: 500;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            animation: slideDown 0.3s forwards, fadeOut 0.3s 2.7s forwards;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        .toast.success { border-color: var(--success-start); color: #34d399; }
-        .toast.error { border-color: #ef4444; color: #f87171; }
-
-        /* Skeleton Loader */
-        .skeleton {
-            background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.05) 75%);
-            background-size: 200% 100%;
-            animation: shimmer 1.5s infinite;
-            border-radius: 8px;
-        }
-        .sk-text { height: 16px; margin-bottom: 8px; width: 100%; }
-        .sk-title { height: 24px; width: 60%; margin-bottom: 16px; }
-
-        /* Keyframes */
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
-        @keyframes slideDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
-        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
-
-        /* Utilities */
-        .hidden { display: none !important; }
-        .text-center { text-align: center; }
-        .mt-2 { margin-top: 8px; } .mt-4 { margin-top: 16px; }
-        .mb-2 { margin-bottom: 8px; } .mb-4 { margin-bottom: 16px; }
-
-        .action-buttons { display: flex; gap: 8px; margin-top: 12px; }
-        .action-buttons button { flex: 1; padding: 8px; font-size: 12px; }
-
-        .list-item {
-            border-bottom: 1px solid var(--glass-border);
-            padding: 12px 0;
-        }
-        .list-item:last-child { border-bottom: none; }
-        .list-item-title { font-weight: 600; margin-bottom: 4px; word-break: break-all; }
-        .list-item-meta { font-size: 12px; color: var(--text-muted); display: flex; justify-content: space-between; }
+        .toast.success { border-color: var(--success-start); }
+        .toast.error { border-color: #ef4444; }
     </style>
 </head>
 <body>
@@ -276,34 +282,38 @@
     <div class="toast-container" id="toastContainer"></div>
 
     <div class="container">
-        
-        <!-- Loading State -->
-        <div id="loadingState" class="glass-card">
-            <div class="skeleton sk-title"></div>
-            <div class="skeleton sk-text"></div>
-            <div class="skeleton sk-text"></div>
-            <div class="skeleton sk-text" style="width: 80%;"></div>
+        <!-- Header -->
+        <div class="flex-between mb-4 mt-2">
+            <div>
+                <h2>স্বাগতম, <span id="userName" class="text-gradient">ইউজার</span>! 👋</h2>
+                <p id="userRoleBadge" class="badge badge-verified">Sub-Admin</p>
+            </div>
+            <div style="text-align: right;">
+                <span class="badge badge-pending" id="cpmBadge">Mode: Real-time</span>
+            </div>
         </div>
 
-        <!-- Main App Content (Hidden initially) -->
+        <!-- Skeleton Loading State -->
+        <div id="loadingState">
+            <div class="glass-card">
+                <div class="skeleton" style="height: 20px; width: 40%; margin-bottom: 12px;"></div>
+                <div class="skeleton" style="height: 40px; width: 70%; margin-bottom: 16px;"></div>
+                <div class="skeleton" style="height: 20px; width: 40%; margin-bottom: 12px;"></div>
+                <div class="skeleton" style="height: 30px; width: 50%;"></div>
+            </div>
+        </div>
+
+        <!-- App Content -->
         <div id="appContent" class="hidden">
             
-            <!-- Header -->
-            <div class="flex-between mb-4">
-                <div>
-                    <h2 class="text-gradient">স্বাগতম, <span id="userName">Admin</span></h2>
-                    <p id="userRoleBadge" class="badge badge-verified">Sub-Admin</p>
-                </div>
-            </div>
-
             <!-- Tab 1: Dashboard -->
             <div id="tab-dashboard" class="tab-content active">
                 <div class="glass-card">
                     <div class="balance-title">কনফার্মড ব্যালেন্স</div>
-                    <div class="balance-amount balance-confirmed">৳<span id="confirmedBalance">0.00</span></div>
+                    <div class="balance-amount balance-confirmed">$<span id="confirmedBalance">0.0000</span></div>
                     
                     <div class="balance-title mt-4">পেন্ডিং ব্যালেন্স</div>
-                    <div class="balance-amount balance-pending" style="font-size: 24px;">৳<span id="pendingBalance">0.00</span></div>
+                    <div class="balance-amount balance-pending" style="font-size: 24px;">$<span id="pendingBalance">0.0000</span></div>
                     
                     <div class="stats-grid">
                         <div class="stat-item">
@@ -315,7 +325,7 @@
                             <div class="stat-label">মোট ভিউ</div>
                         </div>
                         <div class="stat-item">
-                            <div class="stat-value" id="totalEarned">৳0</div>
+                            <div class="stat-value" id="totalEarned">$0.00</div>
                             <div class="stat-label">মোট আয়</div>
                         </div>
                     </div>
@@ -345,18 +355,18 @@
             <div id="tab-withdraw" class="tab-content">
                 <div class="glass-card text-center">
                     <div class="balance-title">উইথড্র যোগ্য ব্যালেন্স</div>
-                    <div class="balance-amount balance-confirmed">৳<span id="withdrawAvail">0.00</span></div>
+                    <div class="balance-amount balance-confirmed">$<span id="withdrawAvail">0.0000</span></div>
                 </div>
 
                 <div class="glass-card">
                     <h3>উইথড্র রিকোয়েস্ট</h3>
                     <div class="flex-between mb-4 mt-2">
-                        <button class="btn btn-outline" id="btnMethodBkash" onclick="setWithdrawMethod('bKash')">bKash</button>
+                        <button class="btn btn-success" id="btnMethodBkash" onclick="setWithdrawMethod('bKash')">bKash</button>
                         <div style="width: 10px;"></div>
                         <button class="btn btn-outline" id="btnMethodNagad" onclick="setWithdrawMethod('Nagad')">Nagad</button>
                     </div>
                     <input type="text" id="withdrawAccount" placeholder="একাউন্ট নম্বর (যেমন: 017...)">
-                    <input type="number" id="withdrawAmount" placeholder="পরিমাণ (৳)" readonly>
+                    <input type="number" id="withdrawAmount" placeholder="পরিমাণ ($)" readonly>
                     <button class="btn mt-2" id="withdrawSubmitBtn" onclick="submitWithdraw()">রিকোয়েস্ট সাবমিট করুন</button>
                 </div>
 
@@ -374,7 +384,7 @@
             <div id="tab-verify" class="tab-content">
                 <div class="glass-card">
                     <h3>পেন্ডিং ভেরিফিকেশন</h3>
-                    <div id="verifyList"></div>
+                    <div id="verifyList"><p class="text-center mt-4">লোড হচ্ছে...</p></div>
                 </div>
             </div>
 
@@ -382,7 +392,7 @@
             <div id="tab-payments" class="tab-content">
                 <div class="glass-card">
                     <h3>পেন্ডিং পেমেন্ট</h3>
-                    <div id="paymentsList"></div>
+                    <div id="paymentsList"><p class="text-center mt-4">লোড হচ্ছে...</p></div>
                 </div>
             </div>
 
@@ -396,16 +406,16 @@
                         <option value="scheduled">Scheduled (শিডিউল্ড)</option>
                     </select>
 
-                    <label class="balance-title">সিপিএম রেট (৳ প্রতি ১০০০ ভিউ)</label>
+                    <label class="balance-title">সিপিএম রেট ($ প্রতি ১০০০ ভিউ)</label>
                     <input type="number" id="cpmRate" step="0.01">
 
                     <div id="scheduledSettings" class="hidden mt-2">
                         <label class="balance-title">সাইকেল ডিউরেশন</label>
                         <select id="cpmCycle">
-                            <option value="12h">১২ ঘন্টা</option>
-                            <option value="24h">২৪ ঘন্টা</option>
-                            <option value="3d">৩ দিন</option>
-                            <option value="7d">৭ দিন</option>
+                            <option value="12">১২ ঘন্টা</option>
+                            <option value="24" selected>২৪ ঘন্টা</option>
+                            <option value="72">৩ দিন</option>
+                            <option value="168">৭ দিন</option>
                         </select>
                     </div>
 
@@ -421,17 +431,17 @@
                         <div class="stat-label">মোট এডমিন</div>
                     </div>
                     <div class="glass-card stat-item" style="margin-bottom:0">
-                        <div class="stat-value" id="platformPaid">৳0</div>
-                        <div class="stat-label">মোট পেমেন্ট</div>
+                        <div class="stat-value" id="platformPaid">$0</div>
+                        <div class="stat-label">পেন্ডিং উইথড্র</div>
                     </div>
                     <div class="glass-card stat-item" style="margin-bottom:0">
-                        <div class="stat-value" id="platformPending">৳0</div>
-                        <div class="stat-label">মোট পেন্ডিং</div>
+                        <div class="stat-value" id="platformPending">$0</div>
+                        <div class="stat-label">মোট দায়বদ্ধতা</div>
                     </div>
                 </div>
                 <div class="glass-card">
                     <h3>সব এডমিন</h3>
-                    <div id="adminsList"></div>
+                    <div id="adminsList"><p class="text-center mt-4">লোড হচ্ছে...</p></div>
                 </div>
             </div>
 
@@ -450,7 +460,7 @@
             <h3>নতুন লিংক তৈরি</h3>
             <p>আপনার ডেসটিনেশন URL প্রদান করুন</p>
             <input type="url" id="newLinkUrl" placeholder="https://example.com/file..." required>
-            <div class="action-buttons mt-4">
+            <div class="action-buttons mt-4" style="display: flex; gap: 8px;">
                 <button class="btn btn-outline" onclick="closeModal('createLinkModal')">বাতিল</button>
                 <button class="btn" onclick="createLink()">তৈরি করুন</button>
             </div>
@@ -464,7 +474,7 @@
             <p>চ্যানেল বা পোস্টের লিংক দিন যেখানে শর্ট লিংকটি শেয়ার করা হয়েছে।</p>
             <input type="hidden" id="proofLinkCode">
             <input type="url" id="proofUrlInput" placeholder="https://t.me/yourchannel/123" required>
-            <div class="action-buttons mt-4">
+            <div class="action-buttons mt-4" style="display: flex; gap: 8px;">
                 <button class="btn btn-outline" onclick="closeModal('proofModal')">বাতিল</button>
                 <button class="btn" onclick="submitProof()">সাবমিট</button>
             </div>
@@ -475,21 +485,16 @@
         const API_BASE_URL = '{{API_BASE_URL}}';
         let tg = window.Telegram.WebApp;
         let isOwner = false;
-        let currentUser = null;
-        let withdrawMethod = 'bKash';
+        let withdrawMethod = 'bkash';
         
-        // Setup Telegram WebApp
         tg.ready();
         tg.expand();
-        // Setup theme colors based on TG if needed
-        document.documentElement.style.setProperty('--bg-gradient-start', tg.themeParams.bg_color || '#0a0a1a');
 
         const headers = {
             'Content-Type': 'application/json',
             'Authorization': `tma ${tg.initData}`
         };
 
-        // Utility: Show Toast
         function showToast(message, type = 'success') {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
@@ -499,7 +504,6 @@
             setTimeout(() => { if(toast.parentElement) toast.remove(); }, 3000);
         }
 
-        // Navigation Control
         function renderNav() {
             const nav = document.getElementById('bottomNav');
             let html = '';
@@ -532,44 +536,29 @@
 
         function switchTab(tabId, el) {
             document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            document.getElementById(`tab-${tabId}`).classList.add('active');
+            const target = document.getElementById(`tab-${tabId}`);
+            if (target) target.classList.add('active');
             
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
             if(el) el.classList.add('active');
+
+            if (tabId === 'verify') loadVerifyList();
+            if (tabId === 'payments') loadPaymentsList();
+            if (tabId === 'cpm') loadCpmSettings();
+            if (tabId === 'admins') loadAdminsList();
         }
 
-        // Modal Controls
         function openModal(id) { document.getElementById(id).classList.add('active'); }
         function closeModal(id) { document.getElementById(id).classList.remove('active'); }
 
-        // Formatting
-        const formatMoney = (amount) => new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+        const formatMoney = (amount) => new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(amount || 0);
 
-        // API Calls & Data Fetching
         async function fetchAppInit() {
             try {
-                // MOCK DELAY for skeleton demo
-                await new Promise(r => setTimeout(r, 800));
+                const res = await fetch(`${API_BASE_URL}/api/my/stats`, { headers });
+                if (!res.ok) throw new Error('API request failed');
+                const data = await res.json();
                 
-                // MOCK API response structure
-                // const res = await fetch(`${API_BASE_URL}/api/my/stats`, { headers });
-                // const data = await res.json();
-                
-                // Mock Data
-                const data = {
-                    role: 'owner', // change to 'admin' to test sub-admin view
-                    user: { name: tg.initDataUnsafe?.user?.first_name || 'Admin' },
-                    stats: {
-                        confirmed_balance: 1250.50,
-                        pending_balance: 45.00,
-                        total_links: 15,
-                        total_views: 4500,
-                        total_earned: 2500.00
-                    },
-                    cpm_mode: 'scheduled',
-                    payout_time: Date.now() + 3600000 // 1 hr from now
-                };
-
                 isOwner = data.role === 'owner';
                 renderNav();
                 updateDashboard(data);
@@ -581,33 +570,43 @@
                     document.getElementById('userRoleBadge').innerText = 'Owner (মালিক)';
                     document.getElementById('userRoleBadge').style.background = 'rgba(124, 58, 237, 0.2)';
                     document.getElementById('userRoleBadge').style.color = '#c4b5fd';
-                    loadOwnerData();
                 } else {
                     document.getElementById('userRoleBadge').innerText = 'Sub-Admin';
                 }
 
-                loadMyLinks();
-                loadWithdrawals();
+                loadMyLinks(data.links);
+                loadWithdrawals(data.withdrawals);
 
             } catch (err) {
+                console.error(err);
                 showToast('ডেটা লোড করতে সমস্যা হয়েছে!', 'error');
             }
         }
 
         function updateDashboard(data) {
-            document.getElementById('userName').innerText = data.user.name;
-            document.getElementById('confirmedBalance').innerText = formatMoney(data.stats.confirmed_balance);
-            document.getElementById('pendingBalance').innerText = formatMoney(data.stats.pending_balance);
-            document.getElementById('totalLinks').innerText = data.stats.total_links;
-            document.getElementById('totalViews').innerText = data.stats.total_views;
-            document.getElementById('totalEarned').innerText = `৳${formatMoney(data.stats.total_earned)}`;
+            const userName = tg.initDataUnsafe?.user?.first_name || 'Admin';
+            document.getElementById('userName').innerText = userName;
+            document.getElementById('confirmedBalance').innerText = formatMoney(data.balance_confirmed);
+            document.getElementById('pendingBalance').innerText = formatMoney(data.balance_pending);
+            document.getElementById('totalLinks').innerText = data.links ? data.links.length : 0;
+            document.getElementById('totalViews').innerText = data.total_views || 0;
             
-            document.getElementById('withdrawAvail').innerText = formatMoney(data.stats.confirmed_balance);
-            document.getElementById('withdrawAmount').value = data.stats.confirmed_balance;
+            const totalEarned = (data.balance_confirmed || 0) + (data.balance_pending || 0);
+            document.getElementById('totalEarned').innerText = `$${formatMoney(totalEarned)}`;
+            
+            document.getElementById('withdrawAvail').innerText = formatMoney(data.balance_confirmed);
+            document.getElementById('withdrawAmount').value = data.balance_confirmed || 0;
 
-            if (data.cpm_mode === 'scheduled') {
-                document.getElementById('scheduledModeCard').classList.remove('hidden');
-                startTimer(data.payout_time);
+            if (data.cycle_info && data.cycle_info.mode) {
+                document.getElementById('cpmBadge').innerText = `Mode: ${data.cycle_info.mode}`;
+                if (data.cycle_info.mode === 'scheduled') {
+                    document.getElementById('scheduledModeCard').classList.remove('hidden');
+                    document.getElementById('cyclePendingViews').innerText = data.cycle_info.pending_views || 0;
+                    if (data.cycle_info.time_remaining_seconds) {
+                        const targetTime = Date.now() + (data.cycle_info.time_remaining_seconds * 1000);
+                        startTimer(targetTime);
+                    }
+                }
             }
         }
 
@@ -630,50 +629,304 @@
             }, 1000);
         }
 
-        // Mock Functions for actions (Replace with real fetch calls)
-        function createLink() {
+        async function createLink() {
             const url = document.getElementById('newLinkUrl').value;
             if(!url) return showToast('URL প্রদান করুন', 'error');
-            showToast('লিংক সফলভাবে তৈরি হয়েছে!');
-            closeModal('createLinkModal');
-            document.getElementById('newLinkUrl').value = '';
-            // refetch my links...
+            
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/links`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ destination_url: url })
+                });
+                const data = await res.json();
+                if (res.ok && data.short_code) {
+                    showToast('লিংক সফলভাবে তৈরি হয়েছে!');
+                    closeModal('createLinkModal');
+                    document.getElementById('newLinkUrl').value = '';
+                    fetchAppInit();
+                } else {
+                    showToast(data.detail || 'লিংক তৈরিতে সমস্যা হয়েছে', 'error');
+                }
+            } catch (err) {
+                showToast('সার্ভার কানেকশন ত্রুটি', 'error');
+            }
+        }
+
+        function openProofModal(code) {
+            document.getElementById('proofLinkCode').value = code;
+            openModal('proofModal');
+        }
+
+        async function submitProof() {
+            const code = document.getElementById('proofLinkCode').value;
+            const proofUrl = document.getElementById('proofUrlInput').value;
+            if (!proofUrl) return showToast('প্রুফ URL প্রদান করুন', 'error');
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/links/${code}/proof`, {
+                    method: 'PATCH',
+                    headers,
+                    body: JSON.stringify({ proof_url: proofUrl })
+                });
+                if (res.ok) {
+                    showToast('প্রুফ সাবমিট করা হয়েছে!');
+                    closeModal('proofModal');
+                    document.getElementById('proofUrlInput').value = '';
+                    fetchAppInit();
+                } else {
+                    showToast('প্রুফ সাবমিট করতে সমস্যা হয়েছে', 'error');
+                }
+            } catch(e) {
+                showToast('সার্ভার কানেকশন ত্রুটি', 'error');
+            }
         }
 
         function setWithdrawMethod(method) {
-            withdrawMethod = method;
-            document.getElementById('btnMethodBkash').className = `btn ${method === 'bKash' ? 'btn-success' : 'btn-outline'}`;
-            document.getElementById('btnMethodNagad').className = `btn ${method === 'Nagad' ? 'btn-warning' : 'btn-outline'}`;
-            if(method==='Nagad'){
+            withdrawMethod = method.toLowerCase();
+            document.getElementById('btnMethodBkash').className = `btn ${method.toLowerCase() === 'bkash' ? 'btn-success' : 'btn-outline'}`;
+            document.getElementById('btnMethodNagad').className = `btn ${method.toLowerCase() === 'nagad' ? 'btn-warning' : 'btn-outline'}`;
+            if(method.toLowerCase() === 'nagad'){
                 document.getElementById('btnMethodNagad').style.background = 'linear-gradient(90deg, #f97316, #ea580c)';
                 document.getElementById('btnMethodNagad').style.color = '#fff';
             }
         }
 
-        function submitWithdraw() {
+        async function submitWithdraw() {
             const acc = document.getElementById('withdrawAccount').value;
+            const amount = parseFloat(document.getElementById('withdrawAmount').value || 0);
             if(!acc) return showToast('একাউন্ট নম্বর দিন', 'error');
-            showToast('উইথড্র রিকোয়েস্ট পাঠানো হয়েছে!');
-            document.getElementById('withdrawAccount').value = '';
+            if(amount <= 0) return showToast('পর্যাপ্ত ব্যালেন্স নেই', 'error');
+
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/withdraw`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ amount, method: withdrawMethod, account_number: acc })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast('উইথড্র রিকোয়েস্ট পাঠানো হয়েছে!');
+                    document.getElementById('withdrawAccount').value = '';
+                    fetchAppInit();
+                } else {
+                    showToast(data.detail || 'উইথড্র ব্যর্থ হয়েছে', 'error');
+                }
+            } catch(e) {
+                showToast('সার্ভার কানেকশন ত্রুটি', 'error');
+            }
         }
 
-        function loadMyLinks() {
-            // Mock data mapping
-            const html = `
-                <div class="list-item">
-                    <div class="flex-between mb-2">
-                        <span class="badge badge-verified">✅ ভেরিফায়ড</span>
-                        <span class="text-muted"><i class="fas fa-eye"></i> 150</span>
+        function loadMyLinks(links) {
+            if (!links || links.length === 0) {
+                document.getElementById('myLinksList').innerHTML = '<p class="text-center mt-4">কোনো লিংক পাওয়া যায়নি</p>';
+                return;
+            }
+
+            const html = links.map(l => {
+                const statusBadge = l.verification_status === 'verified' 
+                    ? '<span class="badge badge-verified">✅ ভেরিফায়ড</span>'
+                    : (l.verification_status === 'rejected' ? '<span class="badge badge-rejected">❌ রিজেক্টেড</span>' : '<span class="badge badge-pending">⏳ পেন্ডিং</span>');
+                
+                return `
+                    <div class="list-item">
+                        <div class="flex-between mb-2">
+                            ${statusBadge}
+                            <span class="text-muted"><i class="fas fa-link"></i> ${l.short_code}</span>
+                        </div>
+                        <div class="list-item-title">${l.destination_url}</div>
+                        <div class="list-item-meta" style="margin-top: 8px;">
+                            ${l.proof_url ? `📎 প্রুফ: <a href="${l.proof_url}" target="_blank" style="color: #60a5fa">${l.proof_url}</a>` : '<span style="color: #f87171">প্রুফ দেওয়া হয়নি</span>'}
+                        </div>
+                        ${!l.proof_url ? `<button class="btn btn-outline mt-2" style="padding: 4px 10px; font-size: 12px;" onclick="openProofModal('${l.short_code}')">প্রুফ দিন</button>` : ''}
                     </div>
-                    <div class="list-item-title">tgshort.bot/xYZ12</div>
-                    <div class="list-item-meta">https://example.com/very-long-url...</div>
-                </div>
-            `;
+                `;
+            }).join('');
+
             document.getElementById('myLinksList').innerHTML = html;
         }
 
-        function loadWithdrawals() { /* implementation */ }
-        function loadOwnerData() { /* fetch and populate owner tabs */ }
+        function loadWithdrawals(withdrawals) {
+            if (!withdrawals || withdrawals.length === 0) {
+                document.getElementById('withdrawHistoryList').innerHTML = '<p class="text-center mt-4">কোনো হিস্ট্রি নেই</p>';
+                return;
+            }
+
+            const html = withdrawals.map(w => `
+                <div class="list-item">
+                    <div class="flex-between">
+                        <strong>${w.method.toUpperCase()}: ${w.account_number}</strong>
+                        <span class="badge badge-${w.status}">${w.status}</span>
+                    </div>
+                    <div class="flex-between mt-2">
+                        <span class="balance-confirmed">$${formatMoney(w.amount)}</span>
+                        <span class="text-muted" style="font-size: 12px;">${new Date(w.created_at).toLocaleDateString()}</span>
+                    </div>
+                </div>
+            `).join('');
+
+            document.getElementById('withdrawHistoryList').innerHTML = html;
+        }
+
+        async function loadVerifyList() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/links`, { headers });
+                const links = await res.json();
+                if (!res.ok || !links.length) {
+                    document.getElementById('verifyList').innerHTML = '<p class="text-center">কোনো পেন্ডিং ভেরিফিকেশন নেই</p>';
+                    return;
+                }
+                const html = links.map(l => `
+                    <div class="list-item mb-2">
+                        <div><strong>কোড:</strong> ${l.short_code}</div>
+                        <div><strong>মালিক ID:</strong> ${l.owner_telegram_id}</div>
+                        <div><strong>URL:</strong> <a href="${l.destination_url}" target="_blank">${l.destination_url}</a></div>
+                        <div><strong>প্রুফ URL:</strong> <a href="${l.proof_url}" target="_blank">${l.proof_url || 'নেই'}</a></div>
+                        <div class="action-buttons mt-2" style="display:flex; gap:8px;">
+                            <button class="btn btn-success" style="padding:4px 8px; font-size:12px;" onclick="verifyLink('${l.short_code}', 'verified')">✅ ভেরিফাই</button>
+                            <button class="btn btn-warning" style="padding:4px 8px; font-size:12px;" onclick="verifyLink('${l.short_code}', 'rejected')">❌ রিজেক্ট</button>
+                        </div>
+                    </div>
+                `).join('');
+                document.getElementById('verifyList').innerHTML = html;
+            } catch(e) { console.error(e); }
+        }
+
+        async function verifyLink(code, decision) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/links/${code}/verify`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision })
+                });
+                if (res.ok) {
+                    showToast(`লিংক ${decision === 'verified' ? 'ভেরিফাই' : 'রিজেক্ট'} করা হয়েছে!`);
+                    loadVerifyList();
+                }
+            } catch(e) { showToast('ত্রুটি ঘটেছে', 'error'); }
+        }
+
+        async function loadPaymentsList() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/withdrawals`, { headers });
+                const withdrawals = await res.json();
+                if (!res.ok || !withdrawals.length) {
+                    document.getElementById('paymentsList').innerHTML = '<p class="text-center">কোনো পেন্ডিং পেমেন্ট রিকোয়েস্ট নেই</p>';
+                    return;
+                }
+                const html = withdrawals.map(w => `
+                    <div class="list-item mb-2">
+                        <div class="flex-between">
+                            <strong>Admin ID: ${w.admin_telegram_id}</strong>
+                            <span class="balance-confirmed">$${formatMoney(w.amount)}</span>
+                        </div>
+                        <div><strong>মেথড:</strong> ${w.method.toUpperCase()} (${w.account_number})</div>
+                        <div class="action-buttons mt-2" style="display:flex; gap:8px;">
+                            <button class="btn btn-success" style="padding:4px 8px; font-size:12px;" onclick="resolvePayment('${w.request_id}', 'paid')">✅ Paid</button>
+                            <button class="btn btn-warning" style="padding:4px 8px; font-size:12px;" onclick="resolvePayment('${w.request_id}', 'rejected')">❌ Reject</button>
+                        </div>
+                    </div>
+                `).join('');
+                document.getElementById('paymentsList').innerHTML = html;
+            } catch(e) { console.error(e); }
+        }
+
+        async function resolvePayment(reqId, decision) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/withdrawals/${reqId}/resolve`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ decision })
+                });
+                if (res.ok) {
+                    showToast(`পেমেন্ট ${decision === 'paid' ? 'অনুমোদিত' : 'রিজেক্ট'} হয়েছে!`);
+                    loadPaymentsList();
+                }
+            } catch(e) { showToast('ত্রুটি ঘটেছে', 'error'); }
+        }
+
+        async function loadCpmSettings() {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/cpm`, { headers });
+                const data = await res.json();
+                if (res.ok) {
+                    document.getElementById('cpmMode').value = data.mode || 'realtime';
+                    document.getElementById('cpmRate').value = data.cpm || data.current_cpm || 0.50;
+                    if (data.mode === 'scheduled') {
+                        document.getElementById('scheduledSettings').classList.remove('hidden');
+                    } else {
+                        document.getElementById('scheduledSettings').classList.add('hidden');
+                    }
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function saveCpmSettings() {
+            const mode = document.getElementById('cpmMode').value;
+            const current_cpm = parseFloat(document.getElementById('cpmRate').value || 0.50);
+            const cycle_duration_hours = parseInt(document.getElementById('cpmCycle').value || 24);
+            
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/cpm`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ mode, current_cpm, cycle_duration_hours })
+                });
+                if (res.ok) {
+                    showToast('সিপিএম সেটিং সেভ হয়েছে!');
+                }
+            } catch(e) { showToast('ত্রুটি ঘটেছে', 'error'); }
+        }
+
+        async function loadAdminsList() {
+            try {
+                const resStats = await fetch(`${API_BASE_URL}/api/admin/stats`, { headers });
+                const stats = await resStats.json();
+                if (resStats.ok) {
+                    document.getElementById('platformAdmins').innerText = stats.total_admins || 0;
+                    document.getElementById('platformPaid').innerText = `$${formatMoney(stats.pending_withdrawals * 0)}`;
+                    document.getElementById('platformPending').innerText = `$${formatMoney(stats.total_pending_liability)}`;
+                }
+
+                const res = await fetch(`${API_BASE_URL}/api/admin/admins`, { headers });
+                const admins = await res.json();
+                if (!res.ok || !admins.length) {
+                    document.getElementById('adminsList').innerHTML = '<p class="text-center">কোনো এডমিন নেই</p>';
+                    return;
+                }
+                const html = admins.map(a => `
+                    <div class="list-item mb-2">
+                        <div class="flex-between">
+                            <strong>${a.full_name || a.username || a.telegram_id} (${a.role})</strong>
+                            <span class="badge badge-${a.status === 'banned' ? 'rejected' : 'verified'}">${a.status}</span>
+                        </div>
+                        <div class="mt-1" style="font-size: 12px; color: var(--text-muted)">
+                            ID: ${a.telegram_id} | ব্যালেন্স: $${formatMoney(a.balance_confirmed)}
+                        </div>
+                        <div class="mt-2">
+                            <button class="btn btn-outline" style="padding:2px 8px; font-size:11px;" onclick="toggleBan(${a.telegram_id}, '${a.status === 'banned' ? 'unban' : 'ban'}')">
+                                ${a.status === 'banned' ? 'Unban' : 'Ban'}
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+                document.getElementById('adminsList').innerHTML = html;
+            } catch(e) { console.error(e); }
+        }
+
+        async function toggleBan(telegramId, action) {
+            try {
+                const res = await fetch(`${API_BASE_URL}/api/admin/admins/${telegramId}/ban`, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ action })
+                });
+                if (res.ok) {
+                    showToast(`এডমিন ${action === 'ban' ? 'ব্যান' : 'আনব্যান'} করা হয়েছে`);
+                    loadAdminsList();
+                }
+            } catch(e) { showToast('truti ghoteche', 'error'); }
+        }
 
         // CPM Settings Toggle logic
         document.getElementById('cpmMode').addEventListener('change', (e) => {
