@@ -56,16 +56,40 @@ class Storage:
     # Load / persist
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _as_dict_items(raw_value, id_field: str):
+        """Normalizes a stored collection to an iterable of (key, value) dicts.
+
+        The store is supposed to always hold collections as JSON objects
+        (dict keyed by id), but a legacy/corrupt file could have them as a
+        JSON array instead. Without this, a single bad field permanently
+        crash-loops the app on every restart since load() never gets far
+        enough to re-save a corrected file. Unknown/other shapes are
+        treated as empty rather than raising.
+        """
+        if isinstance(raw_value, dict):
+            return raw_value.items()
+        if isinstance(raw_value, list):
+            return [(str(item.get(id_field)), item) for item in raw_value if isinstance(item, dict)]
+        return []
+
     async def load(self) -> None:
         os.makedirs(os.path.dirname(self.data_file) or ".", exist_ok=True)
         if os.path.exists(self.data_file):
             with open(self.data_file, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-            self.admins = {int(k): Admin(**v) for k, v in raw.get("admins", {}).items()}
-            self.links = {k: Link(**v) for k, v in raw.get("links", {}).items()}
-            self.views = {k: View(**v) for k, v in raw.get("views", {}).items()}
+            self.admins = {
+                int(k): Admin(**v) for k, v in self._as_dict_items(raw.get("admins", {}), "telegram_id")
+            }
+            self.links = {
+                k: Link(**v) for k, v in self._as_dict_items(raw.get("links", {}), "short_code")
+            }
+            self.views = {
+                k: View(**v) for k, v in self._as_dict_items(raw.get("views", {}), "view_id")
+            }
             self.withdrawals = {
-                k: WithdrawRequest(**v) for k, v in raw.get("withdrawals", {}).items()
+                k: WithdrawRequest(**v)
+                for k, v in self._as_dict_items(raw.get("withdrawals", {}), "request_id")
             }
             if raw.get("cpm_setting"):
                 self.cpm_setting = CPMSetting(**raw["cpm_setting"])
@@ -73,6 +97,8 @@ class Storage:
             self._view_index = {
                 (v.short_code, v.viewer_telegram_id): v.view_id for v in self.views.values()
             }
+            async with self._lock:
+                await self._save_locked()
         else:
             await self._save_locked()
         self._loaded = True
