@@ -35,7 +35,8 @@
     font-family: var(--body);
     -webkit-tap-highlight-color: transparent;
   }
-  #app{ padding: 16px 16px 90px; max-width: 640px; margin: 0 auto; }
+  #app{ padding: 16px 16px 24px; max-width: 640px; margin: 0 auto; }
+  #app.has-bottom-nav{ padding-bottom: 94px; }
 
   .topbar{
     display:flex; align-items:center; justify-content:space-between;
@@ -115,6 +116,30 @@
   }
   .tab-btn.active .tab-badge{ background:#12141c; color:var(--brass); }
 
+  /* --- Bottom nav (Admin: Home / Short Link / My Links / Profile) --- */
+  .bottom-nav{
+    position:fixed; left:0; right:0; bottom:0;
+    display:flex;
+    background: var(--panel);
+    border-top: 1px solid var(--hairline);
+    padding: 6px 6px calc(env(safe-area-inset-bottom, 0px) + 6px);
+    max-width: 640px; margin: 0 auto;
+    z-index: 30;
+  }
+  .nav-item{
+    flex:1; min-width:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    padding: 7px 2px 6px;
+    border-radius: 12px;
+    background:none; border:none; cursor:pointer;
+    font-family: var(--body);
+    color: var(--text-dim);
+  }
+  .nav-item:active{ background: var(--panel-raised); }
+  .nav-item .nav-ic{ font-size:19px; line-height:1; }
+  .nav-item .nav-label{ font-size:10.5px; font-weight:600; white-space:nowrap; }
+  .nav-item.active{ color: var(--brass); }
+
   .card{
     background: var(--panel);
     border: 1px solid var(--hairline);
@@ -185,9 +210,22 @@
   @keyframes shimmer{ 0%{background-position:100% 0} 100%{background-position:0 0} }
 
   .stat-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  .stat-grid-3{ grid-template-columns: repeat(3, 1fr); }
+  .stat-grid-3 .stat-box{ padding: 12px 6px; text-align:center; }
+  .stat-grid-3 .stat-box .n{ font-size:16px; }
   .stat-box{ background: var(--panel-raised); border:1px solid var(--hairline); border-radius:12px; padding:14px; }
   .stat-box .n{ font-family: var(--display); font-weight:700; font-size:22px; }
   .stat-box .l{ font-size:11px; color: var(--text-dim); text-transform:uppercase; letter-spacing:.06em; margin-top:2px; }
+
+  .profile-header{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .profile-avatar{
+    width:48px; height:48px; border-radius:50%; flex:0 0 auto;
+    background: linear-gradient(145deg, #e7bb63, var(--brass));
+    color:#12141c; font-family: var(--display); font-weight:700; font-size:19px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .profile-name{ font-family: var(--display); font-weight:600; font-size:16px; }
+  .profile-sub{ font-size:12px; color: var(--text-dim); margin-top:2px; }
 
   .section-title{
     font-size:11px; text-transform:uppercase; letter-spacing:.1em; color: var(--text-faint);
@@ -253,6 +291,8 @@
   <div class="tabs" id="tabs"></div>
   <div id="tabContent"></div>
 </div>
+
+<div class="bottom-nav" id="bottomNav" style="display:none;"></div>
 
 <div class="drawer-backdrop" id="drawerBackdrop"></div>
 <div class="drawer" id="drawer">
@@ -331,22 +371,31 @@
     return h + "h " + m + "m";
   }
 
-  // ---- navigation: primary tabs (role-aware) + owner drawer -----------
+  // ---- navigation: owner top tabs, admin bottom nav, owner drawer -----
 
   function primaryTabs() {
-    if (isOwner()) {
-      return [
-        ["overview", "Overview", 0],
-        ["payouts", "Withdrawals", state.withdrawalsPending.length],
-        ["admins", "Admins", 0],
-      ];
-    }
     return [
       ["overview", "Overview", 0],
-      ["links", "My Links", 0],
-      ["traffic", "Traffic Source", 0],
-      ["withdraw", "Withdraw", 0],
+      ["payouts", "Withdrawals", state.withdrawalsPending.length],
+      ["admins", "Admins", 0],
     ];
+  }
+
+  function bottomNavItems() {
+    return [
+      ["overview", "🏠", "Home"],
+      ["quicklink", "✂️", "Short Link"],
+      ["links", "🔗", "My Links"],
+      ["profile", "👤", "Profile"],
+    ];
+  }
+
+  // Traffic Source / Withdraw live inside the Profile tab for the bottom
+  // nav's active-state purposes, even though renderTab() still dispatches
+  // them individually (Owner's own "admin tools" list links straight to
+  // "traffic" / "withdraw" as separate destinations).
+  function activeNavTab() {
+    return ["traffic", "withdraw"].includes(state.tab) ? "profile" : state.tab;
   }
 
   function drawerItems() {
@@ -366,13 +415,33 @@
   }
 
   function renderTabs() {
-    const el = document.getElementById("tabs");
-    el.innerHTML = primaryTabs().map(([id, label, badge]) =>
-      `<button class="tab-btn${state.tab === id ? " active" : ""}" data-tab="${id}">${label}${badge ? `<span class="tab-badge">${badge}</span>` : ""}</button>`
-    ).join("");
-    el.querySelectorAll(".tab-btn").forEach((btn) => {
-      btn.addEventListener("click", () => { state.tab = btn.dataset.tab; renderTab(); });
-    });
+    document.getElementById("app").classList.toggle("has-bottom-nav", !isOwner());
+
+    const tabsEl = document.getElementById("tabs");
+    const navEl = document.getElementById("bottomNav");
+
+    if (isOwner()) {
+      tabsEl.style.display = "flex";
+      navEl.style.display = "none";
+      tabsEl.innerHTML = primaryTabs().map(([id, label, badge]) =>
+        `<button class="tab-btn${state.tab === id ? " active" : ""}" data-tab="${id}">${label}${badge ? `<span class="tab-badge">${badge}</span>` : ""}</button>`
+      ).join("");
+      tabsEl.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => { state.tab = btn.dataset.tab; renderTab(); });
+      });
+    } else {
+      tabsEl.style.display = "none";
+      navEl.style.display = "flex";
+      const active = activeNavTab();
+      navEl.innerHTML = bottomNavItems().map(([id, icon, label]) =>
+        `<button class="nav-item${active === id ? " active" : ""}" data-tab="${id}">
+          <span class="nav-ic">${icon}</span><span class="nav-label">${label}</span>
+        </button>`
+      ).join("");
+      navEl.querySelectorAll(".nav-item").forEach((btn) => {
+        btn.addEventListener("click", () => { state.tab = btn.dataset.tab; renderTab(); });
+      });
+    }
 
     const menuBtn = document.getElementById("menuBtn");
     menuBtn.style.display = isOwner() ? "flex" : "none";
@@ -466,7 +535,9 @@
     el.innerHTML = `<div class="card"><div class="skel" style="height:80px;"></div></div>`;
     try {
       if (state.tab === "overview") await renderOverview(el);
+      else if (state.tab === "quicklink") await renderQuickLink(el);
       else if (state.tab === "links") await renderLinks(el);
+      else if (state.tab === "profile") await renderProfile(el);
       else if (state.tab === "traffic") await renderTraffic(el);
       else if (state.tab === "withdraw") await renderWithdraw(el);
       else if (state.tab === "payouts") await renderPayouts(el);
@@ -540,9 +611,9 @@
       </p>
     `;
     const ctaTraffic = el.querySelector("#ctaTraffic");
-    if (ctaTraffic) ctaTraffic.addEventListener("click", () => { state.tab = "traffic"; renderTab(); });
-    el.querySelector("#qaNewLink").addEventListener("click", () => { state.tab = "links"; renderTab(); });
-    el.querySelector("#qaWithdraw").addEventListener("click", () => { state.tab = "withdraw"; renderTab(); });
+    if (ctaTraffic) ctaTraffic.addEventListener("click", () => { state.tab = "profile"; renderTab(); });
+    el.querySelector("#qaNewLink").addEventListener("click", () => { state.tab = "quicklink"; renderTab(); });
+    el.querySelector("#qaWithdraw").addEventListener("click", () => { state.tab = "profile"; renderTab(); });
   }
 
   // ---- Traffic Source ---------------------------------------------------
@@ -591,27 +662,25 @@
     });
   }
 
-  // ---- My Links -----------------------------------------------------
+  // ---- Short Link (quick create) -----------------------------------
 
-  async function renderLinks(el) {
-    await loadLinks();
-
+  async function renderQuickLink(el) {
+    await loadMe();
     if (!state.me.traffic_source_url) {
       el.innerHTML = `
         <div class="card" style="border-color: rgba(226,104,92,.35);">
           <div class="empty" style="padding:14px 4px; color:var(--red);">
             Set your Traffic Source before you can create links.
           </div>
-          <button class="btn btn-primary btn-block" id="goTraffic">Set Traffic Source</button>
+          <button class="btn btn-primary btn-block" id="goProfile">Set Traffic Source</button>
         </div>
-        <div class="section-title">My links</div>
-        <div id="linksList"></div>
       `;
-      el.querySelector("#goTraffic").addEventListener("click", () => { state.tab = "traffic"; renderTab(); });
-      renderLinksList();
+      el.querySelector("#goProfile").addEventListener("click", () => {
+        state.tab = isOwner() ? "traffic" : "profile";
+        renderTab();
+      });
       return;
     }
-
     el.innerHTML = `
       <div class="card">
         <h3>Create a short link</h3>
@@ -619,8 +688,10 @@
         <input type="url" id="newUrl" placeholder="https://example.com/your-page" />
         <div class="btn-row"><button class="btn btn-primary btn-block" id="createLinkBtn">Create link</button></div>
       </div>
-      <div class="section-title">My links</div>
-      <div id="linksList"></div>
+      <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
+        Tip: you can also create a link from the bot chat with <code>/newlink</code>. Head to
+        My Links to see everything you've created.
+      </p>
     `;
     el.querySelector("#createLinkBtn").addEventListener("click", async () => {
       const input = el.querySelector("#newUrl");
@@ -629,17 +700,48 @@
       const btn = el.querySelector("#createLinkBtn");
       btn.disabled = true; btn.textContent = "Creating…";
       try {
-        await api("/api/links", { method: "POST", body: JSON.stringify({ destination_url: url }) });
+        const res = await api("/api/links", { method: "POST", body: JSON.stringify({ destination_url: url }) });
         input.value = "";
-        toast("Short link created", "ok");
-        await loadLinks();
-        renderLinksList();
+        toast("Short link created: " + res.short_url, "ok");
       } catch (e) {
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Create link";
       }
     });
+  }
+
+  // ---- My Links (list only) ------------------------------------------
+
+  async function renderLinks(el) {
+    await loadLinks();
+    await loadMe();
+
+    if (!state.me.traffic_source_url) {
+      el.innerHTML = `
+        <div class="card" style="border-color: rgba(226,104,92,.35);">
+          <div class="empty" style="padding:14px 4px; color:var(--red);">
+            Set your Traffic Source before you can create links.
+          </div>
+          <button class="btn btn-primary btn-block" id="goProfile">Set Traffic Source</button>
+        </div>
+        <div class="section-title">My links</div>
+        <div id="linksList"></div>
+      `;
+      el.querySelector("#goProfile").addEventListener("click", () => {
+        state.tab = isOwner() ? "traffic" : "profile";
+        renderTab();
+      });
+      renderLinksList();
+      return;
+    }
+
+    el.innerHTML = `
+      <button class="btn btn-primary btn-block" id="goQuickLink">✂️ New short link</button>
+      <div class="section-title" style="margin-top:14px;">My links</div>
+      <div id="linksList"></div>
+    `;
+    el.querySelector("#goQuickLink").addEventListener("click", () => { state.tab = "quicklink"; renderTab(); });
     renderLinksList();
   }
 
@@ -709,6 +811,131 @@
 
   function renderWithdrawHistory() {
     const histEl = document.getElementById("wHistory");
+    if (!histEl) return;
+    if (state.withdrawals.length === 0) {
+      histEl.innerHTML = `<div class="card"><div class="empty">No withdrawal requests yet.</div></div>`;
+      return;
+    }
+    histEl.innerHTML = state.withdrawals.map((w) => `
+      <div class="card">
+        <div class="row-between">
+          <h3>${fmt(w.amount)} · ${w.method === "bkash" ? "bKash" : "Nagad"}</h3>
+          <span class="pill ${w.status}">${w.status}</span>
+        </div>
+        <div class="meta">Account: ${esc(w.account_number)}</div>
+        <div class="meta">Requested ${esc(new Date(w.created_at).toLocaleString())}</div>
+        ${w.reject_reason ? `<div class="meta" style="color:var(--red);">Reason: ${esc(w.reject_reason)}</div>` : ""}
+      </div>
+    `).join("");
+  }
+
+  // ---- Profile (balance summary + Traffic Source + Withdraw) -----------
+
+  async function renderProfile(el) {
+    await Promise.all([loadMe(), loadMyWithdrawals()]);
+    const platforms = ["Telegram", "YouTube", "Facebook", "TikTok", "Other"];
+    const paidTotal = state.withdrawals
+      .filter((w) => w.status === "paid")
+      .reduce((s, w) => s + w.amount, 0);
+    const totalIncome = state.me.balance_confirmed + paidTotal;
+
+    el.innerHTML = `
+      <div class="profile-header">
+        <div class="profile-avatar">${esc((state.me.username || "A").slice(0, 1).toUpperCase())}</div>
+        <div>
+          <div class="profile-name">${state.me.username ? "@" + esc(state.me.username) : "id " + state.me.telegram_id}</div>
+          <div class="profile-sub">Admin</div>
+        </div>
+      </div>
+
+      <div class="stat-grid stat-grid-3">
+        <div class="stat-box"><div class="n">${fmt(state.me.balance_confirmed)}</div><div class="l">Balance</div></div>
+        <div class="stat-box"><div class="n">${fmt(totalIncome)}</div><div class="l">Total income</div></div>
+        <div class="stat-box"><div class="n">${fmt(paidTotal)}</div><div class="l">Withdrawn</div></div>
+      </div>
+
+      <div class="section-title" style="margin-top:18px;">Traffic Source</div>
+      <div class="card">
+        <div class="meta">Where you'll share your short links — the Owner sees this alongside your withdrawal requests.</div>
+        ${state.me.traffic_source_url
+          ? `<div class="meta" style="margin-top:8px;">Current: <b style="color:var(--text)">${esc(state.me.traffic_source_platform)}</b> —
+              <a href="${esc(state.me.traffic_source_url)}" target="_blank" style="color:var(--brass);">${esc(state.me.traffic_source_url)}</a></div>`
+          : `<div class="meta" style="color:var(--red); margin-top:8px;">Not set yet — required before you can create links.</div>`}
+        <label>Platform</label>
+        <select id="pTsPlatform">
+          ${platforms.map((p) => `<option value="${p}">${p}</option>`).join("")}
+        </select>
+        <label>Channel / group / profile link</label>
+        <input type="url" id="pTsUrl" placeholder="https://t.me/yourchannel" value="${esc(state.me.traffic_source_url || "")}" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="pTsSave">Save Traffic Source</button></div>
+      </div>
+
+      <div class="section-title" style="margin-top:18px;">Withdraw</div>
+      <div class="card">
+        <div class="meta">Confirmed balance: <b style="color:var(--text)">${fmt(state.me.balance_confirmed)}</b></div>
+        <label>Method</label>
+        <select id="pWMethod">
+          <option value="bkash">bKash</option>
+          <option value="nagad">Nagad</option>
+        </select>
+        <label>Account number</label>
+        <input type="text" id="pWAccount" placeholder="01XXXXXXXXX" />
+        <label>Amount</label>
+        <input type="number" id="pWAmount" min="0" step="0.01" placeholder="0.00" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="pWSubmit">Submit request</button></div>
+      </div>
+      <div class="section-title">Withdrawal history</div>
+      <div id="pWHistory"></div>
+    `;
+
+    const sel = el.querySelector("#pTsPlatform");
+    if (state.me.traffic_source_platform && platforms.includes(state.me.traffic_source_platform)) {
+      sel.value = state.me.traffic_source_platform;
+    }
+    el.querySelector("#pTsSave").addEventListener("click", async () => {
+      const platform = sel.value;
+      const url = el.querySelector("#pTsUrl").value.trim();
+      if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
+      const btn = el.querySelector("#pTsSave");
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/traffic-source", { method: "POST", body: JSON.stringify({ platform, url }) });
+        toast("Traffic Source saved", "ok");
+        renderTopCard();
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save Traffic Source";
+      }
+    });
+
+    el.querySelector("#pWSubmit").addEventListener("click", async () => {
+      const method = el.querySelector("#pWMethod").value;
+      const account_number = el.querySelector("#pWAccount").value.trim();
+      const amount = parseFloat(el.querySelector("#pWAmount").value);
+      if (!account_number) { toast("Enter an account number", "err"); return; }
+      if (!(amount > 0)) { toast("Enter a valid amount", "err"); return; }
+      if (amount > state.me.balance_confirmed) { toast("Amount exceeds your confirmed balance", "err"); return; }
+      const btn = el.querySelector("#pWSubmit");
+      btn.disabled = true; btn.textContent = "Submitting…";
+      try {
+        await api("/api/withdraw", { method: "POST", body: JSON.stringify({ method, account_number, amount }) });
+        toast("Withdrawal requested — the Owner has been notified", "ok");
+        renderTopCard();
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Submit request";
+      }
+    });
+
+    renderProfileWithdrawHistory();
+  }
+
+  function renderProfileWithdrawHistory() {
+    const histEl = document.getElementById("pWHistory");
     if (!histEl) return;
     if (state.withdrawals.length === 0) {
       histEl.innerHTML = `<div class="card"><div class="empty">No withdrawal requests yet.</div></div>`;
