@@ -1,1126 +1,910 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="bn">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ড্যাশবোর্ড - TGSHORTBOT</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <style>
-        :root {
-            --bg-gradient-start: #0a0a1a;
-            --bg-gradient-end: #1a1a3e;
-            --accent-start: #4f46e5;
-            --accent-end: #7c3aed;
-            --success-start: #10b981;
-            --success-end: #059669;
-            --warning-start: #f59e0b;
-            --warning-end: #d97706;
-            --glass-bg: rgba(255, 255, 255, 0.05);
-            --glass-border: rgba(255, 255, 255, 0.1);
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --font-family: 'Inter', sans-serif;
-            --navbar-height: 70px;
-        }
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>TGSHORTBOT Dashboard</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #12141c;
+    --panel: #1a1e2a;
+    --panel-raised: #212637;
+    --hairline: #2b3040;
+    --brass: #d9a441;
+    --brass-soft: rgba(217,164,65,.14);
+    --emerald: #3fbf7f;
+    --emerald-soft: rgba(63,191,127,.14);
+    --red: #e2685c;
+    --red-soft: rgba(226,104,92,.14);
+    --violet: #9c8cf2;
+    --violet-soft: rgba(156,140,242,.14);
+    --text: #f1ede4;
+    --text-dim: #9aa0b4;
+    --text-faint: #5c6278;
+    --display: 'Space Grotesk', system-ui, sans-serif;
+    --body: 'Inter', system-ui, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app{ padding: 16px 16px 90px; max-width: 640px; margin: 0 auto; }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            -webkit-tap-highlight-color: transparent;
-        }
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom: 18px;
+  }
+  .brand{
+    font-family: var(--display); font-weight:700; font-size:17px; letter-spacing:-.01em;
+    display:flex; align-items:center; gap:8px;
+  }
+  .brand .mark{
+    width:26px; height:26px; border-radius:8px;
+    background: linear-gradient(145deg, #e7bb63, var(--brass));
+    display:flex; align-items:center; justify-content:center;
+    font-size:13px; font-weight:700; color:#12141c;
+  }
+  .topbar-right{ display:flex; align-items:center; gap:8px; }
+  .role-badge{
+    font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+    padding: 5px 10px; border-radius: 999px;
+    background: var(--panel-raised); color: var(--text-dim);
+    border: 1px solid var(--hairline);
+  }
+  .role-badge.owner{ color: var(--violet); border-color: rgba(156,140,242,.35); background: var(--violet-soft); }
 
-        body {
-            font-family: var(--font-family);
-            background: linear-gradient(135deg, var(--bg-gradient-start), var(--bg-gradient-end));
-            background-attachment: fixed;
-            color: var(--text-main);
-            min-height: 100vh;
-            padding-bottom: calc(var(--navbar-height) + 20px);
-            overflow-x: hidden;
-        }
+  .menu-btn{
+    width:34px; height:34px; border-radius:10px; border:1px solid var(--hairline);
+    background: var(--panel-raised); color: var(--text); font-size:18px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; line-height:1;
+    position:relative;
+  }
+  .menu-btn .dot{
+    position:absolute; top:-3px; right:-3px; width:9px; height:9px; border-radius:50%;
+    background: var(--red); border:2px solid var(--bg); display:none;
+  }
+  .menu-btn .dot.show{ display:block; }
 
-        .glass-card {
-            background: var(--glass-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--glass-border);
-            border-radius: 16px;
-            padding: 20px;
-            margin-bottom: 16px;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-            transition: transform 0.2s ease;
-        }
+  .balance-card{
+    background: linear-gradient(160deg, var(--panel-raised), var(--panel));
+    border: 1px solid var(--hairline);
+    border-radius: 18px;
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+  .balance-card.owner-card{
+    background: linear-gradient(160deg, rgba(156,140,242,.10), var(--panel));
+    border-color: rgba(156,140,242,.25);
+  }
+  .balance-row{ display:flex; gap: 22px; }
+  .balance-item .label{ font-size:11px; color: var(--text-dim); text-transform:uppercase; letter-spacing:.08em; margin-bottom:6px;}
+  .balance-item .value{ font-family: var(--display); font-weight:700; font-size:24px; }
+  .balance-item.confirmed .value{ color: var(--emerald); }
+  .balance-item.pending .value{ color: var(--brass); }
+  .balance-item.violet .value{ color: var(--violet); }
+  .cycle-note{ margin-top:14px; font-size:12px; color: var(--text-dim); border-top:1px solid var(--hairline); padding-top:12px; }
+  .cycle-note b{ color: var(--text); }
+  .owner-eyebrow{
+    font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color: var(--violet);
+    margin-bottom: 12px; font-weight:700;
+  }
 
-        .container {
-            padding: 16px;
-            max-width: 600px;
-            margin: 0 auto;
-        }
+  .tabs{
+    display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; margin-bottom: 16px;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar{ display:none; }
+  .tab-btn{
+    flex: 0 0 auto;
+    display:flex; align-items:center; gap:6px;
+    font-family: var(--body); font-weight:600; font-size:13px;
+    color: var(--text-dim);
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    padding: 9px 16px; border-radius: 999px; cursor:pointer;
+    white-space: nowrap;
+  }
+  .tab-btn.active{
+    color:#12141c; background: var(--brass); border-color: var(--brass);
+  }
+  .tab-badge{
+    background: var(--red); color:#fff; font-size:10.5px; font-weight:700;
+    min-width:16px; height:16px; border-radius:999px; display:flex; align-items:center; justify-content:center;
+    padding: 0 4px;
+  }
+  .tab-btn.active .tab-badge{ background:#12141c; color:var(--brass); }
 
-        h1, h2, h3 { font-weight: 700; margin-bottom: 12px; }
-        p { font-size: 14px; color: var(--text-muted); margin-bottom: 8px; }
+  .card{
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: 16px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .card h3{
+    font-family: var(--display); font-size:14px; margin: 0 0 4px; letter-spacing:-.01em;
+  }
+  .card .meta{ font-size:12px; color: var(--text-dim); margin-bottom:10px; }
+  .row-between{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
 
-        /* Typography & Utilities */
-        .text-gradient {
-            background: linear-gradient(90deg, var(--accent-start), var(--accent-end));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-        }
-        
-        .flex-between { display: flex; justify-content: space-between; align-items: center; }
-        .flex-center { display: flex; justify-content: center; align-items: center; }
-        .flex-col { display: flex; flex-direction: column; }
-        .gap-2 { gap: 8px; } .gap-4 { gap: 16px; }
+  .pill{
+    display:inline-flex; align-items:center; font-size:11px; font-weight:600;
+    padding: 3px 9px; border-radius:999px; text-transform:uppercase; letter-spacing:.04em;
+  }
+  .pill.pending{ background: var(--brass-soft); color: var(--brass); }
+  .pill.paid{ background: var(--emerald-soft); color: var(--emerald); }
+  .pill.rejected{ background: var(--red-soft); color: var(--red); }
+  .pill.active{ background: var(--emerald-soft); color: var(--emerald); }
+  .pill.banned{ background: var(--red-soft); color: var(--red); }
+  .pill.owner{ background: var(--violet-soft); color: var(--violet); }
 
-        /* Balances */
-        .balance-title { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); }
-        .balance-amount { font-size: 32px; font-weight: 700; margin: 8px 0; }
-        .balance-confirmed { color: #10b981; }
-        .balance-pending { color: #f59e0b; }
+  code.short-url{
+    display:block; font-size: 12.5px; color: var(--text); background: var(--panel-raised);
+    padding: 8px 10px; border-radius: 10px; margin: 8px 0; word-break: break-all;
+    border: 1px solid var(--hairline);
+  }
 
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-top: 16px;
-        }
-        .stat-item { text-align: center; }
-        .stat-value { font-size: 18px; font-weight: 600; }
-        .stat-label { font-size: 11px; color: var(--text-muted); }
+  label{ display:block; font-size:12px; color: var(--text-dim); margin: 12px 0 6px; }
+  input[type=text], input[type=number], input[type=url], select{
+    width:100%; background: var(--panel-raised); border: 1px solid var(--hairline);
+    color: var(--text); font-family: var(--body); font-size:14px;
+    padding: 11px 12px; border-radius: 10px; outline:none;
+  }
+  input:focus, select:focus{ border-color: var(--brass); }
 
-        /* Forms & Inputs */
-        input, select {
-            width: 100%;
-            background: rgba(0, 0, 0, 0.2);
-            border: 1px solid var(--glass-border);
-            color: white;
-            padding: 12px 16px;
-            border-radius: 10px;
-            font-size: 14px;
-            margin-bottom: 12px;
-            outline: none;
-        }
-        input:focus, select:focus {
-            border-color: var(--accent-start);
-        }
+  .btn{
+    font-family: var(--body); font-weight:600; font-size:13.5px;
+    border-radius: 10px; padding: 10px 16px; cursor:pointer; border: none;
+  }
+  .btn-primary{ background: var(--brass); color:#12141c; }
+  .btn-primary:disabled{ opacity:.5; cursor:default; }
+  .btn-outline{ background:none; border:1px solid var(--hairline); color: var(--text); }
+  .btn-danger{ background: var(--red-soft); color: var(--red); border:1px solid rgba(226,104,92,.3); }
+  .btn-success{ background: var(--emerald-soft); color: var(--emerald); border:1px solid rgba(63,191,127,.3); }
+  .btn-sm{ padding: 7px 12px; font-size:12.5px; }
+  .btn-block{ width:100%; }
+  .btn-row{ display:flex; gap:8px; margin-top:10px; }
 
-        /* Buttons */
-        .btn {
-            width: 100%;
-            padding: 14px;
-            border-radius: 12px;
-            border: none;
-            background: linear-gradient(90deg, var(--accent-start), var(--accent-end));
-            color: white;
-            font-weight: 600;
-            font-size: 15px;
-            cursor: pointer;
-            box-shadow: 0 4px 15px rgba(124, 58, 237, 0.4);
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            gap: 8px;
-        }
-        .btn-outline {
-            background: transparent;
-            border: 1px solid var(--glass-border);
-            box-shadow: none;
-        }
-        .btn-success {
-            background: linear-gradient(90deg, var(--success-start), var(--success-end));
-            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
-        }
-        .btn-warning {
-            background: linear-gradient(90deg, var(--warning-start), var(--warning-end));
-            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.4);
-        }
+  .empty{
+    text-align:center; padding: 34px 12px; color: var(--text-faint); font-size:13px;
+  }
 
-        /* Badges */
-        .badge {
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 600;
-            display: inline-block;
-        }
-        .badge-verified { background: rgba(16, 185, 129, 0.2); color: #34d399; }
-        .badge-pending { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
-        .badge-rejected { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+  .toast{
+    position:fixed; left:50%; bottom:20px; transform: translateX(-50%) translateY(20px);
+    background: var(--panel-raised); border:1px solid var(--hairline); color: var(--text);
+    padding: 11px 18px; border-radius: 999px; font-size: 13px;
+    opacity:0; transition: opacity .25s ease, transform .25s ease;
+    pointer-events:none; z-index: 60; max-width: 90%; text-align:center;
+  }
+  .toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+  .toast.err{ border-color: rgba(226,104,92,.4); color: var(--red); }
+  .toast.ok{ border-color: rgba(63,191,127,.4); color: var(--emerald); }
 
-        /* Navigation Bar */
-        .bottom-nav {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            height: var(--navbar-height);
-            background: rgba(10, 10, 26, 0.85);
-            backdrop-filter: blur(25px);
-            border-top: 1px solid var(--glass-border);
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            z-index: 1000;
-            padding: 0 10px;
-        }
-        .nav-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            font-size: 11px;
-            color: var(--text-muted);
-            cursor: pointer;
-            gap: 4px;
-            flex: 1;
-        }
-        .nav-item i { font-size: 18px; }
-        .nav-item.active {
-            color: #a78bfa;
-        }
+  .skel{ background: linear-gradient(90deg, var(--panel-raised) 25%, var(--hairline) 37%, var(--panel-raised) 63%); background-size: 400% 100%; animation: shimmer 1.3s ease infinite; border-radius: 8px; }
+  @keyframes shimmer{ 0%{background-position:100% 0} 100%{background-position:0 0} }
 
-        /* Owner Nav Row Layout */
-        .owner-nav-rows {
-            flex-direction: column;
-            height: auto;
-            padding: 8px 0;
-        }
-        .nav-row {
-            display: flex;
-            width: 100%;
-            justify-content: space-around;
-            margin: 4px 0;
-        }
+  .stat-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  .stat-box{ background: var(--panel-raised); border:1px solid var(--hairline); border-radius:12px; padding:14px; }
+  .stat-box .n{ font-family: var(--display); font-weight:700; font-size:22px; }
+  .stat-box .l{ font-size:11px; color: var(--text-dim); text-transform:uppercase; letter-spacing:.06em; margin-top:2px; }
 
-        /* Tabs Visibility */
-        .tab-content { display: none; }
-        .tab-content.active { display: block; animation: fadeIn 0.3s ease; }
+  .section-title{
+    font-size:11px; text-transform:uppercase; letter-spacing:.1em; color: var(--text-faint);
+    margin: 4px 0 10px;
+  }
 
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* List Items */
-        .list-item {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid var(--glass-border);
-            border-radius: 12px;
-            padding: 14px;
-            margin-bottom: 10px;
-        }
-        .list-item-title { font-weight: 600; font-size: 14px; word-break: break-all; }
-        .list-item-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; word-break: break-all; }
-
-        /* Modals */
-        .modal-overlay {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0, 0, 0, 0.7);
-            backdrop-filter: blur(5px);
-            z-index: 2000;
-            display: none;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-        .modal-overlay.active { display: flex; }
-        .modal {
-            background: #12122b;
-            border: 1px solid var(--glass-border);
-            border-radius: 20px;
-            padding: 24px;
-            width: 100%;
-            max-width: 400px;
-        }
-
-        /* Skeleton Loading */
-        .skeleton {
-            background: linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.1) 37%, rgba(255,255,255,0.05) 63%);
-            background-size: 400% 100%;
-            animation: skeleton-loading 1.4s ease infinite;
-            border-radius: 8px;
-        }
-        @keyframes skeleton-loading {
-            0% { background-position: 100% 50%; }
-            100% { background-position: 0 50%; }
-        }
-        .hidden { display: none !important; }
-
-        /* Toast Notifications */
-        .toast-container {
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 3000;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        .toast {
-            background: rgba(18, 18, 43, 0.95);
-            border: 1px solid var(--glass-border);
-            color: white;
-            padding: 12px 20px;
-            border-radius: 30px;
-            font-size: 13px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .toast.success { border-color: var(--success-start); }
-        .toast.error { border-color: #ef4444; }
-    </style>
+  /* --- Owner drawer / bottom sheet --- */
+  .drawer-backdrop{
+    position:fixed; inset:0; background:rgba(6,7,11,.6);
+    opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:40;
+  }
+  .drawer-backdrop.open{ opacity:1; pointer-events:auto; }
+  .drawer{
+    position:fixed; left:0; right:0; bottom:0;
+    background: var(--panel);
+    border-top: 1px solid var(--hairline);
+    border-radius: 20px 20px 0 0;
+    padding: 10px 10px calc(env(safe-area-inset-bottom, 0px) + 14px);
+    transform: translateY(105%);
+    transition: transform .28s cubic-bezier(.4,0,.2,1);
+    z-index: 41;
+    max-width: 640px; margin: 0 auto;
+    box-shadow: 0 -20px 50px -20px rgba(0,0,0,.6);
+  }
+  .drawer.open{ transform: translateY(0); }
+  .drawer-handle{ width:36px; height:4px; border-radius:2px; background:var(--hairline); margin: 6px auto 10px; }
+  .drawer-title{
+    font-size:11px; text-transform:uppercase; letter-spacing:.1em; color: var(--text-faint);
+    padding: 4px 10px 8px;
+  }
+  .drawer-item{
+    display:flex; align-items:center; gap:12px;
+    padding: 12px 10px; border-radius: 12px; cursor:pointer;
+  }
+  .drawer-item:active{ background: var(--panel-raised); }
+  .drawer-item .ic{
+    width:36px; height:36px; border-radius:10px; background: var(--panel-raised);
+    display:flex; align-items:center; justify-content:center; font-size:17px; flex:0 0 auto;
+  }
+  .drawer-item .label-col{ flex:1; }
+  .drawer-item .t{ font-size:14px; font-weight:600; color: var(--text); }
+  .drawer-item .s{ font-size:11.5px; color: var(--text-dim); margin-top:1px; }
+  .drawer-item .badge-count{
+    background: var(--red-soft); color: var(--red); font-size:11px; font-weight:700;
+    padding: 2px 8px; border-radius:999px; flex:0 0 auto;
+  }
+</style>
 </head>
 <body>
-
-    <div class="toast-container" id="toastContainer"></div>
-
-    <div class="container">
-        <!-- Header -->
-        <div class="flex-between mb-4 mt-2">
-            <div>
-                <h2>স্বাগতম, <span id="userName" class="text-gradient">ইউজার</span>! 👋</h2>
-                <p id="userRoleBadge" class="badge badge-verified">Sub-Admin</p>
-            </div>
-            <div style="text-align: right;">
-                <span class="badge badge-pending" id="cpmBadge">Mode: Real-time</span>
-            </div>
-        </div>
-
-        <!-- Skeleton Loading State -->
-        <div id="loadingState">
-            <div class="glass-card">
-                <div class="skeleton" style="height: 20px; width: 40%; margin-bottom: 12px;"></div>
-                <div class="skeleton" style="height: 40px; width: 70%; margin-bottom: 16px;"></div>
-                <div class="skeleton" style="height: 20px; width: 40%; margin-bottom: 12px;"></div>
-                <div class="skeleton" style="height: 30px; width: 50%;"></div>
-            </div>
-        </div>
-
-        <!-- App Content -->
-        <div id="appContent" class="hidden">
-            
-            <!-- Tab 1: Dashboard -->
-            <div id="tab-dashboard" class="tab-content active">
-                
-                <!-- Financial Summary Cards -->
-                <div class="glass-card">
-                    <div class="flex-between mb-3">
-                        <div>
-                            <div class="balance-title">কনফার্মড ব্যালেন্স (উইথড্র যোগ্য)</div>
-                            <div class="balance-amount balance-confirmed">$<span id="confirmedBalance">0.0000</span></div>
-                        </div>
-                        <div style="text-align: right;">
-                            <div class="balance-title">পেন্ডিং ব্যালেন্স</div>
-                            <div class="balance-amount balance-pending" style="font-size: 20px;">$<span id="pendingBalance">0.0000</span></div>
-                        </div>
-                    </div>
-                    
-                    <div class="stats-grid mt-4">
-                        <div class="stat-item" style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);">
-                            <div class="stat-value" id="lifetimeEarned" style="color: #34d399;">$0.00</div>
-                            <div class="stat-label"><i class="fas fa-coins"></i> মোট অর্জিত আয়</div>
-                        </div>
-                        <div class="stat-item" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);">
-                            <div class="stat-value" id="totalWithdrawn" style="color: #f87171;">$0.00</div>
-                            <div class="stat-label"><i class="fas fa-hand-holding-usd"></i> মোট উইথড্র করা</div>
-                        </div>
-                        <div class="stat-item" style="background: rgba(56, 189, 248, 0.1); border: 1px solid rgba(56, 189, 248, 0.3);">
-                            <div class="stat-value" id="dashCpm" style="color: #38bdf8;">$0.50</div>
-                            <div class="stat-label"><i class="fas fa-chart-line"></i> বর্তমান CPM রেট</div>
-                        </div>
-                        <div class="stat-item" style="background: rgba(167, 139, 250, 0.1); border: 1px solid rgba(167, 139, 250, 0.3);">
-                            <div class="stat-value" id="totalViews">0</div>
-                            <div class="stat-label"><i class="fas fa-eye"></i> সর্বমোট ভিউ</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Date Analytics Section -->
-                <div class="glass-card mt-4">
-                    <h3><i class="fas fa-chart-bar text-warning"></i> ভিউ ও ইনকাম এনালাইটিক্স</h3>
-                    
-                    <!-- Date Filter Pills -->
-                    <div class="action-buttons mt-3 mb-3" style="display: flex; gap: 6px; flex-wrap: wrap;">
-                        <button class="btn btn-outline period-btn" id="btnPeriod24h" onclick="selectPeriod('24h')">⚡ ২৪ ঘণ্টা</button>
-                        <button class="btn btn-primary period-btn active" id="btnPeriod7d" onclick="selectPeriod('7d')">📅 ৭ দিন</button>
-                        <button class="btn btn-outline period-btn" id="btnPeriod30d" onclick="selectPeriod('30d')">📆 ৩০ দিন</button>
-                        <button class="btn btn-outline period-btn" id="btnPeriodCustom" onclick="toggleCustomDate()">🗓️ কাস্টম তারিখ</button>
-                    </div>
-
-                    <!-- Custom Date Picker Fields -->
-                    <div id="customDatePicker" class="hidden mb-3" style="background: rgba(255,255,255,0.05); padding: 12px; border-radius: 12px;">
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <input type="date" id="analyticsStartDate" style="margin: 0;">
-                            <span class="text-muted">থেকে</span>
-                            <input type="date" id="analyticsEndDate" style="margin: 0;">
-                        </div>
-                        <button class="btn btn-success mt-2" style="width: 100%; font-size: 13px;" onclick="fetchCustomAnalytics()">ডাটা ফিল্টার করুন</button>
-                    </div>
-
-                    <!-- Analytics Summary Header -->
-                    <div class="flex-between" style="background: rgba(255,255,255,0.03); padding: 10px 14px; border-radius: 10px; margin-bottom: 12px;">
-                        <div>
-                            <span class="text-muted" style="font-size: 12px;">ভিউ সংখ্যা:</span>
-                            <strong id="periodViews" style="color: #38bdf8; font-size: 16px; margin-left: 4px;">0</strong>
-                        </div>
-                        <div>
-                            <span class="text-muted" style="font-size: 12px;">আনুকূলিক আয়:</span>
-                            <strong id="periodEarnings" style="color: #34d399; font-size: 16px; margin-left: 4px;">$0.0000</strong>
-                        </div>
-                    </div>
-
-                    <!-- Daily Analytics Breakdown List -->
-                    <div id="analyticsBreakdownList">
-                        <p class="text-center text-muted" style="font-size: 13px;">ডেটা লোড হচ্ছে...</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Tab 2: My Links -->
-            <div id="tab-links" class="tab-content">
-                <button class="btn mb-4" onclick="openModal('createLinkModal')">
-                    <i class="fas fa-plus"></i> নতুন লিংক তৈরি করুন
-                </button>
-                <div class="glass-card">
-                    <h3>আমার লিংকসমূহ</h3>
-                    <div id="myLinksList">
-                        <p class="text-center mt-4">কোনো লিংক পাওয়া যায়নি</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Tab 3: Withdraw -->
-            <div id="tab-withdraw" class="tab-content">
-                <div class="glass-card text-center">
-                    <div class="balance-title">উইথড্র যোগ্য ব্যালেন্স</div>
-                    <div class="balance-amount balance-confirmed">$<span id="withdrawAvail">0.0000</span></div>
-                </div>
-
-                <div class="glass-card">
-                    <h3>উইথড্র রিকোয়েস্ট</h3>
-                    <div class="flex-between mb-3 mt-2">
-                        <button class="btn btn-success" id="btnMethodBkash" onclick="setWithdrawMethod('bKash')">bKash</button>
-                        <div style="width: 10px;"></div>
-                        <button class="btn btn-outline" id="btnMethodNagad" onclick="setWithdrawMethod('Nagad')">Nagad</button>
-                    </div>
-                    <label class="balance-title">একাউন্ট নম্বর</label>
-                    <input type="text" id="withdrawAccount" placeholder="যেমন: 01712345678">
-                    
-                    <label class="balance-title mt-2">উইথড্র পরিমাণ ($)</label>
-                    <input type="number" id="withdrawAmount" step="0.5" placeholder="উইথড্র পরিমাণ ($)">
-                    
-                    <div class="text-muted mt-2 mb-3" style="font-size: 12px; color: #a78bfa;">
-                        📌 মিনিমাম লিমিট: <strong>$<span id="minWithdrawLabel">50.00</span></strong> | ⏱️ পেমেন্ট সময়: <strong><span id="payoutHoursLabel">২৪ ঘণ্টা</span></strong>
-                    </div>
-                    
-                    <button class="btn mt-2" id="withdrawSubmitBtn" onclick="submitWithdraw()">রিকোয়েস্ট সাবমিট করুন</button>
-                </div>
-
-                <div class="glass-card">
-                    <h3>উইথড্র হিস্ট্রি</h3>
-                    <div id="withdrawHistoryList">
-                        <p class="text-center mt-4">কোনো হিস্ট্রি নেই</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- OWNER TABS -->
-
-            <!-- Tab 4: Verify -->
-            <div id="tab-verify" class="tab-content">
-                <div class="glass-card">
-                    <h3>পেন্ডিং ভেরিফিকেশন</h3>
-                    <div id="verifyList"><p class="text-center mt-4">লোড হচ্ছে...</p></div>
-                </div>
-            </div>
-
-            <!-- Tab 5: Withdrawals -->
-            <div id="tab-payments" class="tab-content">
-                <div class="glass-card">
-                    <h3>পেন্ডিং পেমেন্ট</h3>
-                    <div id="paymentsList"><p class="text-center mt-4">লোড হচ্ছে...</p></div>
-                </div>
-            </div>
-
-            <!-- Tab 6: CPM -->
-            <div id="tab-cpm" class="tab-content">
-                <div class="glass-card">
-                    <h3>সিপিএম ও উইথড্র সেটিংস</h3>
-                    <label class="balance-title">মোড</label>
-                    <select id="cpmMode">
-                        <option value="realtime">Real-time (রিয়েল-টাইম)</option>
-                        <option value="scheduled">Scheduled (শিডিউল্ড)</option>
-                    </select>
-
-                    <label class="balance-title">সিপিএম রেট ($ প্রতি ১০০০ ভিউ)</label>
-                    <input type="number" id="cpmRate" step="0.01" placeholder="0.50">
-
-                    <label class="balance-title">মিনিমাম উইথড্র লিমিট ($)</label>
-                    <input type="number" id="cpmMinWithdrawal" step="1" placeholder="50.0">
-
-                    <label class="balance-title">পেমেন্ট প্রসেসিং সময় (ঘণ্টা)</label>
-                    <select id="cpmPayoutHours">
-                        <option value="12">১২ ঘণ্টা</option>
-                        <option value="24" selected>২৪ ঘণ্টা</option>
-                        <option value="48">৪৮ ঘণ্টা</option>
-                        <option value="72">৭২ ঘণ্টা</option>
-                    </select>
-
-                    <div id="scheduledSettings" class="hidden mt-2">
-                        <label class="balance-title">সাইকেল ডিউরেশন</label>
-                        <select id="cpmCycle">
-                            <option value="12">১২ ঘন্টা</option>
-                            <option value="24" selected>২৪ ঘন্টা</option>
-                            <option value="72">৩ দিন</option>
-                            <option value="168">৭ দিন</option>
-                        </select>
-                    </div>
-
-                    <button class="btn mt-4" onclick="saveCpmSettings()">সেভ করুন</button>
-                </div>
-            </div>
-
-            <!-- Tab 7: Admins -->
-            <div id="tab-admins" class="tab-content">
-                <div class="stats-grid mb-4">
-                    <div class="glass-card stat-item" style="margin-bottom:0">
-                        <div class="stat-value" id="platformAdmins">0</div>
-                        <div class="stat-label">মোট এডমিন</div>
-                    </div>
-                    <div class="glass-card stat-item" style="margin-bottom:0">
-                        <div class="stat-value" id="platformPaid">$0</div>
-                        <div class="stat-label">পেন্ডিং উইথড্র</div>
-                    </div>
-                    <div class="glass-card stat-item" style="margin-bottom:0">
-                        <div class="stat-value" id="platformPending">$0</div>
-                        <div class="stat-label">মোট দায়বদ্ধতা</div>
-                    </div>
-                </div>
-                <div class="glass-card">
-                    <h3>সব এডমিন</h3>
-                    <div id="adminsList"><p class="text-center mt-4">লোড হচ্ছে...</p></div>
-                </div>
-            </div>
-
-        </div>
+<div id="app">
+  <div class="topbar">
+    <div class="brand"><span class="mark">T</span> TGSHORTBOT</div>
+    <div class="topbar-right">
+      <span class="role-badge" id="roleBadge">…</span>
+      <button class="menu-btn" id="menuBtn" style="display:none;">⋮<span class="dot" id="menuDot"></span></button>
     </div>
+  </div>
 
-    <!-- Bottom Navigation -->
-    <nav class="bottom-nav" id="bottomNav">
-        <!-- Injected via JS based on role -->
-    </nav>
+  <div class="balance-card" id="topCard"><div class="skel" style="height:60px;"></div></div>
 
-    <!-- Modals -->
-    <!-- Create Link Modal -->
-    <div class="modal-overlay" id="createLinkModal">
-        <div class="modal">
-            <h3>নতুন লিংক তৈরি</h3>
-            <p>আপনার ডেসটিনেশন URL প্রদান করুন</p>
-            <input type="url" id="newLinkUrl" placeholder="https://example.com/file..." required>
-            <div class="action-buttons mt-4" style="display: flex; gap: 8px;">
-                <button class="btn btn-outline" onclick="closeModal('createLinkModal')">বাতিল</button>
-                <button class="btn" onclick="createLink()">তৈরি করুন</button>
-            </div>
+  <div class="tabs" id="tabs"></div>
+  <div id="tabContent"></div>
+</div>
+
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-handle"></div>
+  <div class="drawer-title">More</div>
+  <div id="drawerItems"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  const tg = window.Telegram ? window.Telegram.WebApp : null;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    try { tg.setHeaderColor("#12141c"); tg.setBackgroundColor("#12141c"); } catch (e) {}
+  }
+  const initData = tg ? tg.initData : "";
+
+  const state = {
+    me: null,
+    tab: "overview",
+    links: [],
+    withdrawals: [],
+    cpm: null,
+    withdrawalsPending: [],
+    admins: [],
+    stats: null,
+    drawerOpen: false,
+  };
+
+  // ---- helpers ------------------------------------------------------
+
+  function fmt(n) {
+    return "৳" + Number(n || 0).toFixed(2);
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  function isOwner() {
+    return !!(state.me && state.me.role === "owner");
+  }
+
+  let toastTimer = null;
+  function toast(msg, kind) {
+    const el = document.getElementById("toast");
+    el.textContent = msg;
+    el.className = "toast show" + (kind ? " " + kind : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = "toast"; }, 2600);
+  }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    const headers = Object.assign({ "X-Telegram-Init-Data": initData }, opts.headers || {});
+    if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+    const resp = await fetch(path, Object.assign({}, opts, { headers }));
+    let data = null;
+    try { data = await resp.json(); } catch (e) { /* no body */ }
+    if (!resp.ok) {
+      const detail = (data && data.detail) || (resp.status + " " + resp.statusText);
+      throw new Error(detail);
+    }
+    return data;
+  }
+
+  function secondsToClock(s) {
+    s = Math.max(0, s | 0);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h + "h " + m + "m";
+  }
+
+  // ---- navigation: primary tabs (role-aware) + owner drawer -----------
+
+  function primaryTabs() {
+    if (isOwner()) {
+      return [
+        ["overview", "Overview", 0],
+        ["payouts", "Withdrawals", state.withdrawalsPending.length],
+        ["admins", "Admins", 0],
+      ];
+    }
+    return [
+      ["overview", "Overview", 0],
+      ["links", "My Links", 0],
+      ["traffic", "Traffic Source", 0],
+      ["withdraw", "Withdraw", 0],
+    ];
+  }
+
+  function drawerItems() {
+    if (!isOwner()) return [];
+    return [
+      ["links", "🔗", "My Links", "Create & manage your own short links"],
+      ["traffic", "📡", "Traffic Source", "Set where your own links get shared"],
+      ["withdraw", "💸", "Request Withdrawal", "Cash out your own confirmed balance"],
+      ["cpm", "⚙️", "CPM Settings", "Real-time / Scheduled mode, rate, cycle"],
+      ["stats", "📈", "Platform Stats", "Totals across every admin"],
+    ];
+  }
+
+  function renderTabs() {
+    const el = document.getElementById("tabs");
+    el.innerHTML = primaryTabs().map(([id, label, badge]) =>
+      `<button class="tab-btn${state.tab === id ? " active" : ""}" data-tab="${id}">${label}${badge ? `<span class="tab-badge">${badge}</span>` : ""}</button>`
+    ).join("");
+    el.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => { state.tab = btn.dataset.tab; renderTab(); });
+    });
+
+    const menuBtn = document.getElementById("menuBtn");
+    const dot = document.getElementById("menuDot");
+    if (isOwner()) {
+      menuBtn.style.display = "flex";
+      dot.className = "dot" + (state.withdrawalsPending.length > 0 ? " show" : "");
+    } else {
+      menuBtn.style.display = "none";
+    }
+  }
+
+  function renderDrawer() {
+    const el = document.getElementById("drawerItems");
+    el.innerHTML = drawerItems().map(([id, icon, title, sub]) => `
+      <div class="drawer-item" data-tab="${id}">
+        <div class="ic">${icon}</div>
+        <div class="label-col"><div class="t">${title}</div><div class="s">${sub}</div></div>
+      </div>
+    `).join("");
+    el.querySelectorAll(".drawer-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        state.tab = item.dataset.tab;
+        closeDrawer();
+        renderTab();
+      });
+    });
+  }
+
+  function openDrawer() {
+    state.drawerOpen = true;
+    document.getElementById("drawerBackdrop").classList.add("open");
+    document.getElementById("drawer").classList.add("open");
+  }
+  function closeDrawer() {
+    state.drawerOpen = false;
+    document.getElementById("drawerBackdrop").classList.remove("open");
+    document.getElementById("drawer").classList.remove("open");
+  }
+
+  document.getElementById("menuBtn").addEventListener("click", () => {
+    state.drawerOpen ? closeDrawer() : openDrawer();
+  });
+  document.getElementById("drawerBackdrop").addEventListener("click", closeDrawer);
+
+  // ---- top card: admin balance card vs owner business snapshot --------
+
+  function renderTopCard() {
+    const card = document.getElementById("topCard");
+    const badge = document.getElementById("roleBadge");
+    if (!state.me) { card.innerHTML = `<div class="skel" style="height:60px;"></div>`; return; }
+
+    badge.textContent = isOwner() ? "Owner" : "Admin";
+    badge.className = "role-badge" + (isOwner() ? " owner" : "");
+
+    if (isOwner()) {
+      const pendingCount = state.withdrawalsPending.length;
+      const pendingSum = state.withdrawalsPending.reduce((s, w) => s + w.amount, 0);
+      const cpmLine = state.cpm
+        ? (state.cpm.mode === "scheduled"
+            ? `Scheduled · next cycle in <b>${secondsToClock(state.cpm.seconds_to_payout)}</b>`
+            : `Real-time · <b>${fmt(state.cpm.current_cpm)}</b> / view`)
+        : "";
+      card.className = "balance-card owner-card";
+      card.innerHTML = `
+        <div class="owner-eyebrow">Business snapshot</div>
+        <div class="balance-row">
+          <div class="balance-item pending"><div class="label">Pending withdrawals</div><div class="value">${pendingCount}</div></div>
+          <div class="balance-item violet"><div class="label">Awaiting payout</div><div class="value">${fmt(pendingSum)}</div></div>
         </div>
-    </div>
-
-    <!-- Proof URL Modal -->
-    <div class="modal-overlay" id="proofModal">
-        <div class="modal">
-            <h3>প্রুফ URL যোগ করুন</h3>
-            <p>চ্যানেল বা পোস্টের লিংক দিন যেখানে শর্ট লিংকটি শেয়ার করা হয়েছে।</p>
-            <input type="hidden" id="proofLinkCode">
-            <input type="url" id="proofUrlInput" placeholder="https://t.me/yourchannel/123" required>
-            <div class="action-buttons mt-4" style="display: flex; gap: 8px;">
-                <button class="btn btn-outline" onclick="closeModal('proofModal')">বাতিল</button>
-                <button class="btn" onclick="submitProof()">সাবমিট</button>
-            </div>
+        <div class="cycle-note">👥 <b>${state.stats ? state.stats.total_admins : "…"}</b> admins ·
+          📈 CPM: ${cpmLine}</div>
+      `;
+    } else {
+      card.className = "balance-card";
+      const pendingViews = state.links.reduce((sum, l) => sum + (l.pending_views || 0), 0);
+      let cycleNote = "";
+      if (state.cpm && state.cpm.mode === "scheduled") {
+        cycleNote = `⏳ Next payout in <b>${secondsToClock(state.cpm.seconds_to_payout)}</b> — rate is set at payout time.`;
+      } else if (state.cpm) {
+        cycleNote = `📈 Real-time CPM active — currently <b>${fmt(state.cpm.current_cpm)}</b> per view.`;
+      }
+      card.innerHTML = `
+        <div class="balance-row">
+          <div class="balance-item confirmed"><div class="label">Confirmed</div><div class="value">${fmt(state.me.balance_confirmed)}</div></div>
+          <div class="balance-item pending"><div class="label">Pending views</div><div class="value">${pendingViews}</div></div>
         </div>
-    </div>
+        <div class="cycle-note">${cycleNote}</div>
+      `;
+    }
+  }
 
-    <script>
-        const API_BASE_URL = '{{API_BASE_URL}}';
-        let tg = window.Telegram.WebApp;
-        let isOwner = false;
-        let withdrawMethod = 'bkash';
-        
-        tg.ready();
-        tg.expand();
+  // ---- tab dispatch -----------------------------------------------------
 
-        const headers = {
-            'Content-Type': 'application/json',
-            'Authorization': `tma ${tg.initData}`
-        };
+  async function renderTab() {
+    renderTabs();
+    const el = document.getElementById("tabContent");
+    el.innerHTML = `<div class="card"><div class="skel" style="height:80px;"></div></div>`;
+    try {
+      if (state.tab === "overview") await renderOverview(el);
+      else if (state.tab === "links") await renderLinks(el);
+      else if (state.tab === "traffic") await renderTraffic(el);
+      else if (state.tab === "withdraw") await renderWithdraw(el);
+      else if (state.tab === "payouts") await renderPayouts(el);
+      else if (state.tab === "cpm") await renderCpm(el);
+      else if (state.tab === "admins") await renderAdmins(el);
+      else if (state.tab === "stats") await renderStats(el);
+    } catch (e) {
+      el.innerHTML = `<div class="card"><div class="empty">Couldn't load this tab — ${esc(e.message)}</div></div>`;
+    }
+  }
 
-        function showToast(message, type = 'success') {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
-            toast.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'}"></i> ${message}`;
-            container.appendChild(toast);
-            setTimeout(() => { if(toast.parentElement) toast.remove(); }, 3000);
-        }
+  // ---- Overview ---------------------------------------------------
 
-        function renderNav() {
-            const nav = document.getElementById('bottomNav');
-            let html = '';
-            
-            if (isOwner) {
-                nav.classList.add('owner-nav-rows');
-                html = `
-                    <div class="nav-row">
-                        <div class="nav-item active" onclick="switchTab('dashboard', this)"><i class="fas fa-home"></i>ড্যাশবোর্ড</div>
-                        <div class="nav-item" onclick="switchTab('links', this)"><i class="fas fa-link"></i>লিংকস</div>
-                        <div class="nav-item" onclick="switchTab('withdraw', this)"><i class="fas fa-wallet"></i>উইথড্র</div>
-                    </div>
-                    <div class="nav-row">
-                        <div class="nav-item" onclick="switchTab('verify', this)"><i class="fas fa-check-double"></i>ভেরিফাই</div>
-                        <div class="nav-item" onclick="switchTab('payments', this)"><i class="fas fa-money-bill-wave"></i>পেমেন্ট</div>
-                        <div class="nav-item" onclick="switchTab('cpm', this)"><i class="fas fa-chart-line"></i>সিপিএম</div>
-                        <div class="nav-item" onclick="switchTab('admins', this)"><i class="fas fa-users"></i>এডমিনস</div>
-                    </div>
-                `;
-            } else {
-                nav.classList.remove('owner-nav-rows');
-                html = `
-                    <div class="nav-item active" onclick="switchTab('dashboard', this)"><i class="fas fa-home"></i>ড্যাশবোর্ড</div>
-                    <div class="nav-item" onclick="switchTab('links', this)"><i class="fas fa-link"></i>লিংকসমূহ</div>
-                    <div class="nav-item" onclick="switchTab('withdraw', this)"><i class="fas fa-wallet"></i>উইথড্র</div>
-                `;
-            }
-            nav.innerHTML = html;
-        }
+  async function renderOverview(el) {
+    if (isOwner()) {
+      el.innerHTML = `
+        <div class="section-title">Quick actions</div>
+        <div class="card">
+          <button class="btn btn-primary btn-block" id="qaPayouts">Review pending withdrawals${state.withdrawalsPending.length ? ` (${state.withdrawalsPending.length})` : ""}</button>
+          <div class="btn-row">
+            <button class="btn btn-outline btn-block" id="qaAdmins">View all admins</button>
+          </div>
+        </div>
+        <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
+          Everything else — CPM settings, your own links, platform stats — lives behind the ⋮ menu, top right.
+        </p>
+      `;
+      el.querySelector("#qaPayouts").addEventListener("click", () => { state.tab = "payouts"; renderTab(); });
+      el.querySelector("#qaAdmins").addEventListener("click", () => { state.tab = "admins"; renderTab(); });
+      return;
+    }
 
-        function switchTab(tabId, el) {
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            const target = document.getElementById(`tab-${tabId}`);
-            if (target) target.classList.add('active');
-            
-            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-            if(el) el.classList.add('active');
+    await loadLinks();
+    const confirmedViews = state.links.reduce((s, l) => s + (l.confirmed_views || 0), 0);
+    const totalViews = state.links.reduce((s, l) => s + (l.view_count || 0), 0);
+    el.innerHTML = `
+      ${!state.me.traffic_source_url ? `
+        <div class="card" style="border-color: rgba(226,104,92,.35);">
+          <h3 style="color:var(--red);">⚠️ Traffic Source not set</h3>
+          <div class="meta">You need this before you can create any short links.</div>
+          <div class="btn-row"><button class="btn btn-primary btn-block" id="ctaTraffic">Set Traffic Source</button></div>
+        </div>` : ""}
+      <div class="section-title">At a glance</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="n">${state.links.length}</div><div class="l">Links created</div></div>
+        <div class="stat-box"><div class="n">${totalViews}</div><div class="l">Total views</div></div>
+        <div class="stat-box"><div class="n">${confirmedViews}</div><div class="l">Confirmed views</div></div>
+        <div class="stat-box"><div class="n">${fmt(state.me.balance_confirmed)}</div><div class="l">Withdrawable</div></div>
+      </div>
+      <div class="section-title" style="margin-top:18px;">Quick actions</div>
+      <div class="card">
+        <button class="btn btn-primary btn-block" id="qaNewLink">+ Create a new short link</button>
+        <div class="btn-row">
+          <button class="btn btn-outline btn-block" id="qaWithdraw">Request withdrawal</button>
+        </div>
+      </div>
+      <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
+        Tip: you can also do all of this from the bot chat with <code>/newlink</code>, <code>/mybalance</code> and <code>/withdraw</code>.
+      </p>
+    `;
+    const ctaTraffic = el.querySelector("#ctaTraffic");
+    if (ctaTraffic) ctaTraffic.addEventListener("click", () => { state.tab = "traffic"; renderTab(); });
+    el.querySelector("#qaNewLink").addEventListener("click", () => { state.tab = "links"; renderTab(); });
+    el.querySelector("#qaWithdraw").addEventListener("click", () => { state.tab = "withdraw"; renderTab(); });
+  }
 
-            if (tabId === 'verify') loadVerifyList();
-            if (tabId === 'payments') loadPaymentsList();
-            if (tabId === 'cpm') loadCpmSettings();
-            if (tabId === 'admins') loadAdminsList();
-        }
+  // ---- Traffic Source ---------------------------------------------------
 
-        function openModal(id) { document.getElementById(id).classList.add('active'); }
-        function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+  async function renderTraffic(el) {
+    await loadMe();
+    const platforms = ["Telegram", "YouTube", "Facebook", "TikTok", "Other"];
+    el.innerHTML = `
+      <div class="card">
+        <h3>Your Traffic Source</h3>
+        <div class="meta">Where you'll share your short links — the Owner sees this alongside your withdrawal requests.</div>
+        ${state.me.traffic_source_url
+          ? `<div class="meta" style="margin-top:8px;">Current: <b style="color:var(--text)">${esc(state.me.traffic_source_platform)}</b> —
+              <a href="${esc(state.me.traffic_source_url)}" target="_blank" style="color:var(--brass);">${esc(state.me.traffic_source_url)}</a></div>`
+          : `<div class="meta" style="color:var(--red); margin-top:8px;">Not set yet — you can't create links until this is set.</div>`}
+        <label>Platform</label>
+        <select id="tsPlatform">
+          ${platforms.map((p) => `<option value="${p}">${p}</option>`).join("")}
+        </select>
+        <label>Channel / group / profile link</label>
+        <input type="url" id="tsUrl" placeholder="https://t.me/yourchannel" value="${esc(state.me.traffic_source_url || "")}" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="tsSave">Save Traffic Source</button></div>
+      </div>
+    `;
+    const sel = el.querySelector("#tsPlatform");
+    if (state.me.traffic_source_platform && platforms.includes(state.me.traffic_source_platform)) {
+      sel.value = state.me.traffic_source_platform;
+    }
+    el.querySelector("#tsSave").addEventListener("click", async () => {
+      const platform = sel.value;
+      const url = el.querySelector("#tsUrl").value.trim();
+      if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
+      const btn = el.querySelector("#tsSave");
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/traffic-source", { method: "POST", body: JSON.stringify({ platform, url }) });
+        toast("Traffic Source saved", "ok");
+        await loadMe();
+        renderTopCard();
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save Traffic Source";
+      }
+    });
+  }
 
-        const formatMoney = (amount) => new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(amount || 0);
+  // ---- My Links -----------------------------------------------------
 
-        async function fetchAppInit() {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/my/stats`, { headers });
-                if (!res.ok) throw new Error('API request failed');
-                const data = await res.json();
-                
-                isOwner = data.role === 'owner';
-                renderNav();
-                updateDashboard(data);
-                
-                document.getElementById('loadingState').classList.add('hidden');
-                document.getElementById('appContent').classList.remove('hidden');
+  async function renderLinks(el) {
+    await loadLinks();
 
-                if(isOwner) {
-                    document.getElementById('userRoleBadge').innerText = 'Owner (মালিক)';
-                    document.getElementById('userRoleBadge').style.background = 'rgba(124, 58, 237, 0.2)';
-                    document.getElementById('userRoleBadge').style.color = '#c4b5fd';
-                } else {
-                    document.getElementById('userRoleBadge').innerText = 'Sub-Admin';
-                }
+    if (!state.me.traffic_source_url) {
+      el.innerHTML = `
+        <div class="card" style="border-color: rgba(226,104,92,.35);">
+          <div class="empty" style="padding:14px 4px; color:var(--red);">
+            Set your Traffic Source before you can create links.
+          </div>
+          <button class="btn btn-primary btn-block" id="goTraffic">Set Traffic Source</button>
+        </div>
+        <div class="section-title">My links</div>
+        <div id="linksList"></div>
+      `;
+      el.querySelector("#goTraffic").addEventListener("click", () => { state.tab = "traffic"; renderTab(); });
+      renderLinksList();
+      return;
+    }
 
-                loadMyLinks(data.links);
-                loadWithdrawals(data.withdrawals);
+    el.innerHTML = `
+      <div class="card">
+        <h3>Create a short link</h3>
+        <label for="newUrl">Destination URL</label>
+        <input type="url" id="newUrl" placeholder="https://example.com/your-page" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="createLinkBtn">Create link</button></div>
+      </div>
+      <div class="section-title">My links</div>
+      <div id="linksList"></div>
+    `;
+    el.querySelector("#createLinkBtn").addEventListener("click", async () => {
+      const input = el.querySelector("#newUrl");
+      const url = input.value.trim();
+      if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
+      const btn = el.querySelector("#createLinkBtn");
+      btn.disabled = true; btn.textContent = "Creating…";
+      try {
+        await api("/api/links", { method: "POST", body: JSON.stringify({ destination_url: url }) });
+        input.value = "";
+        toast("Short link created", "ok");
+        await loadLinks();
+        renderLinksList();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Create link";
+      }
+    });
+    renderLinksList();
+  }
 
-            } catch (err) {
-                console.error(err);
-                showToast('ডেটা লোড করতে সমস্যা হয়েছে!', 'error');
-            }
-        }
+  function renderLinksList() {
+    const listEl = document.getElementById("linksList");
+    if (!listEl) return;
+    if (state.links.length === 0) {
+      listEl.innerHTML = `<div class="card"><div class="empty">No links yet — create your first one above.</div></div>`;
+      return;
+    }
+    listEl.innerHTML = state.links.map((l) => `
+      <div class="card">
+        <h3>/${esc(l.short_code)}</h3>
+        <code class="short-url">${esc(l.short_url)}</code>
+        <div class="meta">→ ${esc(l.destination_url)}</div>
+        <div class="meta">${l.view_count} views · ${l.confirmed_views} confirmed · ${l.pending_views} pending</div>
+      </div>
+    `).join("");
+  }
 
-        let currentAnalyticsPeriod = '7d';
+  // ---- Withdraw (personal request + history) ---------------------------
 
-        function updateDashboard(data) {
-            const userName = tg.initDataUnsafe?.user?.first_name || 'Admin';
-            document.getElementById('userName').innerText = userName;
-            document.getElementById('confirmedBalance').innerText = formatMoney(data.balance_confirmed);
-            document.getElementById('pendingBalance').innerText = formatMoney(data.balance_pending);
-            document.getElementById('totalViews').innerText = data.total_views || 0;
-            
-            document.getElementById('totalWithdrawn').innerText = `$${formatMoney(data.total_withdrawn || 0)}`;
-            document.getElementById('lifetimeEarned').innerText = `$${formatMoney(data.lifetime_earned || 0)}`;
+  async function renderWithdraw(el) {
+    await loadMyWithdrawals();
+    el.innerHTML = `
+      <div class="card">
+        <h3>Request a withdrawal</h3>
+        <div class="meta">Confirmed balance: <b style="color:var(--text)">${fmt(state.me.balance_confirmed)}</b></div>
+        <label>Method</label>
+        <select id="wMethod">
+          <option value="bkash">bKash</option>
+          <option value="nagad">Nagad</option>
+        </select>
+        <label>Account number</label>
+        <input type="text" id="wAccount" placeholder="01XXXXXXXXX" />
+        <label>Amount</label>
+        <input type="number" id="wAmount" min="0" step="0.01" placeholder="0.00" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="wSubmit">Submit request</button></div>
+      </div>
+      <div class="section-title">History</div>
+      <div id="wHistory"></div>
+    `;
+    el.querySelector("#wSubmit").addEventListener("click", async () => {
+      const method = el.querySelector("#wMethod").value;
+      const account_number = el.querySelector("#wAccount").value.trim();
+      const amount = parseFloat(el.querySelector("#wAmount").value);
+      if (!account_number) { toast("Enter an account number", "err"); return; }
+      if (!(amount > 0)) { toast("Enter a valid amount", "err"); return; }
+      if (amount > state.me.balance_confirmed) { toast("Amount exceeds your confirmed balance", "err"); return; }
+      const btn = el.querySelector("#wSubmit");
+      btn.disabled = true; btn.textContent = "Submitting…";
+      try {
+        await api("/api/withdraw", { method: "POST", body: JSON.stringify({ method, account_number, amount }) });
+        toast("Withdrawal requested — the Owner has been notified", "ok");
+        await loadMe();
+        await loadMyWithdrawals();
+        renderWithdrawHistory();
+        renderTopCard();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Submit request";
+      }
+    });
+    renderWithdrawHistory();
+  }
 
-            document.getElementById('withdrawAvail').innerText = formatMoney(data.balance_confirmed);
-            document.getElementById('withdrawAmount').value = data.balance_confirmed || 0;
+  function renderWithdrawHistory() {
+    const histEl = document.getElementById("wHistory");
+    if (!histEl) return;
+    if (state.withdrawals.length === 0) {
+      histEl.innerHTML = `<div class="card"><div class="empty">No withdrawal requests yet.</div></div>`;
+      return;
+    }
+    histEl.innerHTML = state.withdrawals.map((w) => `
+      <div class="card">
+        <div class="row-between">
+          <h3>${fmt(w.amount)} · ${w.method === "bkash" ? "bKash" : "Nagad"}</h3>
+          <span class="pill ${w.status}">${w.status}</span>
+        </div>
+        <div class="meta">Account: ${esc(w.account_number)}</div>
+        <div class="meta">Requested ${esc(new Date(w.created_at).toLocaleString())}</div>
+        ${w.reject_reason ? `<div class="meta" style="color:var(--red);">Reason: ${esc(w.reject_reason)}</div>` : ""}
+      </div>
+    `).join("");
+  }
 
-            if (data.cycle_info) {
-                const cpmVal = data.cycle_info.cpm || 0.50;
-                document.getElementById('dashCpm').innerText = `$${formatMoney(cpmVal)}`;
-                document.getElementById('cpmBadge').innerText = `CPM: $${formatMoney(cpmVal)} | ${data.cycle_info.mode || 'realtime'}`;
-                if (data.cycle_info.min_withdrawal_amount) {
-                    document.getElementById('minWithdrawLabel').innerText = formatMoney(data.cycle_info.min_withdrawal_amount);
-                }
-                if (data.cycle_info.payout_processing_hours) {
-                    document.getElementById('payoutHoursLabel').innerText = `${data.cycle_info.payout_processing_hours} ঘণ্টা`;
-                }
-            }
+  // ---- Owner: Withdrawals queue -----------------------------------------
 
-            if (data.analytics) {
-                renderAnalytics(data.analytics);
-            }
-        }
+  async function renderPayouts(el) {
+    const data = await api("/api/admin/withdrawals");
+    state.withdrawalsPending = data.withdrawals;
+    renderTabs();
 
-        function selectPeriod(period) {
-            currentAnalyticsPeriod = period;
-            document.querySelectorAll('.period-btn').forEach(b => {
-                b.classList.remove('active', 'btn-primary');
-                b.classList.add('btn-outline');
-            });
+    if (state.withdrawalsPending.length === 0) {
+      el.innerHTML = `<div class="card"><div class="empty">No pending withdrawal requests.</div></div>`;
+      return;
+    }
+    el.innerHTML = state.withdrawalsPending.map((w) => `
+      <div class="card">
+        <div class="row-between">
+          <h3>${fmt(w.amount)} · ${w.method === "bkash" ? "bKash" : "Nagad"}</h3>
+          <span class="pill pending">pending</span>
+        </div>
+        <div class="meta">Admin: ${esc(w.admin_username ? "@" + w.admin_username : "id " + w.admin_telegram_id)}</div>
+        <div class="meta">Account: ${esc(w.account_number)}</div>
+        <div class="meta">Requested ${esc(new Date(w.created_at).toLocaleString())}</div>
+        ${w.traffic_source_url
+          ? `<div class="meta">Traffic Source: <a href="${esc(w.traffic_source_url)}" target="_blank" style="color:var(--brass);">${esc(w.traffic_source_platform)} — view ↗</a></div>`
+          : `<div class="meta" style="color:var(--red);">No Traffic Source on file</div>`}
+        <div class="btn-row">
+          <button class="btn btn-success btn-sm payBtn" data-id="${w.request_id}">Mark paid</button>
+          <button class="btn btn-danger btn-sm rejectBtn" data-id="${w.request_id}">Reject</button>
+        </div>
+      </div>
+    `).join("");
+    el.querySelectorAll(".payBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/admin/withdrawals/${btn.dataset.id}/resolve`, { method: "POST", body: JSON.stringify({ decision: "paid" }) });
+          toast("Marked as paid", "ok");
+          renderTab();
+          renderTopCard();
+        } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+      });
+    });
+    el.querySelectorAll(".rejectBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/admin/withdrawals/${btn.dataset.id}/resolve`, { method: "POST", body: JSON.stringify({ decision: "rejected", reason: "Rejected by owner" }) });
+          toast("Request rejected", "ok");
+          renderTab();
+          renderTopCard();
+        } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+      });
+    });
+  }
 
-            const activeBtn = document.getElementById(`btnPeriod${period.charAt(0).toUpperCase() + period.slice(1)}`);
-            if (activeBtn) {
-                activeBtn.classList.remove('btn-outline');
-                activeBtn.classList.add('btn-primary', 'active');
-            }
+  // ---- Owner: CPM -------------------------------------------------------
 
-            document.getElementById('customDatePicker').classList.add('hidden');
-            fetchAnalytics(period);
-        }
+  async function renderCpm(el) {
+    const cs = await api("/api/cpm");
+    state.cpm = cs;
+    el.innerHTML = `
+      <div class="card">
+        <h3>Global CPM mode</h3>
+        <div class="meta">Only one mode runs platform-wide at a time.</div>
+        <label>Mode</label>
+        <select id="cpmMode">
+          <option value="realtime" ${cs.mode === "realtime" ? "selected" : ""}>Real-time — credit instantly</option>
+          <option value="scheduled" ${cs.mode === "scheduled" ? "selected" : ""}>Scheduled — batch payout every cycle</option>
+        </select>
+        <label>CPM rate (per verified view)</label>
+        <input type="number" id="cpmRate" min="0" step="0.0001" value="${cs.current_cpm}" />
+        <label>Cycle duration (hours) — used only in Scheduled mode</label>
+        <input type="number" id="cpmDuration" min="0.5" step="0.5" value="${cs.cycle_duration_hours}" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="cpmSave">Save CPM settings</button></div>
+      </div>
+      ${cs.mode === "scheduled" ? `
+        <div class="card">
+          <div class="meta">Current cycle closes in <b style="color:var(--text)">${secondsToClock(cs.seconds_to_payout)}</b>.
+          Whatever rate is set at that moment applies to every view accumulated this cycle.</div>
+        </div>` : ""}
+    `;
+    el.querySelector("#cpmSave").addEventListener("click", async () => {
+      const btn = el.querySelector("#cpmSave");
+      const mode = el.querySelector("#cpmMode").value;
+      const current_cpm = parseFloat(el.querySelector("#cpmRate").value);
+      const cycle_duration_hours = parseFloat(el.querySelector("#cpmDuration").value);
+      if (!(current_cpm >= 0)) { toast("Enter a valid CPM rate", "err"); return; }
+      if (!(cycle_duration_hours > 0)) { toast("Enter a valid cycle duration", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ mode, current_cpm, cycle_duration_hours }) });
+        toast("CPM settings updated", "ok");
+        renderTab();
+        renderTopCard();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save CPM settings";
+      }
+    });
+  }
 
-        function toggleCustomDate() {
-            document.querySelectorAll('.period-btn').forEach(b => {
-                b.classList.remove('active', 'btn-primary');
-                b.classList.add('btn-outline');
-            });
-            document.getElementById('btnPeriodCustom').classList.remove('btn-outline');
-            document.getElementById('btnPeriodCustom').classList.add('btn-primary', 'active');
+  // ---- Owner: Admins ------------------------------------------------
 
-            const datePicker = document.getElementById('customDatePicker');
-            datePicker.classList.toggle('hidden');
-        }
+  async function renderAdmins(el) {
+    const data = await api("/api/admin/admins");
+    state.admins = data.admins;
+    el.innerHTML = state.admins.map((a) => `
+      <div class="card">
+        <div class="row-between">
+          <h3>${esc(a.username ? "@" + a.username : "id " + a.telegram_id)}</h3>
+          <span class="pill ${a.role === "owner" ? "owner" : a.status}">${a.role === "owner" ? "owner" : a.status}</span>
+        </div>
+        <div class="meta">${a.role === "owner" ? "Owner" : "Admin"} · <code>${a.telegram_id}</code></div>
+        <div class="meta">Confirmed: ${fmt(a.balance_confirmed)}</div>
+        ${a.traffic_source_url
+          ? `<div class="meta">Traffic Source: <a href="${esc(a.traffic_source_url)}" target="_blank" style="color:var(--brass);">${esc(a.traffic_source_platform)} — view ↗</a></div>`
+          : `<div class="meta" style="color:var(--text-faint);">Traffic Source not set</div>`}
+        ${a.role !== "owner" ? `
+          <div class="btn-row">
+            ${a.status === "active"
+              ? `<button class="btn btn-danger btn-sm banBtn" data-id="${a.telegram_id}" data-status="banned">Suspend</button>`
+              : `<button class="btn btn-success btn-sm banBtn" data-id="${a.telegram_id}" data-status="active">Reactivate</button>`}
+          </div>` : ""}
+      </div>
+    `).join("");
+    el.querySelectorAll(".banBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/admin/admins/${btn.dataset.id}/status`, { method: "POST", body: JSON.stringify({ status: btn.dataset.status }) });
+          toast("Status updated", "ok");
+          renderTab();
+        } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+      });
+    });
+  }
 
-        async function fetchAnalytics(period) {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/my/analytics?period=${period}`, { headers });
-                const data = await res.json();
-                if (res.ok) {
-                    renderAnalytics(data);
-                }
-            } catch(e) { console.error(e); }
-        }
+  // ---- Owner: Stats -----------------------------------------------------
 
-        async function fetchCustomAnalytics() {
-            const start = document.getElementById('analyticsStartDate').value;
-            const end = document.getElementById('analyticsEndDate').value;
-            if (!start || !end) return showToast('শুরু ও শেষ তারিখ নির্বাচন করুন', 'error');
+  async function renderStats(el) {
+    const s = await api("/api/admin/stats");
+    state.stats = s;
+    el.innerHTML = `
+      <div class="stat-grid">
+        <div class="stat-box"><div class="n">${s.total_admins}</div><div class="l">Admins</div></div>
+        <div class="stat-box"><div class="n">${s.total_links}</div><div class="l">Links</div></div>
+        <div class="stat-box"><div class="n">${s.total_views}</div><div class="l">Total views</div></div>
+        <div class="stat-box"><div class="n">${s.pending_payout_views}</div><div class="l">Pending views</div></div>
+        <div class="stat-box"><div class="n">${fmt(s.total_confirmed_liability)}</div><div class="l">Confirmed liability</div></div>
+        <div class="stat-box"><div class="n">${fmt(s.total_paid_out)}</div><div class="l">Total paid out</div></div>
+      </div>
+    `;
+    renderTopCard();
+  }
 
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/my/analytics?period=custom&start_date=${start}&end_date=${end}`, { headers });
-                const data = await res.json();
-                if (res.ok) {
-                    renderAnalytics(data);
-                }
-            } catch(e) { showToast('ডাটা আনতে সমস্যা হয়েছে', 'error'); }
-        }
+  // ---- data loaders ---------------------------------------------------
 
-        function renderAnalytics(data) {
-            document.getElementById('periodViews').innerText = data.period_views || 0;
-            document.getElementById('periodEarnings').innerText = `$${formatMoney(data.period_earnings || 0)}`;
+  async function loadMe() { state.me = await api("/api/me"); }
+  async function loadLinks() { const d = await api("/api/links"); state.links = d.links; }
+  async function loadMyWithdrawals() { const d = await api("/api/withdrawals/mine"); state.withdrawals = d.withdrawals; }
+  async function loadCpm() { state.cpm = await api("/api/cpm"); }
+  async function loadOwnerWithdrawals() { const d = await api("/api/admin/withdrawals"); state.withdrawalsPending = d.withdrawals; }
+  async function loadStats() { state.stats = await api("/api/admin/stats"); }
 
-            const listContainer = document.getElementById('analyticsBreakdownList');
-            if (!data.daily_breakdown || data.daily_breakdown.length === 0) {
-                listContainer.innerHTML = '<p class="text-center text-muted mt-3 mb-2" style="font-size: 13px;">নির্বাচন করা সময়ে কোনো ভিউ আসেনি</p>';
-                return;
-            }
+  async function init() {
+    if (!initData) {
+      document.getElementById("app").innerHTML = `<div class="card" style="margin-top:40px;"><div class="empty">Open this dashboard from inside the TGSHORTBOT Telegram bot.</div></div>`;
+      return;
+    }
+    try {
+      await loadMe();
+      if (isOwner()) {
+        await Promise.all([loadCpm(), loadOwnerWithdrawals(), loadStats()]);
+      } else {
+        await Promise.all([loadLinks(), loadCpm()]);
+      }
+      renderTopCard();
+      renderDrawer();
+      renderTab();
+    } catch (e) {
+      document.getElementById("app").innerHTML = `<div class="card" style="margin-top:40px;"><div class="empty">Couldn't load your dashboard — ${esc(e.message)}</div></div>`;
+    }
+  }
 
-            const maxViews = Math.max(...data.daily_breakdown.map(d => d.views), 1);
-
-            const html = data.daily_breakdown.map(item => {
-                const pct = Math.min(100, Math.round((item.views / maxViews) * 100));
-                return `
-                    <div class="list-item mb-2" style="padding: 10px 12px; background: rgba(255,255,255,0.02); border-radius: 8px;">
-                        <div class="flex-between mb-1" style="font-size: 13px;">
-                            <span style="color: #cbd5e1; font-weight: 500;"><i class="far fa-calendar-alt text-muted mr-1"></i> ${item.date}</span>
-                            <div>
-                                <strong style="color: #38bdf8;">${item.views} ভিউ</strong>
-                                <span style="color: #34d399; margin-left: 8px; font-weight: bold;">($${formatMoney(item.earned)})</span>
-                            </div>
-                        </div>
-                        <div style="background: rgba(255,255,255,0.08); height: 6px; border-radius: 3px; overflow: hidden; margin-top: 6px;">
-                            <div style="width: ${pct}%; background: linear-gradient(90deg, #38bdf8, #34d399); height: 100%; border-radius: 3px;"></div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            listContainer.innerHTML = html;
-        }
-
-        let timerInterval;
-        function startTimer(targetTime) {
-            if(timerInterval) clearInterval(timerInterval);
-            timerInterval = setInterval(() => {
-                const now = new Date().getTime();
-                const distance = targetTime - now;
-                if (distance < 0) {
-                    clearInterval(timerInterval);
-                    document.getElementById('payoutTimer').innerText = "প্রসেসিং...";
-                    return;
-                }
-                const h = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                const m = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-                const s = Math.floor((distance % (1000 * 60)) / 1000);
-                document.getElementById('payoutTimer').innerText = 
-                    `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-            }, 1000);
-        }
-
-        async function createLink() {
-            const url = document.getElementById('newLinkUrl').value;
-            if(!url) return showToast('URL প্রদান করুন', 'error');
-            
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/links`, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ destination_url: url })
-                });
-                const data = await res.json();
-                if (res.ok && data.short_code) {
-                    showToast('লিংক সফলভাবে তৈরি হয়েছে!');
-                    closeModal('createLinkModal');
-                    document.getElementById('newLinkUrl').value = '';
-                    fetchAppInit();
-                } else {
-                    showToast(data.detail || 'লিংক তৈরিতে সমস্যা হয়েছে', 'error');
-                }
-            } catch (err) {
-                showToast('সার্ভার কানেকশন ত্রুটি', 'error');
-            }
-        }
-
-        function openProofModal(code) {
-            document.getElementById('proofLinkCode').value = code;
-            openModal('proofModal');
-        }
-
-        async function submitProof() {
-            const code = document.getElementById('proofLinkCode').value;
-            const proofUrl = document.getElementById('proofUrlInput').value;
-            if (!proofUrl) return showToast('প্রুফ URL প্রদান করুন', 'error');
-
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/links/${code}/proof`, {
-                    method: 'PATCH',
-                    headers,
-                    body: JSON.stringify({ proof_url: proofUrl })
-                });
-                if (res.ok) {
-                    showToast('প্রুফ সাবমিট করা হয়েছে!');
-                    closeModal('proofModal');
-                    document.getElementById('proofUrlInput').value = '';
-                    fetchAppInit();
-                } else {
-                    showToast('প্রুফ সাবমিট করতে সমস্যা হয়েছে', 'error');
-                }
-            } catch(e) {
-                showToast('সার্ভার কানেকশন ত্রুটি', 'error');
-            }
-        }
-
-        function setWithdrawMethod(method) {
-            withdrawMethod = method.toLowerCase();
-            document.getElementById('btnMethodBkash').className = `btn ${method.toLowerCase() === 'bkash' ? 'btn-success' : 'btn-outline'}`;
-            document.getElementById('btnMethodNagad').className = `btn ${method.toLowerCase() === 'nagad' ? 'btn-warning' : 'btn-outline'}`;
-            if(method.toLowerCase() === 'nagad'){
-                document.getElementById('btnMethodNagad').style.background = 'linear-gradient(90deg, #f97316, #ea580c)';
-                document.getElementById('btnMethodNagad').style.color = '#fff';
-            }
-        }
-
-        async function submitWithdraw() {
-            const acc = document.getElementById('withdrawAccount').value;
-            const amount = parseFloat(document.getElementById('withdrawAmount').value || 0);
-            if(!acc) return showToast('একাউন্ট নম্বর দিন', 'error');
-            if(amount <= 0) return showToast('পর্যাপ্ত ব্যালেন্স নেই', 'error');
-
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/withdraw`, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ amount, method: withdrawMethod, account_number: acc })
-                });
-                const data = await res.json();
-                if (res.ok) {
-                    showToast('উইথড্র রিকোয়েস্ট পাঠানো হয়েছে!');
-                    document.getElementById('withdrawAccount').value = '';
-                    fetchAppInit();
-                } else {
-                    showToast(data.detail || 'উইথড্র ব্যর্থ হয়েছে', 'error');
-                }
-            } catch(e) {
-                showToast('সার্ভার কানেকশন ত্রুটি', 'error');
-            }
-        }
-
-        function copyToClipboard(text) {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(text).then(() => showToast('লিংক কপি করা হয়েছে!'));
-            } else {
-                const input = document.createElement('input');
-                input.value = text;
-                document.body.appendChild(input);
-                input.select();
-                document.execCommand('copy');
-                document.body.removeChild(input);
-                showToast('লিংক কপি করা হয়েছে!');
-            }
-        }
-
-        function loadMyLinks(links) {
-            if (!links || links.length === 0) {
-                document.getElementById('myLinksList').innerHTML = '<p class="text-center mt-4">কোনো লিংক পাওয়া যায়নি</p>';
-                return;
-            }
-
-            const html = links.map(l => {
-                const botUname = tg.initDataUnsafe?.bot?.username || 'TGSHORTBOT';
-                const shortUrl = `https://t.me/${botUname}?start=${l.short_code}`;
-                const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(shortUrl)}&text=${encodeURIComponent('লিংকটি দেখতে নিচের লিংকে ক্লিক করুন:')}`;
-                
-                return `
-                    <div class="list-item">
-                        <div class="flex-between mb-2">
-                            <span class="badge badge-verified">✅ সরাসরি অ্যাক্টিভ</span>
-                            <span class="text-muted"><i class="fas fa-code"></i> ${l.short_code}</span>
-                        </div>
-                        <div class="list-item-title">${l.destination_url}</div>
-                        <div class="list-item-meta" style="margin-top: 8px; color: #a78bfa; font-family: monospace; font-size: 13px;">
-                            ${shortUrl}
-                        </div>
-                        <div class="action-buttons mt-2" style="display: flex; gap: 8px; margin-top: 10px;">
-                            <button class="btn btn-outline" style="padding: 6px 12px; font-size: 12px; flex: 1;" onclick="copyToClipboard('${shortUrl}')">
-                                <i class="fas fa-copy"></i> কপি করুন
-                            </button>
-                            <a class="btn" style="padding: 6px 12px; font-size: 12px; flex: 1; text-decoration: none;" href="${shareUrl}" target="_blank">
-                                <i class="fas fa-paper-plane"></i> শেয়ার করুন
-                            </a>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-
-            document.getElementById('myLinksList').innerHTML = html;
-        }
-
-        function loadWithdrawals(withdrawals) {
-            if (!withdrawals || withdrawals.length === 0) {
-                document.getElementById('withdrawHistoryList').innerHTML = '<p class="text-center mt-4">কোনো হিস্ট্রি নেই</p>';
-                return;
-            }
-
-            const html = withdrawals.map(w => `
-                <div class="list-item">
-                    <div class="flex-between">
-                        <strong>${w.method.toUpperCase()}: ${w.account_number}</strong>
-                        <span class="badge badge-${w.status}">${w.status}</span>
-                    </div>
-                    <div class="flex-between mt-2">
-                        <span class="balance-confirmed">$${formatMoney(w.amount)}</span>
-                        <span class="text-muted" style="font-size: 12px;">${new Date(w.created_at).toLocaleDateString()}</span>
-                    </div>
-                </div>
-            `).join('');
-
-            document.getElementById('withdrawHistoryList').innerHTML = html;
-        }
-
-        async function loadVerifyList() {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/links`, { headers });
-                const links = await res.json();
-                if (!res.ok || !links.length) {
-                    document.getElementById('verifyList').innerHTML = '<p class="text-center">কোনো পেন্ডিং ভেরিফিকেশন নেই</p>';
-                    return;
-                }
-                const html = links.map(l => `
-                    <div class="list-item mb-2">
-                        <div><strong>কোড:</strong> ${l.short_code}</div>
-                        <div><strong>মালিক ID:</strong> ${l.owner_telegram_id}</div>
-                        <div><strong>URL:</strong> <a href="${l.destination_url}" target="_blank">${l.destination_url}</a></div>
-                        <div><strong>প্রুফ URL:</strong> <a href="${l.proof_url}" target="_blank">${l.proof_url || 'নেই'}</a></div>
-                        <div class="action-buttons mt-2" style="display:flex; gap:8px;">
-                            <button class="btn btn-success" style="padding:4px 8px; font-size:12px;" onclick="verifyLink('${l.short_code}', 'verified')">✅ ভেরিফাই</button>
-                            <button class="btn btn-warning" style="padding:4px 8px; font-size:12px;" onclick="verifyLink('${l.short_code}', 'rejected')">❌ রিজেক্ট</button>
-                        </div>
-                    </div>
-                `).join('');
-                document.getElementById('verifyList').innerHTML = html;
-            } catch(e) { console.error(e); }
-        }
-
-        async function verifyLink(code, decision) {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/links/${code}/verify`, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ decision })
-                });
-                if (res.ok) {
-                    showToast(`লিংক ${decision === 'verified' ? 'ভেরিফাই' : 'রিজেক্ট'} করা হয়েছে!`);
-                    loadVerifyList();
-                }
-            } catch(e) { showToast('ত্রুটি ঘটেছে', 'error'); }
-        }
-
-        async function loadPaymentsList() {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/withdrawals`, { headers });
-                const withdrawals = await res.json();
-                if (!res.ok || !withdrawals.length) {
-                    document.getElementById('paymentsList').innerHTML = '<p class="text-center">কোনো পেন্ডিং পেমেন্ট রিকোয়েস্ট নেই</p>';
-                    return;
-                }
-                const html = withdrawals.map(w => `
-                    <div class="list-item mb-2">
-                        <div class="flex-between">
-                            <strong>Admin ID: ${w.admin_telegram_id}</strong>
-                            <span class="balance-confirmed">$${formatMoney(w.amount)}</span>
-                        </div>
-                        <div><strong>মেথড:</strong> ${w.method.toUpperCase()} (${w.account_number})</div>
-                        <div class="action-buttons mt-2" style="display:flex; gap:8px;">
-                            <button class="btn btn-success" style="padding:4px 8px; font-size:12px;" onclick="resolvePayment('${w.request_id}', 'paid')">✅ Paid</button>
-                            <button class="btn btn-warning" style="padding:4px 8px; font-size:12px;" onclick="resolvePayment('${w.request_id}', 'rejected')">❌ Reject</button>
-                        </div>
-                    </div>
-                `).join('');
-                document.getElementById('paymentsList').innerHTML = html;
-            } catch(e) { console.error(e); }
-        }
-
-        async function resolvePayment(reqId, decision) {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/withdrawals/${reqId}/resolve`, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ status: decision, decision })
-                });
-                if (res.ok) {
-                    showToast(`পেমেন্ট ${decision === 'paid' ? 'অনুমোদিত (Paid)' : 'রিজেক্ট'} হয়েছে!`);
-                    loadPaymentsList();
-                    fetchAppInit();
-                } else {
-                    const err = await res.json();
-                    showToast(err.detail || 'অনুমোদন ব্যর্থ হয়েছে', 'error');
-                }
-            } catch(e) { showToast('ত্রুটি ঘটেছে', 'error'); }
-        }
-
-        async function loadCpmSettings() {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/cpm`, { headers });
-                const data = await res.json();
-                if (res.ok) {
-                    document.getElementById('cpmMode').value = data.mode || 'realtime';
-                    document.getElementById('cpmRate').value = data.cpm || data.current_cpm || 0.50;
-                    document.getElementById('cpmMinWithdrawal').value = data.min_withdrawal_amount || 50.0;
-                    document.getElementById('cpmPayoutHours').value = data.payout_processing_hours || 24;
-                    if (data.mode === 'scheduled') {
-                        document.getElementById('scheduledSettings').classList.remove('hidden');
-                    } else {
-                        document.getElementById('scheduledSettings').classList.add('hidden');
-                    }
-                }
-            } catch(e) { console.error(e); }
-        }
-
-        async function saveCpmSettings() {
-            const mode = document.getElementById('cpmMode').value;
-            const current_cpm = parseFloat(document.getElementById('cpmRate').value || 0.50);
-            const cycle_duration_hours = parseInt(document.getElementById('cpmCycle').value || 24);
-            const min_withdrawal_amount = parseFloat(document.getElementById('cpmMinWithdrawal').value || 50.0);
-            const payout_processing_hours = parseInt(document.getElementById('cpmPayoutHours').value || 24);
-            
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/cpm`, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ mode, current_cpm, cycle_duration_hours, min_withdrawal_amount, payout_processing_hours })
-                });
-                if (res.ok) {
-                    showToast('সিপিএম ও উইথড্র সেটিং সেভ হয়েছে!');
-                }
-            } catch(e) { showToast('ত্রুটি ঘটেছে', 'error'); }
-        }
-
-        async function loadAdminsList() {
-            try {
-                const resStats = await fetch(`${API_BASE_URL}/api/admin/stats`, { headers });
-                const stats = await resStats.json();
-                if (resStats.ok) {
-                    document.getElementById('platformAdmins').innerText = stats.total_admins || 0;
-                    document.getElementById('platformPaid').innerText = `$${formatMoney(stats.pending_withdrawals * 0)}`;
-                    document.getElementById('platformPending').innerText = `$${formatMoney(stats.total_pending_liability)}`;
-                }
-
-                const res = await fetch(`${API_BASE_URL}/api/admin/admins`, { headers });
-                const admins = await res.json();
-                if (!res.ok || !admins.length) {
-                    document.getElementById('adminsList').innerHTML = '<p class="text-center">কোনো এডমিন নেই</p>';
-                    return;
-                }
-                const html = admins.map(a => `
-                    <div class="list-item mb-2">
-                        <div class="flex-between">
-                            <strong>${a.full_name || a.username || a.telegram_id} (${a.role})</strong>
-                            <span class="badge badge-${a.status === 'banned' ? 'rejected' : 'verified'}">${a.status}</span>
-                        </div>
-                        <div class="mt-1" style="font-size: 12px; color: var(--text-muted)">
-                            ID: ${a.telegram_id} | ব্যালেন্স: $${formatMoney(a.balance_confirmed)}
-                        </div>
-                        <div class="mt-2">
-                            <button class="btn btn-outline" style="padding:2px 8px; font-size:11px;" onclick="toggleBan(${a.telegram_id}, '${a.status === 'banned' ? 'unban' : 'ban'}')">
-                                ${a.status === 'banned' ? 'Unban' : 'Ban'}
-                            </button>
-                        </div>
-                    </div>
-                `).join('');
-                document.getElementById('adminsList').innerHTML = html;
-            } catch(e) { console.error(e); }
-        }
-
-        async function toggleBan(telegramId, action) {
-            try {
-                const res = await fetch(`${API_BASE_URL}/api/admin/admins/${telegramId}/ban`, {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ action })
-                });
-                if (res.ok) {
-                    showToast(`এডমিন ${action === 'ban' ? 'ব্যান' : 'আনব্যান'} করা হয়েছে`);
-                    loadAdminsList();
-                }
-            } catch(e) { showToast('truti ghoteche', 'error'); }
-        }
-
-        // CPM Settings Toggle logic
-        document.getElementById('cpmMode').addEventListener('change', (e) => {
-            if(e.target.value === 'scheduled') document.getElementById('scheduledSettings').classList.remove('hidden');
-            else document.getElementById('scheduledSettings').classList.add('hidden');
-        });
-
-        // Initialize App
-        fetchAppInit();
-
-    </script>
+  init();
+})();
+</script>
 </body>
 </html>
