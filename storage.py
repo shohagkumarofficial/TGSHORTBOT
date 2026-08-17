@@ -29,6 +29,7 @@ from models import (
     CPMSetting,
     Link,
     Role,
+    TrafficSource,
     View,
     WithdrawMethod,
     WithdrawRequest,
@@ -57,6 +58,32 @@ class Storage:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _migrate_admin_dict(v: dict) -> dict:
+        """Upgrades a pre-multi-traffic-source Admin record (a single
+        `traffic_source_platform` / `traffic_source_url` pair) into the
+        current `traffic_sources: [...]` list shape, in place, so old
+        `data/store.json` files keep working after this change instead of
+        crash-looping on the first load.
+        """
+        if "traffic_sources" in v and v["traffic_sources"] is not None:
+            return v
+        legacy_url = v.pop("traffic_source_url", None)
+        legacy_platform = v.pop("traffic_source_platform", None)
+        legacy_updated_at = v.pop("traffic_source_updated_at", None)
+        if legacy_url:
+            v["traffic_sources"] = [
+                {
+                    "platform": legacy_platform or "Other",
+                    "url": legacy_url,
+                    "created_at": legacy_updated_at or now_iso(),
+                    "updated_at": legacy_updated_at or now_iso(),
+                }
+            ]
+        else:
+            v["traffic_sources"] = []
+        return v
+
+    @staticmethod
     def _as_dict_items(raw_value, id_field: str):
         """Normalizes a stored collection to an iterable of (key, value) dicts.
 
@@ -79,7 +106,8 @@ class Storage:
             with open(self.data_file, "r", encoding="utf-8") as f:
                 raw = json.load(f)
             self.admins = {
-                int(k): Admin(**v) for k, v in self._as_dict_items(raw.get("admins", {}), "telegram_id")
+                int(k): Admin(**self._migrate_admin_dict(dict(v)))
+                for k, v in self._as_dict_items(raw.get("admins", {}), "telegram_id")
             }
             self.links = {
                 k: Link(**v) for k, v in self._as_dict_items(raw.get("links", {}), "short_code")
@@ -165,20 +193,54 @@ class Storage:
             await self._save_locked()
             return admin
 
-    async def set_traffic_source(self, telegram_id: int, platform: str, url: str) -> Optional[Admin]:
-        """Admin-level "where do your viewers come from" info — required
-        once before an Admin can create any short links (Section: Traffic
-        Source workflow).
+    async def add_traffic_source(self, telegram_id: int, platform: str, url: str) -> Optional[TrafficSource]:
+        """Appends one more "where do your viewers come from" entry for
+        this Admin. An Admin can hold several at once (one per platform,
+        or several on the same platform) and needs at least one before
+        creating any short links.
         """
         async with self._lock:
             admin = self.admins.get(telegram_id)
             if not admin:
                 return None
-            admin.traffic_source_platform = platform
-            admin.traffic_source_url = url
-            admin.traffic_source_updated_at = now_iso()
+            source = TrafficSource(platform=platform, url=url)
+            admin.traffic_sources.append(source)
             await self._save_locked()
-            return admin
+            return source
+
+    async def update_traffic_source(
+        self, telegram_id: int, source_id: str, platform: Optional[str] = None, url: Optional[str] = None
+    ) -> Optional[TrafficSource]:
+        """Edits an existing entry in place (by id) rather than replacing
+        the whole list, so an Admin can update one source's link without
+        disturbing the others.
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            for source in admin.traffic_sources:
+                if source.id == source_id:
+                    if platform is not None:
+                        source.platform = platform
+                    if url is not None:
+                        source.url = url
+                    source.updated_at = now_iso()
+                    await self._save_locked()
+                    return source
+            return None
+
+    async def delete_traffic_source(self, telegram_id: int, source_id: str) -> bool:
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return False
+            before = len(admin.traffic_sources)
+            admin.traffic_sources = [s for s in admin.traffic_sources if s.id != source_id]
+            changed = len(admin.traffic_sources) != before
+            if changed:
+                await self._save_locked()
+            return changed
 
     # ------------------------------------------------------------------
     # Link

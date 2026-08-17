@@ -56,6 +56,24 @@ class WithdrawStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class TrafficSource(BaseModel):
+    """One place this Admin brings viewers from (e.g. a Telegram channel
+    or a YouTube channel link). An Admin can hold several of these at
+    once — one per platform, or several on the same platform — and can
+    add, edit, or remove any of them at any time via `/trafficsource` or
+    the panel's Traffic Source tab. At least one is required before an
+    Admin can create any links; the whole list is shown to the Owner
+    alongside withdrawal requests so the Owner can judge where the
+    traffic is really coming from.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    platform: str
+    url: str
+    created_at: str = Field(default_factory=now_iso)
+    updated_at: str = Field(default_factory=now_iso)
+
+
 class Admin(BaseModel):
     telegram_id: int
     username: Optional[str] = None
@@ -65,13 +83,7 @@ class Admin(BaseModel):
     created_at: str = Field(default_factory=now_iso)
     status: AdminStatus = AdminStatus.ACTIVE
 
-    # Where this Admin brings viewers from (e.g. their Telegram channel or
-    # YouTube channel link). Set once by the Admin before they can create
-    # any links, and shown to the Owner alongside withdrawal requests so
-    # the Owner can judge where the traffic is really coming from.
-    traffic_source_platform: Optional[str] = None
-    traffic_source_url: Optional[str] = None
-    traffic_source_updated_at: Optional[str] = None
+    traffic_sources: list[TrafficSource] = Field(default_factory=list)
 
 
 class Link(BaseModel):

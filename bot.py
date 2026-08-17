@@ -30,6 +30,7 @@ from aiogram.types import (
 )
 
 from models import CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
+from validators import bd_mobile_validation_error, normalize_bd_mobile_number
 
 logger = logging.getLogger("bot")
 
@@ -47,8 +48,16 @@ class NewLinkStates(StatesGroup):
 
 
 class TrafficSourceStates(StatesGroup):
-    waiting_for_platform = State()
-    waiting_for_url = State()
+    """An Admin can hold several traffic sources at once and add/edit/
+    remove them at any time, so this flow branches into an "add a new
+    one" path and an "edit an existing one" path rather than a single
+    platform->url sequence.
+    """
+
+    waiting_for_new_platform = State()
+    waiting_for_new_url = State()
+    waiting_for_edit_platform = State()
+    waiting_for_edit_url = State()
 
 
 class WithdrawStates(StatesGroup):
@@ -68,6 +77,32 @@ def _gen_short_code(length: int = 7) -> str:
     return "".join(random.choices(alphabet, k=length))
 
 
+def _traffic_source_menu(admin) -> tuple[str, InlineKeyboardMarkup]:
+    """Builds the "your traffic sources" list message + inline keyboard —
+    reused after every add/edit/delete so the Admin always lands back on
+    an up-to-date view of everything they've got on file.
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    if admin.traffic_sources:
+        lines = ["📡 <b>আপনার ট্রাফিক সোর্সসমূহ</b>\n"]
+        for i, s in enumerate(admin.traffic_sources, start=1):
+            lines.append(f"{i}. <b>{s.platform}</b> — {s.url}")
+            rows.append(
+                [
+                    InlineKeyboardButton(text=f"✏️ {i} এডিট", callback_data=f"ts_edit:{s.id}"),
+                    InlineKeyboardButton(text=f"🗑 {i} মুছুন", callback_data=f"ts_del:{s.id}"),
+                ]
+            )
+        text = "\n".join(lines)
+    else:
+        text = (
+            "📡 <b>ট্রাফিক সোর্স</b>\n\nএখনো কোনো ট্রাফিক সোর্স যোগ করা হয়নি।\n"
+            "লিংক তৈরির আগে অন্তত একটি সোর্স যোগ করতে হবে।"
+        )
+    rows.append([InlineKeyboardButton(text="➕ নতুন সোর্স যোগ করুন", callback_data="ts_add")])
+    return text, InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 async def notify_owner_of_withdrawal(bot: Bot, settings, admin, req) -> None:
     """Pings the Owner's Telegram chat the moment a withdrawal is
     requested — whether it came from the bot's own /withdraw flow or from
@@ -75,9 +110,10 @@ async def notify_owner_of_withdrawal(bot: Bot, settings, admin, req) -> None:
     for it.
     """
     who = f"@{admin.username}" if admin.username else f"id {admin.telegram_id}"
-    if admin.traffic_source_url:
-        platform = admin.traffic_source_platform or "Source"
-        ts_line = f'{platform}: <a href="{admin.traffic_source_url}">{admin.traffic_source_url}</a>'
+    if admin.traffic_sources:
+        ts_line = "\n" + "\n".join(
+            f'• {s.platform}: <a href="{s.url}">{s.url}</a>' for s in admin.traffic_sources
+        )
     else:
         ts_line = "সেট করা নেই"
     method_label = "bKash" if req.method.value == "bkash" else "Nagad"
@@ -180,7 +216,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             f"স্বাগতম, {role_label}! 👋\n\n"
             "<b>TGSHORTBOT</b> দিয়ে লিংক শর্ট করুন, শেয়ার করুন, আর প্রতিটি ভিউ থেকে আয় করুন।\n\n"
             "কমান্ডসমূহ:\n"
-            "/trafficsource — আপনার ট্রাফিক সোর্স সেট/আপডেট করুন (লিংক তৈরির আগে আবশ্যক)\n"
+            "/trafficsource — ট্রাফিক সোর্স যোগ/এডিট/মুছুন (লিংক তৈরির আগে অন্তত একটি আবশ্যক)\n"
             "/newlink &lt;url&gt; — নতুন শর্ট লিংক তৈরি করুন\n"
             "/mybalance — ব্যালেন্স ও পেআউট তথ্য দেখুন\n"
             "/withdraw — টাকা তোলার আবেদন করুন\n"
@@ -195,27 +231,41 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     @dp.message(Command("trafficsource"))
     async def trafficsource_cmd(message: Message, state: FSMContext) -> None:
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        await state.clear()
+        text, kb = _traffic_source_menu(admin)
+        await message.answer(text, reply_markup=kb)
+
+    @dp.callback_query(F.data == "ts_menu")
+    async def trafficsource_menu_cb(callback: CallbackQuery, state: FSMContext) -> None:
+        admin = await _ensure_admin(callback.from_user.id, callback.from_user.username)
+        await state.clear()
+        text, kb = _traffic_source_menu(admin)
+        if callback.message:
+            await callback.message.edit_text(text, reply_markup=kb)
+        await callback.answer()
+
+    # -- add a new source --------------------------------------------
+
+    @dp.callback_query(F.data == "ts_add")
+    async def trafficsource_add_start(callback: CallbackQuery, state: FSMContext) -> None:
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text=label, callback_data=f"ts_platform:{key}")]
+                [InlineKeyboardButton(text=label, callback_data=f"ts_newplat:{key}")]
                 for key, label in TRAFFIC_PLATFORMS
             ]
+            + [[InlineKeyboardButton(text="⬅️ ফিরে যান", callback_data="ts_menu")]]
         )
-        current = ""
-        if admin.traffic_source_url:
-            current = f"\n\nবর্তমান: <b>{admin.traffic_source_platform}</b> — {admin.traffic_source_url}"
-        await state.set_state(TrafficSourceStates.waiting_for_platform)
-        await message.answer(
-            "আপনি যেখান থেকে ভিউয়ার/ট্রাফিক আনবেন সেই প্ল্যাটফর্মটি বেছে নিন:" + current,
-            reply_markup=kb,
-        )
+        await state.set_state(TrafficSourceStates.waiting_for_new_platform)
+        if callback.message:
+            await callback.message.edit_text("নতুন সোর্সের প্ল্যাটফর্মটি বেছে নিন:", reply_markup=kb)
+        await callback.answer()
 
-    @dp.callback_query(TrafficSourceStates.waiting_for_platform, F.data.startswith("ts_platform:"))
-    async def trafficsource_platform_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+    @dp.callback_query(TrafficSourceStates.waiting_for_new_platform, F.data.startswith("ts_newplat:"))
+    async def trafficsource_new_platform_chosen(callback: CallbackQuery, state: FSMContext) -> None:
         platform_key = (callback.data or "").split(":", 1)[1]
         label = dict(TRAFFIC_PLATFORMS).get(platform_key, "Other")
         await state.update_data(platform=label)
-        await state.set_state(TrafficSourceStates.waiting_for_url)
+        await state.set_state(TrafficSourceStates.waiting_for_new_url)
         if callback.message:
             await callback.message.edit_text(
                 f"প্ল্যাটফর্ম: <b>{label}</b>\n\n"
@@ -223,20 +273,88 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             )
         await callback.answer()
 
-    @dp.message(TrafficSourceStates.waiting_for_url)
-    async def trafficsource_url_received(message: Message, state: FSMContext) -> None:
+    @dp.message(TrafficSourceStates.waiting_for_new_url)
+    async def trafficsource_new_url_received(message: Message, state: FSMContext) -> None:
         url = (message.text or "").strip()
         if not url.startswith(("http://", "https://")):
             await message.answer("সঠিক লিংক দিন (http:// বা https:// দিয়ে শুরু হতে হবে)।")
             return
         data = await state.get_data()
         platform = data.get("platform", "Other")
-        await storage.set_traffic_source(message.from_user.id, platform, url)
+        await storage.add_traffic_source(message.from_user.id, platform, url)
         await state.clear()
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        text, kb = _traffic_source_menu(admin)
         await message.answer(
-            f"✅ Traffic Source সংরক্ষণ করা হয়েছে:\n<b>{platform}</b> — {url}\n\n"
-            "এখন আপনি /newlink দিয়ে লিংক শর্ট করতে পারবেন।"
+            f"✅ নতুন ট্রাফিক সোর্স যোগ হয়েছে:\n<b>{platform}</b> — {url}\n\nএখন আপনি /newlink দিয়ে লিংক শর্ট করতে পারবেন।\n\n"
+            + text,
+            reply_markup=kb,
         )
+
+    # -- edit an existing source --------------------------------------
+
+    @dp.callback_query(F.data.startswith("ts_edit:"))
+    async def trafficsource_edit_start(callback: CallbackQuery, state: FSMContext) -> None:
+        source_id = (callback.data or "").split(":", 1)[1]
+        await state.update_data(edit_source_id=source_id)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=label, callback_data=f"ts_editplat:{key}")]
+                for key, label in TRAFFIC_PLATFORMS
+            ]
+            + [[InlineKeyboardButton(text="⬅️ ফিরে যান", callback_data="ts_menu")]]
+        )
+        await state.set_state(TrafficSourceStates.waiting_for_edit_platform)
+        if callback.message:
+            await callback.message.edit_text(
+                "নতুন প্ল্যাটফর্মটি বেছে নিন (আগেরটাই রাখতে চাইলে সেটিই আবার বেছে নিন):", reply_markup=kb
+            )
+        await callback.answer()
+
+    @dp.callback_query(TrafficSourceStates.waiting_for_edit_platform, F.data.startswith("ts_editplat:"))
+    async def trafficsource_edit_platform_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+        platform_key = (callback.data or "").split(":", 1)[1]
+        label = dict(TRAFFIC_PLATFORMS).get(platform_key, "Other")
+        await state.update_data(platform=label)
+        await state.set_state(TrafficSourceStates.waiting_for_edit_url)
+        if callback.message:
+            await callback.message.edit_text(f"প্ল্যাটফর্ম: <b>{label}</b>\n\nনতুন লিংকটি পাঠান:")
+        await callback.answer()
+
+    @dp.message(TrafficSourceStates.waiting_for_edit_url)
+    async def trafficsource_edit_url_received(message: Message, state: FSMContext) -> None:
+        url = (message.text or "").strip()
+        if not url.startswith(("http://", "https://")):
+            await message.answer("সঠিক লিংক দিন (http:// বা https:// দিয়ে শুরু হতে হবে)।")
+            return
+        data = await state.get_data()
+        source_id = data.get("edit_source_id")
+        platform = data.get("platform")
+        updated = await storage.update_traffic_source(
+            message.from_user.id, source_id, platform=platform, url=url
+        )
+        await state.clear()
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        text, kb = _traffic_source_menu(admin)
+        if updated:
+            await message.answer(
+                f"✅ সোর্সটি আপডেট হয়েছে:\n<b>{updated.platform}</b> — {updated.url}\n\n" + text, reply_markup=kb
+            )
+        else:
+            await message.answer("সোর্সটি খুঁজে পাওয়া যায়নি — হয়তো ইতিমধ্যে মুছে ফেলা হয়েছে।\n\n" + text, reply_markup=kb)
+
+    # -- delete a source ------------------------------------------------
+
+    @dp.callback_query(F.data.startswith("ts_del:"))
+    async def trafficsource_delete(callback: CallbackQuery, state: FSMContext) -> None:
+        source_id = (callback.data or "").split(":", 1)[1]
+        await storage.delete_traffic_source(callback.from_user.id, source_id)
+        await state.clear()
+        admin = await _ensure_admin(callback.from_user.id, callback.from_user.username)
+        text, kb = _traffic_source_menu(admin)
+        if callback.message:
+            await callback.message.edit_text("🗑 সোর্সটি মুছে ফেলা হয়েছে।\n\n" + text, reply_markup=kb)
+        await callback.answer()
 
     # ------------------------------------------------------------------
     # /newlink
@@ -245,11 +363,11 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     @dp.message(Command("newlink"))
     async def newlink_cmd(message: Message, command, state: FSMContext) -> None:
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
-        if not admin.traffic_source_url:
+        if not admin.traffic_sources:
             await message.answer(
-                "লিংক শর্ট করার আগে আপনার <b>Traffic Source</b> সেট করতে হবে — অর্থাৎ আপনি কোথা থেকে "
+                "লিংক শর্ট করার আগে আপনার অন্তত একটি <b>Traffic Source</b> যোগ করতে হবে — অর্থাৎ আপনি কোথা থেকে "
                 "ভিউয়ার আনবেন (টেলিগ্রাম চ্যানেল, ইউটিউব চ্যানেল ইত্যাদির লিংক)।\n\n"
-                "/trafficsource কমান্ড দিয়ে এখনই সেট করুন।"
+                "/trafficsource কমান্ড দিয়ে এখনই যোগ করুন।"
             )
             return
         url = command.args.strip() if command.args else None
@@ -327,7 +445,9 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     async def withdraw_method(message: Message, state: FSMContext) -> None:
         await state.update_data(method="bkash" if message.text == "bKash" else "nagad")
         await state.set_state(WithdrawStates.waiting_for_account)
-        await message.answer("অ্যাকাউন্ট নম্বর পাঠান:", reply_markup=ReplyKeyboardRemove())
+        await message.answer(
+            "১১ ডিজিটের বিকাশ/নগদ নম্বরটি পাঠান (যেমন: 017XXXXXXXX):", reply_markup=ReplyKeyboardRemove()
+        )
 
     @dp.message(WithdrawStates.waiting_for_method)
     async def withdraw_method_invalid(message: Message) -> None:
@@ -335,11 +455,12 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
 
     @dp.message(WithdrawStates.waiting_for_account)
     async def withdraw_account(message: Message, state: FSMContext) -> None:
-        account = (message.text or "").strip()
-        if not account:
-            await message.answer("সঠিক অ্যাকাউন্ট নম্বর পাঠান:")
+        account_raw = (message.text or "").strip()
+        error = bd_mobile_validation_error(account_raw)
+        if error:
+            await message.answer(f"❌ {error}\n\nআবার সঠিক নম্বরটি পাঠান, যেমন: 017XXXXXXXX")
             return
-        await state.update_data(account_number=account)
+        await state.update_data(account_number=normalize_bd_mobile_number(account_raw))
         await state.set_state(WithdrawStates.waiting_for_amount)
         await message.answer("কত টাকা তুলতে চান? (শুধু সংখ্যা লিখুন)")
 
@@ -385,7 +506,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     async def help_cmd(message: Message) -> None:
         await message.answer(
             "কমান্ডসমূহ:\n"
-            "/trafficsource — ট্রাফিক সোর্স সেট/আপডেট করুন\n"
+            "/trafficsource — ট্রাফিক সোর্স যোগ/এডিট/মুছুন\n"
             "/newlink &lt;url&gt; — নতুন শর্ট লিংক তৈরি\n"
             "/mybalance — ব্যালেন্স ও পেআউট তথ্য\n"
             "/withdraw — টাকা তোলার আবেদন\n"

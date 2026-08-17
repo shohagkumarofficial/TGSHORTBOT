@@ -33,6 +33,7 @@ from config import get_settings
 from models import Admin, AdminStatus, CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
 from storage import Storage
 from telegram_auth import InitDataError, validate_init_data
+from validators import bd_mobile_validation_error, normalize_bd_mobile_number
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app")
@@ -206,19 +207,62 @@ async def me(admin: Admin = Depends(require_admin)):
     return admin.model_dump()
 
 
-@app.post("/api/traffic-source")
-async def set_traffic_source(payload: dict, admin: Admin = Depends(require_admin)):
+@app.get("/api/traffic-sources")
+async def list_traffic_sources(admin: Admin = Depends(require_admin)):
+    return {"traffic_sources": [s.model_dump() for s in admin.traffic_sources]}
+
+
+@app.post("/api/traffic-sources")
+async def add_traffic_source(payload: dict, admin: Admin = Depends(require_admin)):
+    """Adds one more traffic source; an Admin can hold several at once
+    and add/update/remove them at any time (no longer a single slot).
+    """
     platform = (payload.get("platform") or "").strip()
     url = (payload.get("url") or "").strip()
     if not platform:
         raise HTTPException(status_code=400, detail="platform required")
     if not url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="url must be a valid http(s) link")
-    updated = await storage.set_traffic_source(admin.telegram_id, platform, url)
+    source = await storage.add_traffic_source(admin.telegram_id, platform, url)
     await storage.append_history(
-        "traffic_source_change", {"telegram_id": admin.telegram_id, "platform": platform, "url": url}
+        "traffic_source_change",
+        {"telegram_id": admin.telegram_id, "action": "add", "platform": platform, "url": url},
+    )
+    return source.model_dump()
+
+
+@app.put("/api/traffic-sources/{source_id}")
+async def edit_traffic_source(source_id: str, payload: dict, admin: Admin = Depends(require_admin)):
+    platform = payload.get("platform")
+    url = payload.get("url")
+    if platform is not None:
+        platform = platform.strip()
+        if not platform:
+            raise HTTPException(status_code=400, detail="platform cannot be empty")
+    if url is not None:
+        url = url.strip()
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="url must be a valid http(s) link")
+    updated = await storage.update_traffic_source(admin.telegram_id, source_id, platform=platform, url=url)
+    if not updated:
+        raise HTTPException(status_code=404, detail="traffic source not found")
+    await storage.append_history(
+        "traffic_source_change",
+        {"telegram_id": admin.telegram_id, "action": "update", "source_id": source_id, "platform": platform, "url": url},
     )
     return updated.model_dump()
+
+
+@app.delete("/api/traffic-sources/{source_id}")
+async def remove_traffic_source(source_id: str, admin: Admin = Depends(require_admin)):
+    ok = await storage.delete_traffic_source(admin.telegram_id, source_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="traffic source not found")
+    await storage.append_history(
+        "traffic_source_change",
+        {"telegram_id": admin.telegram_id, "action": "delete", "source_id": source_id},
+    )
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +280,10 @@ def _short_url_for(code: str) -> str:
 
 @app.post("/api/links")
 async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
-    if not admin.traffic_source_url:
+    if not admin.traffic_sources:
         raise HTTPException(
             status_code=400,
-            detail="Set your Traffic Source before creating links (POST /api/traffic-source)",
+            detail="Add at least one Traffic Source before creating links (POST /api/traffic-sources)",
         )
     destination_url = (payload.get("destination_url") or "").strip()
     if not destination_url.startswith(("http://", "https://")):
@@ -333,12 +377,14 @@ async def request_withdrawal(payload: dict, admin: Admin = Depends(require_admin
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="amount must be a number")
     method = payload.get("method")
-    account_number = (payload.get("account_number") or "").strip()
+    account_number_raw = (payload.get("account_number") or "").strip()
 
     if method not in ("bkash", "nagad"):
         raise HTTPException(status_code=400, detail="method must be 'bkash' or 'nagad'")
-    if not account_number:
-        raise HTTPException(status_code=400, detail="account_number required")
+    validation_error = bd_mobile_validation_error(account_number_raw)
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
+    account_number = normalize_bd_mobile_number(account_number_raw)
     if amount <= 0:
         raise HTTPException(status_code=400, detail="amount must be positive")
     if amount > admin.balance_confirmed:
@@ -369,8 +415,7 @@ async def admin_pending_withdrawals(owner: Admin = Depends(require_owner)):
         requester = await storage.get_admin(w.admin_telegram_id)
         d = w.model_dump()
         d["admin_username"] = requester.username if requester else None
-        d["traffic_source_platform"] = requester.traffic_source_platform if requester else None
-        d["traffic_source_url"] = requester.traffic_source_url if requester else None
+        d["traffic_sources"] = [s.model_dump() for s in requester.traffic_sources] if requester else []
         out.append(d)
     return {"withdrawals": out}
 
