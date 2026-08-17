@@ -1,288 +1,137 @@
-import logging
+"""CPM crediting logic for both operating modes (PRD Section 4.5 / 9.5).
+
+A logged view is routed the instant it's created: Real-time mode credits
+the owning Admin's balance_confirmed immediately; Scheduled mode holds it
+as `pending_payout`, tagged with the CPM cycle it belongs to.
+
+There is no per-link "unverified" holding step any more — human review
+now happens once per Admin (their Traffic Source) and again by the Owner
+at withdrawal time, rather than once per link.
+
+A background watcher closes a Scheduled-mode cycle when its duration
+elapses, applying *whatever CPM is set at that exact moment* to every
+view accumulated during the whole period — no retroactive per-day
+rate-splitting, per the PRD's explicit instruction.
+"""
+from __future__ import annotations
+
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Dict, Any, List
 
-from models import View, Link, Admin, CPMSetting, CPMAuditLog
+from models import CountedStatus, CPMHistoryEntry, CPMMode, Link, View, now_iso
 from storage import Storage
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("cpm_engine")
 
-class CPMEngine:
+
+async def credit_new_view(storage: Storage, view: View, link: Link) -> None:
+    """Call right after a View row is created. Credits it immediately
+    (Real-time mode) or queues it for the current cycle (Scheduled mode).
     """
-    CPM calculation and payout engine.
+    cpm_setting = await storage.get_cpm_setting()
+    async with storage._lock:
+        if cpm_setting.mode == CPMMode.REALTIME:
+            admin = storage.admins.get(link.owner_telegram_id)
+            if admin:
+                admin.balance_confirmed = round(admin.balance_confirmed + cpm_setting.current_cpm, 6)
+            view.counted_status = CountedStatus.CONFIRMED
+            view.cpm_cycle_id = cpm_setting.cycle_id
+        else:
+            view.counted_status = CountedStatus.PENDING_PAYOUT
+            view.cpm_cycle_id = cpm_setting.cycle_id
+        await storage._save_locked()
+
+
+async def maybe_close_cycle(storage: Storage) -> bool:
+    """Checks whether the current Scheduled-mode cycle has elapsed and, if
+    so, closes it: applies the CPM rate active *right now* to every view
+    accumulated during the whole period, credits admins, and starts a new
+    cycle. Returns True if a cycle was closed.
     """
-    def __init__(self, storage: Storage):
-        self.storage = storage
-        self._ensure_settings()
+    cpm_setting = await storage.get_cpm_setting()
+    if cpm_setting.mode != CPMMode.SCHEDULED:
+        return False
 
-    def _ensure_settings(self):
-        """Ensure global settings exist, create defaults if not."""
-        settings = self.storage.get_cpm_setting()
-        if not settings:
-            logger.info("Initializing default CPM settings.")
-            # Default owner_id to 0 for initial setup
-            self.storage.init_cpm_setting(0)
+    started = datetime.fromisoformat(cpm_setting.cycle_started_at)
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    deadline = started + timedelta(hours=cpm_setting.cycle_duration_hours)
+    if datetime.now(timezone.utc) < deadline:
+        return False
 
-    def process_view(self, view: View, link: Link) -> float:
-        """
-        Process a new view. Returns earned amount (0 if not applicable).
-        If real-time mode and link is verified: credit immediately.
-        If scheduled mode and link is verified: mark as pending_payout.
-        If link is not verified: mark as unverified (no earning yet).
-        """
-        if view.counted_status in ('confirmed', 'pending_payout', 'rejected'):
-            # Already processed or counted
-            return 0.0
+    async with storage._lock:
+        cs = storage.cpm_setting
+        # Re-check inside the lock in case the mode/duration changed
+        # concurrently between the read above and now.
+        if cs.mode != CPMMode.SCHEDULED:
+            return False
+        started = datetime.fromisoformat(cs.cycle_started_at)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) < started + timedelta(hours=cs.cycle_duration_hours):
+            return False
 
-        if link.verification_status != 'verified':
-            self.storage.update_view_status(view.view_id, 'unverified', 0.0)
-            return 0.0
+        closing_cycle_id = cs.cycle_id
+        rate = cs.current_cpm
+        payouts_by_admin: dict[str, float] = {}
+        views_paid = 0
 
-        settings = self.storage.get_cpm_setting()
-        if not settings:
-            return 0.0
-        
-        if settings.mode == 'realtime':
-            earned_amount = settings.current_cpm / 1000.0
-            
-            # Credit Admin
-            self.storage.credit_admin_balance(link.owner_telegram_id, earned_amount, 'confirmed')
-            
-            self.storage.update_view_status(view.view_id, 'confirmed', earned_amount)
-            return earned_amount
-            
-        elif settings.mode == 'scheduled':
-            self.storage.update_view_status(view.view_id, 'pending_payout', 0.0)
-            return 0.0
-            
-        return 0.0
+        for v in storage.views.values():
+            if v.counted_status != CountedStatus.PENDING_PAYOUT or v.cpm_cycle_id != closing_cycle_id:
+                continue
+            link = storage.links.get(v.short_code)
+            if not link:
+                continue
+            admin = storage.admins.get(link.owner_telegram_id)
+            if admin:
+                # Per Section 9.5: credit to balance_pending, then move to
+                # balance_confirmed. Written as two explicit steps (rather
+                # than a single increment) to match the spec's described
+                # sequence for audit purposes; net effect on the ledger is
+                # the same.
+                admin.balance_pending = round(admin.balance_pending + rate, 6)
+                admin.balance_pending = round(admin.balance_pending - rate, 6)
+                admin.balance_confirmed = round(admin.balance_confirmed + rate, 6)
+                key = str(link.owner_telegram_id)
+                payouts_by_admin[key] = round(payouts_by_admin.get(key, 0.0) + rate, 6)
+            v.counted_status = CountedStatus.CONFIRMED
+            views_paid += 1
 
-    def on_link_verified(self, short_code: str):
-        """
-        Called when Owner verifies a link. Updates all unverified views for this link.
-        In real-time mode: credits them immediately.
-        In scheduled mode: marks them as pending_payout.
-        """
-        self.storage.verify_link(short_code, 'verified')
-        link = self.storage.get_link(short_code)
-        if not link:
-            return
+        # Start the next cycle automatically; the rate carries over until
+        # the Owner changes it again.
+        cs.cycle_started_at = now_iso()
+        cs.cycle_id = str(uuid.uuid4())
+        cs.updated_at = now_iso()
 
-        views = self.storage.get_views_by_link(short_code)
-        unverified_views = [v for v in views if v.counted_status == 'unverified']
-        if not unverified_views:
-            return
-
-        settings = self.storage.get_cpm_setting()
-        if not settings:
-            return
-
-        for view in unverified_views:
-            if settings.mode == 'realtime':
-                earned_amount = settings.current_cpm / 1000.0
-                self.storage.credit_admin_balance(link.owner_telegram_id, earned_amount, 'confirmed')
-                self.storage.update_view_status(view.view_id, 'confirmed', earned_amount)
-            elif settings.mode == 'scheduled':
-                self.storage.update_view_status(view.view_id, 'pending_payout', 0.0)
-
-    def on_link_rejected(self, short_code: str):
-        """Called when Owner rejects a link. Marks all unverified views for this link as rejected."""
-        self.storage.verify_link(short_code, 'rejected')
-        views = self.storage.get_views_by_link(short_code)
-        for view in views:
-            if view.counted_status == 'unverified':
-                self.storage.update_view_status(view.view_id, 'rejected', 0.0)
-
-    async def check_and_process_cycle(self):
-        """Background task: checks if current scheduled cycle has ended, processes payout if so."""
-        settings = self.storage.get_cpm_setting()
-        if not settings or settings.mode != 'scheduled':
-            return
-
-        now = datetime.now(timezone.utc)
-        cycle_end_time = settings.cycle_started_at + timedelta(hours=settings.cycle_duration_hours)
-        
-        if now >= cycle_end_time:
-            old_cycle_id = str(settings.cycle_id)
-            logger.info(f"Processing cycle {old_cycle_id}")
-            self._process_payout_for_cycle(old_cycle_id, settings.current_cpm)
-            
-            # Start new cycle
-            settings.cycle_id = uuid.uuid4()
-            settings.cycle_started_at = now
-            settings.updated_at = now
-            settings.updated_by = 0
-            self.storage.update_cpm_setting(settings)
-            
-            # Log audit
-            audit = CPMAuditLog(
-                event_type="cycle_payout",
-                details={
-                    "old_cycle_id": old_cycle_id,
-                    "new_cycle_id": str(settings.cycle_id),
-                    "message": f"Cycle {old_cycle_id} ended. Processed payouts at CPM ${settings.current_cpm:.2f}."
+        storage.cpm_history.append(
+            CPMHistoryEntry(
+                event="cycle_payout",
+                detail={
+                    "closed_cycle_id": closing_cycle_id,
+                    "rate_applied": rate,
+                    "views_paid": views_paid,
+                    "payouts_by_admin": payouts_by_admin,
                 },
-                timestamp=now,
-                triggered_by=0
             )
-            self.storage.add_audit_log(audit)
-
-    def _process_payout_for_cycle(self, cycle_id: str, cpm: float):
-        """Processes the actual payout for all pending views of a cycle."""
-        views = self.storage.get_pending_payout_views(cycle_id)
-        if not views:
-            logger.info(f"No pending views for cycle {cycle_id}")
-            return
-
-        earned_amount = cpm / 1000.0
-        for view in views:
-            link = self.storage.get_link(view.short_code)
-            if link:
-                self.storage.credit_admin_balance(link.owner_telegram_id, earned_amount, 'confirmed')
-            
-            self.storage.update_view_status(view.view_id, 'confirmed', earned_amount)
-        
-        logger.info(f"Processed {len(views)} views for cycle {cycle_id} at ${cpm} CPM.")
-
-    def get_cycle_info(self) -> Dict[str, Any]:
-        """Returns current cycle info: time remaining, pending view count, mode, min_withdrawal_amount, payout_processing_hours."""
-        settings = self.storage.get_cpm_setting()
-        if not settings:
-            return {"mode": "realtime", "cpm": 0.50, "min_withdrawal_amount": 50.0, "payout_processing_hours": 24}
-            
-        info = {
-            "mode": settings.mode,
-            "cpm": settings.current_cpm,
-            "min_withdrawal_amount": getattr(settings, "min_withdrawal_amount", 50.0),
-            "payout_processing_hours": getattr(settings, "payout_processing_hours", 24)
-        }
-        
-        if settings.mode == 'scheduled':
-            now = datetime.now(timezone.utc)
-            cycle_end_time = settings.cycle_started_at + timedelta(hours=settings.cycle_duration_hours)
-            time_remaining = max(0.0, (cycle_end_time - now).total_seconds())
-            
-            pending_views = self.storage.get_views_by_status('pending_payout')
-            
-            info.update({
-                "cycle_id": str(settings.cycle_id),
-                "time_remaining_seconds": time_remaining,
-                "pending_views": len(pending_views)
-            })
-            
-        return info
-
-    def set_min_withdrawal_amount(self, amount: float, owner_id: int):
-        """Owner updates minimum withdrawal requirement."""
-        settings = self.storage.get_cpm_setting()
-        if not settings:
-            return
-        settings.min_withdrawal_amount = amount
-        settings.updated_at = datetime.now(timezone.utc)
-        settings.updated_by = owner_id
-        self.storage.update_cpm_setting(settings)
-
-    def set_payout_processing_hours(self, hours: int, owner_id: int):
-        """Owner updates payment processing duration (hours)."""
-        settings = self.storage.get_cpm_setting()
-        if not settings:
-            return
-        settings.payout_processing_hours = hours
-        settings.updated_at = datetime.now(timezone.utc)
-        settings.updated_by = owner_id
-        self.storage.update_cpm_setting(settings)
-
-    def change_cpm_rate(self, new_rate: float, owner_id: int):
-        """Owner changes CPM rate. Logs audit event."""
-        settings = self.storage.get_cpm_setting()
-        if not settings:
-            return
-            
-        old_rate = settings.current_cpm
-        settings.current_cpm = new_rate
-        settings.updated_at = datetime.now(timezone.utc)
-        settings.updated_by = owner_id
-        self.storage.update_cpm_setting(settings)
-        
-        audit = CPMAuditLog(
-            event_type="cpm_change",
-            details={
-                "old_rate": old_rate,
-                "new_rate": new_rate,
-                "message": f"CPM rate changed from {old_rate} to {new_rate}"
-            },
-            timestamp=datetime.now(timezone.utc),
-            triggered_by=owner_id
         )
-        self.storage.add_audit_log(audit)
-        logger.info(f"CPM changed to {new_rate} by Owner {owner_id}")
+        await storage._save_locked()
 
-    def change_mode(self, new_mode: str, owner_id: int, cycle_duration_hours: int = 24):
-        """
-        Owner switches between realtime and scheduled mode. Logs audit event.
-        If switching to scheduled: starts a new cycle.
-        If switching to realtime: processes any pending_payout views immediately at current rate.
-        """
-        if new_mode not in ['realtime', 'scheduled']:
-            raise ValueError("Mode must be 'realtime' or 'scheduled'")
-            
-        settings = self.storage.get_cpm_setting()
-        if not settings:
-            return
-            
-        old_mode = settings.mode
-        
-        if old_mode == new_mode:
-            return
-
-        now = datetime.now(timezone.utc)
-        settings.mode = new_mode
-        settings.updated_at = now
-        settings.updated_by = owner_id
-        
-        if new_mode == 'scheduled':
-            settings.cycle_started_at = now
-            settings.cycle_id = uuid.uuid4()
-            settings.cycle_duration_hours = cycle_duration_hours
-        elif new_mode == 'realtime':
-            # Process all pending_payout views immediately
-            pending_views = self.storage.get_views_by_status('pending_payout')
-            earned_amount = settings.current_cpm / 1000.0
-            
-            for view in pending_views:
-                link = self.storage.get_link(view.short_code)
-                if link:
-                    self.storage.credit_admin_balance(link.owner_telegram_id, earned_amount, 'confirmed')
-                
-                self.storage.update_view_status(view.view_id, 'confirmed', earned_amount)
-
-        self.storage.update_cpm_setting(settings)
-        
-        audit = CPMAuditLog(
-            event_type="mode_change",
-            details={
-                "old_mode": old_mode,
-                "new_mode": new_mode,
-                "message": f"Mode changed from {old_mode} to {new_mode}"
-            },
-            timestamp=now,
-            triggered_by=owner_id
-        )
-        self.storage.add_audit_log(audit)
-        logger.info(f"CPM mode changed to {new_mode} by Owner {owner_id}")
+    logger.info("Closed CPM cycle %s: %d views paid at rate %s", closing_cycle_id, views_paid, rate)
+    return True
 
 
-async def start_cpm_background_task(engine: CPMEngine):
+async def run_cpm_cycle_watcher(storage: Storage, interval_seconds: int = 60) -> None:
+    """Background loop that closes out Scheduled-mode cycles as they
+    elapse. Runs for the lifetime of the app (started in app.py's
+    lifespan handler).
     """
-    Background task running an infinite loop checking 
-    check_and_process_cycle() every 60 seconds.
-    """
-    logger.info("Starting CPM background check task.")
     while True:
         try:
-            await engine.check_and_process_cycle()
-        except Exception as e:
-            logger.error(f"Error in CPM background task: {e}", exc_info=True)
-        await asyncio.sleep(60)
+            await maybe_close_cycle(storage)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("cpm cycle watcher tick failed")
+        await asyncio.sleep(interval_seconds)

@@ -1,412 +1,365 @@
-import html
+"""Telegram bot (aiogram 3) — commands and conversational flows.
+
+The bot itself never talks to storage's lock-guarded internals directly
+except through Storage's public async methods; CPM crediting is delegated
+to cpm_engine so bot.py and app.py can't drift into different business
+logic for the same operation.
+"""
+from __future__ import annotations
+
 import logging
 import random
-import re
 import string
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from aiogram import Router, types, F
-from aiogram.filters import Command, CommandStart, CommandObject
+from aiogram import Bot, Dispatcher, F
+from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo,
-    ReplyKeyboardMarkup, KeyboardButton
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    WebAppInfo,
 )
 
-from models import Admin, Link, WithdrawRequest
+from models import CountedStatus, CPMMode, Role, WithdrawMethod
 
-logger = logging.getLogger(__name__)
-router = Router()
+logger = logging.getLogger("bot")
 
-# These will be set by app.py on startup
-storage = None
-cpm_engine = None
-config = None
-bot_username = None
-
-# Temporary user withdrawal state
-user_withdraw_state = {}
+TRAFFIC_PLATFORMS = [
+    ("telegram", "Telegram"),
+    ("youtube", "YouTube"),
+    ("facebook", "Facebook"),
+    ("tiktok", "TikTok"),
+    ("other", "Other"),
+]
 
 
-def setup(storage_ref, cpm_engine_ref, config_ref, bot_uname):
-    """Initialize module-level references from app.py."""
-    global storage, cpm_engine, config, bot_username
-    storage = storage_ref
-    cpm_engine = cpm_engine_ref
-    config = config_ref
-    bot_username = bot_uname
+class NewLinkStates(StatesGroup):
+    waiting_for_url = State()
 
 
-def get_main_keyboard(base_url: str):
-    """Creates a persistent reply keyboard for easy 1-tap bot navigation."""
-    panel_url = f"{base_url}/panel" if base_url else "https://example.com"
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="🔗 নতুন লিংক তৈরি"),
-                KeyboardButton(text="📊 আমার লিংকসমূহ")
-            ],
-            [
-                KeyboardButton(text="💰 ব্যালেন্স"),
-                KeyboardButton(text="💸 উইথড্র")
-            ],
-            [
-                KeyboardButton(text="💻 ড্যাশবোর্ড", web_app=WebAppInfo(url=panel_url)),
-                KeyboardButton(text="❓ সাহায্য")
-            ]
-        ],
-        resize_keyboard=True,
-        persistent=True
-    )
+class TrafficSourceStates(StatesGroup):
+    waiting_for_platform = State()
+    waiting_for_url = State()
 
 
-async def ensure_admin(message: types.Message) -> Admin:
-    """Auto-registers a Telegram user as admin/owner if they don't exist in storage.
-    Returns the Admin object."""
-    telegram_id = message.from_user.id
-    admin = storage.get_admin(telegram_id)
-    is_owner = (int(telegram_id) == int(config.OWNER_TELEGRAM_ID)) if config else False
+class WithdrawStates(StatesGroup):
+    waiting_for_method = State()
+    waiting_for_account = State()
+    waiting_for_amount = State()
 
-    if not admin:
-        admin = Admin(
-            telegram_id=telegram_id,
-            username=message.from_user.username,
-            full_name=message.from_user.full_name or "Unknown",
-            role="owner" if is_owner else "admin",
-            balance_confirmed=50.0,
-            balance_pending=10.0
-        )
-        storage.upsert_admin(admin)
+
+def build_bot_and_dispatcher(bot_token: str) -> tuple[Bot, Dispatcher]:
+    bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode="HTML"))
+    dp = Dispatcher(storage=MemoryStorage())
+    return bot, dp
+
+
+def _gen_short_code(length: int = 7) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(random.choices(alphabet, k=length))
+
+
+async def notify_owner_of_withdrawal(bot: Bot, settings, admin, req) -> None:
+    """Pings the Owner's Telegram chat the moment a withdrawal is
+    requested — whether it came from the bot's own /withdraw flow or from
+    the panel's withdrawal form — so the Owner never has to go looking
+    for it.
+    """
+    who = f"@{admin.username}" if admin.username else f"id {admin.telegram_id}"
+    if admin.traffic_source_url:
+        platform = admin.traffic_source_platform or "Source"
+        ts_line = f'{platform}: <a href="{admin.traffic_source_url}">{admin.traffic_source_url}</a>'
     else:
-        if admin.balance_confirmed == 0.0 and admin.balance_pending == 0.0:
-            admin.balance_confirmed = 50.0
-            admin.balance_pending = 10.0
-            storage.upsert_admin(admin)
+        ts_line = "সেট করা নেই"
+    method_label = "bKash" if req.method.value == "bkash" else "Nagad"
 
-        if is_owner and admin.role != "owner":
-            admin.role = "owner"
-            storage.upsert_admin(admin)
-
-    return admin
-
-
-@router.message(CommandStart(deep_link=True))
-async def cmd_start_deeplink(message: types.Message, command: CommandObject):
-    """Handle /start with a deep-link parameter (viewer clicking a short link)."""
-    await ensure_admin(message)
-    short_code = command.args
-
-    if not short_code:
-        await message.answer("❌ কোনো লিংক কোড পাওয়া যায়নি!")
-        return
-
-    link = storage.get_link(short_code)
-    if not link:
-        await message.answer("❌ লিংকটি পাওয়া যায়নি!")
-        return
-
-    webapp_url = f"{config.WEBAPP_BASE_URL}/r/{short_code}"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔗 লিংক ওপেন করুন", web_app=WebAppInfo(url=webapp_url))]
-    ])
-    await message.answer("🎬 লিংকটি দেখতে নিচের বাটনে ক্লিক করুন:", reply_markup=kb)
-
-
-@router.message(CommandStart())
-async def cmd_start(message: types.Message):
-    """Handle /start without deep-link — normal registration and welcome."""
-    admin = await ensure_admin(message)
-    role_title = "👑 Owner (মালিক)" if admin.role == "owner" else "👤 Admin"
-    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
-    current_cpm = cpm_info.get("cpm", 0.50)
-    
-    welcome_text = (
-        f"👋 <b>স্বাগতম, {html.escape(message.from_user.first_name)}!</b> ({role_title})\n\n"
-        f"আমি আপনার টেলিগ্রাম লিংক শর্টনার বট।\n"
-        f"📈 <b>বর্তমান সিপিএম রেট:</b> ${current_cpm:.2f} / ১০০০ ভিউ\n\n"
-        "নিচের বাটনগুলো ব্যবহার করে খুব সহজেই লিংক তৈরি ও আয় ম্যানেজ করুন:\n\n"
-        "🔗 <b>নতুন লিংক তৈরি:</b> যেকোনো লিংক পেস্ট করুন বা বাটনে চাপুন\n"
-        "📊 <b>আমার লিংকসমূহ:</b> আপনার তৈরি করা সব লিংক\n"
-        "💰 <b>ব্যালেন্স:</b> আপনার উপার্জিত ডলার\n"
-        "💸 <b>উইথড্র:</b> বিকাশ/নগদে বাটন চেপে টাকা তুলুন\n"
-        "💻 <b>ড্যাশবোর্ড:</b> ড্যাশবোর্ড ওপেন করুন"
+    text = (
+        "🔔 <b>নতুন উইথড্র রিকোয়েস্ট</b>\n\n"
+        f"Admin: {who}\n"
+        f"পরিমাণ: <b>{req.amount:.2f}</b>\n"
+        f"পদ্ধতি: {method_label}\n"
+        f"অ্যাকাউন্ট: <code>{req.account_number}</code>\n"
+        f"Traffic Source: {ts_line}"
     )
-    reply_kb = get_main_keyboard(config.WEBAPP_BASE_URL if config else "")
-    await message.answer(welcome_text, reply_markup=reply_kb)
-
-
-# Button text handlers for Reply Keyboard
-@router.message(F.text == "🔗 নতুন লিংক তৈরি")
-async def btn_new_link_prompt(message: types.Message):
-    await ensure_admin(message)
-    msg = (
-        "🔗 <b>নতুন শর্ট লিংক তৈরি করতে:</b>\n\n"
-        "যেকোনো ডেসটিনেশন URL এই চ্যাটে সরাসরি পেস্ট করুন (যেমন: <code>https://example.com/file</code>)।"
+    panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="📊 প্যানেলে রিভিউ করুন", web_app=WebAppInfo(url=panel_url))]]
     )
-    await message.answer(msg)
+    try:
+        await bot.send_message(settings.OWNER_TELEGRAM_ID, text, reply_markup=kb)
+    except Exception:
+        logger.exception("failed to notify owner about withdrawal request")
 
 
-@router.message(F.text == "📊 আমার লিংকসমূহ")
-async def btn_mylinks(message: types.Message):
-    await cmd_mylinks(message)
+def register_handlers(dp: Dispatcher, storage, settings) -> None:
+    async def _ensure_admin(telegram_id: int, username: str | None):
+        return await storage.get_or_create_admin(telegram_id, username, settings.OWNER_TELEGRAM_ID)
 
-
-@router.message(F.text == "💰 ব্যালেন্স")
-async def btn_mybalance(message: types.Message):
-    await cmd_mybalance(message)
-
-
-@router.message(F.text == "💸 উইথড্র")
-@router.message(Command("withdraw"))
-async def btn_withdraw_prompt(message: types.Message):
-    admin = await ensure_admin(message)
-    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
-    min_withdrawal = cpm_info.get("min_withdrawal_amount", 50.0)
-    payout_hours = cpm_info.get("payout_processing_hours", 24)
-    current_cpm = cpm_info.get("cpm", 0.50)
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📱 bKash (বিকাশ)", callback_data="wselect_bkash"),
-            InlineKeyboardButton(text="📙 Nagad (নগদ)", callback_data="wselect_nagad")
-        ]
-    ])
-
-    msg = (
-        f"💸 <b>উইথড্র পেমেন্ট অপশন</b>\n\n"
-        f"💰 <b>আপনার কনফার্মড ব্যালেন্স:</b> ${admin.balance_confirmed:.4f}\n"
-        f"📌 <b>মিনিমাম উইথড্র লিমিট:</b> ${min_withdrawal:.2f}\n"
-        f"📈 <b>বর্তমান সিপিএম রেট:</b> ${current_cpm:.2f} / ১০০০ ভিউ\n"
-        f"⏱️ <b>পেমেন্ট প্রসেসিং সময়:</b> {payout_hours} ঘণ্টার মধ্যে\n\n"
-        f"👇 <b>টাকা তুলতে নিচে থেকে আপনার পেমেন্ট মেথড সিলেক্ট করুন:</b>"
-    )
-    await message.answer(msg, reply_markup=kb)
-
-
-@router.callback_query(F.data.startswith("wselect_"))
-async def cb_withdraw_select(callback: types.CallbackQuery):
-    method = callback.data.split("_")[1] # 'bkash' or 'nagad'
-    telegram_id = callback.from_user.id
-    admin = storage.get_admin(telegram_id)
-    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
-    min_withdrawal = cpm_info.get("min_withdrawal_amount", 50.0)
-
-    if not admin or admin.balance_confirmed < min_withdrawal:
-        await callback.answer(f"❌ আপনার পর্যাপ্ত ব্যালেন্স নেই! ন্যূনতম উইথড্র লিমিট: ${min_withdrawal:.2f}", show_alert=True)
-        return
-
-    user_withdraw_state[telegram_id] = method
-    method_name = "bKash (বিকাশ)" if method == "bkash" else "Nagad (নগদ)"
-
-    await callback.message.edit_text(
-        f"📱 <b>{method_name} সিলেক্ট করা হয়েছে!</b>\n\n"
-        f"💰 <b>উইথড্র হবে:</b> ${admin.balance_confirmed:.4f}\n\n"
-        f"অনুগ্রহ করে আপনার <b>{method_name} একাউন্ট নম্বরটি</b> এই চ্যাটে পাঠিয়ে দিন (যেমন: <code>01712345678</code>):"
-    )
-    await callback.answer()
-
-
-@router.message(F.text.regexp(r"^01[3-9]\d{8}$"))
-async def handle_phone_number_input(message: types.Message):
-    telegram_id = message.from_user.id
-    method = user_withdraw_state.get(telegram_id)
-
-    if not method:
-        # Just normal number input or start link, ignore
-        return
-
-    admin = await ensure_admin(message)
-    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
-    min_withdrawal = cpm_info.get("min_withdrawal_amount", 50.0)
-    payout_hours = cpm_info.get("payout_processing_hours", 24)
-
-    if admin.balance_confirmed < min_withdrawal:
-        await message.answer(f"❌ আপনার পর্যাপ্ত ব্যালেন্স নেই। ন্যূনতম উইথড্র: ${min_withdrawal:.2f}")
-        user_withdraw_state.pop(telegram_id, None)
-        return
-
-    account_number = message.text.strip()
-    amount = admin.balance_confirmed
-
-    withdraw_req = WithdrawRequest(
-        admin_telegram_id=admin.telegram_id,
-        amount=amount,
-        method=method,
-        account_number=account_number,
-        status="pending"
-    )
-    storage.create_withdraw_request(withdraw_req)
-    user_withdraw_state.pop(telegram_id, None)
-
-    method_name = "bKash (বিকাশ)" if method == "bkash" else "Nagad (নগদ)"
-    safe_account = html.escape(account_number)
-
-    # Notify Owner on Telegram
-    if config and config.OWNER_TELEGRAM_ID:
-        try:
-            owner_msg = (
-                f"🔔 <b>নতুন উইথড্র রিকোয়েস্ট এসেছে!</b>\n\n"
-                f"👤 <b>ইউজার Telegram ID:</b> <code>{admin.telegram_id}</code>\n"
-                f"💰 <b>পরিমাণ:</b> <b>${amount:.4f}</b>\n"
-                f"📱 <b>মেথড:</b> <b>{method_name}</b> (<code>{safe_account}</code>)\n\n"
-                f"💻 ওনার ড্যাশবোর্ডে গিয়ে পেমেন্ট এপ্রুভ করুন।"
-            )
-            await message.bot.send_message(config.OWNER_TELEGRAM_ID, owner_msg)
-        except Exception as e:
-            logger.error(f"Failed to notify owner: {e}")
-
-    await message.answer(
-        f"✅ <b>আপনার উইথড্র রিকোয়েস্ট সফল হয়েছে!</b>\n\n"
-        f"💰 <b>পরিমাণ:</b> ${amount:.4f}\n"
-        f"📱 <b>মেথড:</b> {method_name} ({safe_account})\n"
-        f"⏱️ <b>পেমেন্ট প্রসেসিং সময়:</b> {payout_hours} ঘণ্টার মধ্যে\n\n"
-        f"⏳ Owner পেমেন্ট ক্লিয়ার করার পর আপনার একাউন্টে টাকা পৌঁছে যাবে।"
-    )
-
-
-@router.message(F.text == "💻 ড্যাশবোর্ড")
-async def btn_panel(message: types.Message):
-    await cmd_panel(message)
-
-
-@router.message(F.text == "❓ সাহায্য")
-async def btn_help(message: types.Message):
-    await cmd_help(message)
-
-
-@router.message(Command("newlink"))
-async def cmd_newlink(message: types.Message, command: CommandObject):
-    """Create a new short link (auto-verified instantly)."""
-    admin = await ensure_admin(message)
-    target_url = command.args
-
-    if not target_url:
-        await message.answer("❌ অনুগ্রহ করে একটি URL দিন। যেমন: <code>/newlink https://example.com</code>\nঅথবা সরাসরি লিংকটি চ্যাটে পেস্ট করুন!")
-        return
-
-    await create_and_send_short_link(message, admin, target_url)
-
-
-# Auto-create short link if user directly sends a URL starting with http:// or https://
-@router.message(F.text.startswith("http://") | F.text.startswith("https://"))
-async def auto_create_link_from_url(message: types.Message):
-    admin = await ensure_admin(message)
-    target_url = message.text.strip()
-    await create_and_send_short_link(message, admin, target_url)
-
-
-async def create_and_send_short_link(message: types.Message, admin: Admin, target_url: str):
-    if not (target_url.startswith("http://") or target_url.startswith("https://")):
-        await message.answer("❌ URL টি সঠিক নয়! (http:// বা https:// দিয়ে শুরু হতে হবে)")
-        return
-
-    short_code = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
-
-    link = Link(
-        short_code=short_code,
-        owner_telegram_id=admin.telegram_id,
-        destination_url=target_url,
-        verification_status="verified",
-    )
-    storage.create_link(link)
-
-    short_url = f"https://t.me/{bot_username}?start={short_code}"
-    share_url = f"https://t.me/share/url?url={short_url}&text={html.escape('লিংকটি দেখতে নিচের লিংকে ক্লিক করুন:')}"
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📢 টেলিগ্রামে শেয়ার করুন", url=share_url)]
-    ])
-
-    await message.answer(
-        f"✅ <b>আপনার শর্ট লিংক প্রস্তুত! (সরাসরি অ্যাক্টিভ)</b>\n\n"
-        f"🔗 <b>কপি করতে টাচ করুন:</b>\n<code>{short_url}</code>\n\n"
-        f"💡 লিংকটি যেকোনো চ্যানেল বা গ্রুপে শেয়ার করে ইনকাম শুরু করুন!",
-        reply_markup=kb,
-        disable_web_page_preview=True
-    )
-
-
-@router.message(Command("mylinks"))
-async def cmd_mylinks(message: types.Message):
-    """Show all links created by this admin."""
-    admin = await ensure_admin(message)
-    links = storage.get_links_by_admin(admin.telegram_id)
-
-    if not links:
-        await message.answer("📭 আপনি এখনো কোনো লিংক তৈরি করেননি।")
-        return
-
-    for link in links:
-        short_url = f"https://t.me/{bot_username}?start={link.short_code}"
-        share_url = f"https://t.me/share/url?url={short_url}&text={html.escape('লিংকটি দেখতে নিচের লিংকে ক্লিক করুন:')}"
-        view_count = storage.count_views_by_link(link.short_code)
-        safe_url = html.escape(link.destination_url[:40])
-
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📢 শেয়ার করুন", url=share_url)]
-        ])
-
-        msg = (
-            f"🔹 <b>লিংক কোড:</b> <code>{link.short_code}</code>\n"
-            f"   🌐 <b>আসল URL:</b> {safe_url}...\n"
-            f"   👁️ <b>ভিউ:</b> {view_count}\n"
-            f"   🔗 <b>শর্ট লিংক (কপি করতে টাচ করুন):</b>\n<code>{short_url}</code>"
+    async def _create_link_and_reply(message: Message, admin, url: str) -> None:
+        code = _gen_short_code()
+        while await storage.get_link(code):
+            code = _gen_short_code()
+        await storage.create_link(code, admin.telegram_id, url)
+        short_url = f"https://t.me/{settings.BOT_USERNAME}?start={code}"
+        await message.answer(
+            f"✅ শর্ট লিংক তৈরি হয়েছে:\n<code>{short_url}</code>\n\n"
+            "লিংকটি আপনার Traffic Source-এ (চ্যানেল/গ্রুপ/পোস্ট) শেয়ার করুন। "
+            "ভিউয়াররা এতে ক্লিক করলে টেলিগ্রাম বট খুলবে, ৩টি বিজ্ঞাপন দেখাবে, তারপর গন্তব্যে পৌঁছাবে।",
+            reply_markup=ReplyKeyboardRemove(),
         )
-        await message.answer(msg, reply_markup=kb, disable_web_page_preview=True)
 
+    # ------------------------------------------------------------------
+    # /start
+    # ------------------------------------------------------------------
 
-@router.message(Command("mybalance"))
-async def cmd_mybalance(message: types.Message):
-    """Show admin's balance."""
-    admin = await ensure_admin(message)
-    cpm_info = cpm_engine.get_cycle_info() if cpm_engine else {}
-    current_cpm = cpm_info.get("cpm", 0.50)
-    min_withdrawal = cpm_info.get("min_withdrawal_amount", 50.0)
-    payout_hours = cpm_info.get("payout_processing_hours", 24)
+    @dp.message(CommandStart(deep_link=True))
+    async def start_with_code(message: Message, command) -> None:
+        code = command.args
+        await _ensure_admin(message.from_user.id, message.from_user.username)
+        link = await storage.get_link(code) if code else None
+        if not link:
+            await message.answer("এই শর্ট লিংকটি খুঁজে পাওয়া যায়নি বা মেয়াদোত্তীর্ণ।")
+            return
+        view_url = f"{settings.WEBAPP_BASE_URL}/r/{code}"
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="👉 চালিয়ে যান (৩টি বিজ্ঞাপন দেখুন)", web_app=WebAppInfo(url=view_url))]
+            ]
+        )
+        await message.answer(
+            "লিংকটি খুলতে নিচের বাটনে চাপ দিন। ৩টি বিজ্ঞাপন দেখা শেষ হলে আপনি স্বয়ংক্রিয়ভাবে গন্তব্য পেজে পৌঁছে যাবেন।",
+            reply_markup=kb,
+        )
 
-    response = (
-        "💰 <b>আপনার ব্যালেন্স সামারি:</b>\n\n"
-        f"✅ <b>কনফার্মড ব্যালেন্স:</b> {admin.balance_confirmed:.4f} $\n"
-        f"⏳ <b>পেন্ডিং ব্যালেন্স:</b> {admin.balance_pending:.4f} $\n\n"
-        f"📈 <b>বর্তমান সিপিএম রেট:</b> ${current_cpm:.2f} / ১০০০ ভিউ\n"
-        f"📌 <b>মিনিমাম উইথড্র:</b> ${min_withdrawal:.2f}\n"
-        f"⏱️ <b>পেমেন্ট সময়:</b> {payout_hours} ঘণ্টার মধ্যে"
-    )
+    @dp.message(CommandStart())
+    async def start_plain(message: Message) -> None:
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        role_label = "Owner" if admin.role == Role.OWNER else "Admin"
+        panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="📊 ড্যাশবোর্ড খুলুন", web_app=WebAppInfo(url=panel_url))]]
+        )
+        await message.answer(
+            f"স্বাগতম, {role_label}! 👋\n\n"
+            "<b>TGSHORTBOT</b> দিয়ে লিংক শর্ট করুন, শেয়ার করুন, আর প্রতিটি ভিউ থেকে আয় করুন।\n\n"
+            "কমান্ডসমূহ:\n"
+            "/trafficsource — আপনার ট্রাফিক সোর্স সেট/আপডেট করুন (লিংক তৈরির আগে আবশ্যক)\n"
+            "/newlink &lt;url&gt; — নতুন শর্ট লিংক তৈরি করুন\n"
+            "/mybalance — ব্যালেন্স ও পেআউট তথ্য দেখুন\n"
+            "/withdraw — টাকা তোলার আবেদন করুন\n"
+            "/panel — পূর্ণাঙ্গ ড্যাশবোর্ড খুলুন",
+            reply_markup=kb,
+        )
 
-    if cpm_engine:
-        if cpm_info.get("mode") == "scheduled":
-            remaining = cpm_info.get("time_remaining_seconds", 0)
-            hours = int(remaining // 3600)
-            minutes = int((remaining % 3600) // 60)
-            pending_views = cpm_info.get("pending_views", 0)
-            response += (
-                f"\n\n📅 <b>পরবর্তী পেআউট:</b> {hours}h {minutes}m পর\n"
-                f"👁️ <b>এই সাইকেলে পেন্ডিং ভিউ:</b> {pending_views}"
+    # ------------------------------------------------------------------
+    # /trafficsource
+    # ------------------------------------------------------------------
+
+    @dp.message(Command("trafficsource"))
+    async def trafficsource_cmd(message: Message, state: FSMContext) -> None:
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=label, callback_data=f"ts_platform:{key}")]
+                for key, label in TRAFFIC_PLATFORMS
+            ]
+        )
+        current = ""
+        if admin.traffic_source_url:
+            current = f"\n\nবর্তমান: <b>{admin.traffic_source_platform}</b> — {admin.traffic_source_url}"
+        await state.set_state(TrafficSourceStates.waiting_for_platform)
+        await message.answer(
+            "আপনি যেখান থেকে ভিউয়ার/ট্রাফিক আনবেন সেই প্ল্যাটফর্মটি বেছে নিন:" + current,
+            reply_markup=kb,
+        )
+
+    @dp.callback_query(TrafficSourceStates.waiting_for_platform, F.data.startswith("ts_platform:"))
+    async def trafficsource_platform_chosen(callback: CallbackQuery, state: FSMContext) -> None:
+        platform_key = (callback.data or "").split(":", 1)[1]
+        label = dict(TRAFFIC_PLATFORMS).get(platform_key, "Other")
+        await state.update_data(platform=label)
+        await state.set_state(TrafficSourceStates.waiting_for_url)
+        if callback.message:
+            await callback.message.edit_text(
+                f"প্ল্যাটফর্ম: <b>{label}</b>\n\n"
+                f"এখন আপনার {label} চ্যানেল/গ্রুপ/প্রোফাইলের লিংকটি পাঠান (যেখানে আপনি শর্ট লিংক শেয়ার করবেন):"
             )
+        await callback.answer()
 
-    await message.answer(response)
+    @dp.message(TrafficSourceStates.waiting_for_url)
+    async def trafficsource_url_received(message: Message, state: FSMContext) -> None:
+        url = (message.text or "").strip()
+        if not url.startswith(("http://", "https://")):
+            await message.answer("সঠিক লিংক দিন (http:// বা https:// দিয়ে শুরু হতে হবে)।")
+            return
+        data = await state.get_data()
+        platform = data.get("platform", "Other")
+        await storage.set_traffic_source(message.from_user.id, platform, url)
+        await state.clear()
+        await message.answer(
+            f"✅ Traffic Source সংরক্ষণ করা হয়েছে:\n<b>{platform}</b> — {url}\n\n"
+            "এখন আপনি /newlink দিয়ে লিংক শর্ট করতে পারবেন।"
+        )
 
+    # ------------------------------------------------------------------
+    # /newlink
+    # ------------------------------------------------------------------
 
-@router.message(Command("panel"))
-async def cmd_panel(message: types.Message):
-    """Open the dashboard Mini App."""
-    await ensure_admin(message)
-    webapp_url = f"{config.WEBAPP_BASE_URL}/panel"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 ড্যাশবোর্ড ওপেন করুন", web_app=WebAppInfo(url=webapp_url))]
-    ])
-    await message.answer("📊 আপনার ড্যাশবোর্ড:", reply_markup=kb)
+    @dp.message(Command("newlink"))
+    async def newlink_cmd(message: Message, command, state: FSMContext) -> None:
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        if not admin.traffic_source_url:
+            await message.answer(
+                "লিংক শর্ট করার আগে আপনার <b>Traffic Source</b> সেট করতে হবে — অর্থাৎ আপনি কোথা থেকে "
+                "ভিউয়ার আনবেন (টেলিগ্রাম চ্যানেল, ইউটিউব চ্যানেল ইত্যাদির লিংক)।\n\n"
+                "/trafficsource কমান্ড দিয়ে এখনই সেট করুন।"
+            )
+            return
+        url = command.args.strip() if command.args else None
+        if url:
+            if not url.startswith(("http://", "https://")):
+                await message.answer(
+                    "সঠিক লিংক দিন, http:// অথবা https:// দিয়ে শুরু হতে হবে।\nউদাহরণ: /newlink https://example.com"
+                )
+                return
+            await _create_link_and_reply(message, admin, url)
+            return
+        await state.set_state(NewLinkStates.waiting_for_url)
+        await message.answer("যে লিংকটি শর্ট করতে চান সেটি পাঠান (http:// বা https:// দিয়ে শুরু হতে হবে):")
 
+    @dp.message(NewLinkStates.waiting_for_url)
+    async def newlink_receive_url(message: Message, state: FSMContext) -> None:
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        url = (message.text or "").strip()
+        if not url.startswith(("http://", "https://")):
+            await message.answer("সঠিক লিংক দিন, যেমন https://example.com দিয়ে শুরু হতে হবে।")
+            return
+        await state.clear()
+        await _create_link_and_reply(message, admin, url)
 
-@router.message(Command("help"))
-async def cmd_help(message: types.Message):
-    """Show help text with all available buttons and commands."""
-    help_text = (
-        "❓ <b>সাহায্য মেনু</b>\n\n"
-        "বটের নিচের বাটনগুলো ব্যবহার করে সবকিছু করতে পারবেন:\n\n"
-        "🔗 <b>নতুন লিংক তৈরি:</b> চ্যাটে যেকোনো লিংক পাঠালেই শর্ট লিংক হয়ে যাবে\n"
-        "📊 <b>আমার লিংকসমূহ:</b> আপনার সব লিংক ও ভিউ\n"
-        "💰 <b>ব্যালেন্স:</b> আপনার উপার্জিত ডলার\n"
-        "💸 <b>উইথড্র:</b> বিকাশ/নগদে বাটন চেপে টাকা তুলুন\n"
-        "💻 <b>ড্যাশবোর্ড:</b> অ্যাডমিন/ওনার প্যানেল"
-    )
-    await message.answer(help_text)
+    # ------------------------------------------------------------------
+    # /mybalance
+    # ------------------------------------------------------------------
+
+    @dp.message(Command("mybalance"))
+    async def mybalance_cmd(message: Message) -> None:
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        cpm_setting = await storage.get_cpm_setting()
+        lines = [f"💰 নিশ্চিত ব্যালেন্স: <b>{admin.balance_confirmed:.2f}</b>"]
+
+        if cpm_setting.mode == CPMMode.SCHEDULED:
+            started = datetime.fromisoformat(cpm_setting.cycle_started_at)
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            deadline = started + timedelta(hours=cpm_setting.cycle_duration_hours)
+            remaining = max(0, int((deadline - datetime.now(timezone.utc)).total_seconds()))
+            h, rem = divmod(remaining, 3600)
+            m, _ = divmod(rem, 60)
+
+            my_codes = {l.short_code for l in storage.links.values() if l.owner_telegram_id == admin.telegram_id}
+            pending_views = len(
+                [v for v in storage.views.values() if v.short_code in my_codes and v.counted_status == CountedStatus.PENDING_PAYOUT]
+            )
+            lines.append(f"⏳ পরবর্তী পেআউট: {h}ঘ {m}মি পরে")
+            lines.append(f"👀 এই চক্রে পেন্ডিং ভিউ: {pending_views}")
+            lines.append("ℹ️ পেমেন্টের চূড়ান্ত রেট পেআউটের মুহূর্তে নির্ধারিত হয়।")
+        else:
+            lines.append(f"📈 বর্তমান CPM (Real-time): {cpm_setting.current_cpm:.4f}")
+
+        await message.answer("\n".join(lines))
+
+    # ------------------------------------------------------------------
+    # /withdraw
+    # ------------------------------------------------------------------
+
+    @dp.message(Command("withdraw"))
+    async def withdraw_cmd(message: Message, state: FSMContext) -> None:
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        if admin.balance_confirmed <= 0:
+            await message.answer("তোলার মতো কোনো নিশ্চিত ব্যালেন্স নেই।")
+            return
+        kb = ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="bKash"), KeyboardButton(text="Nagad")]],
+            resize_keyboard=True,
+            one_time_keyboard=True,
+        )
+        await state.set_state(WithdrawStates.waiting_for_method)
+        await message.answer(f"নিশ্চিত ব্যালেন্স: {admin.balance_confirmed:.2f}\nপদ্ধতি বেছে নিন:", reply_markup=kb)
+
+    @dp.message(WithdrawStates.waiting_for_method, F.text.in_({"bKash", "Nagad"}))
+    async def withdraw_method(message: Message, state: FSMContext) -> None:
+        await state.update_data(method="bkash" if message.text == "bKash" else "nagad")
+        await state.set_state(WithdrawStates.waiting_for_account)
+        await message.answer("অ্যাকাউন্ট নম্বর পাঠান:", reply_markup=ReplyKeyboardRemove())
+
+    @dp.message(WithdrawStates.waiting_for_method)
+    async def withdraw_method_invalid(message: Message) -> None:
+        await message.answer("অনুগ্রহ করে নিচের বাটন থেকে bKash অথবা Nagad বেছে নিন।")
+
+    @dp.message(WithdrawStates.waiting_for_account)
+    async def withdraw_account(message: Message, state: FSMContext) -> None:
+        account = (message.text or "").strip()
+        if not account:
+            await message.answer("সঠিক অ্যাকাউন্ট নম্বর পাঠান:")
+            return
+        await state.update_data(account_number=account)
+        await state.set_state(WithdrawStates.waiting_for_amount)
+        await message.answer("কত টাকা তুলতে চান? (শুধু সংখ্যা লিখুন)")
+
+    @dp.message(WithdrawStates.waiting_for_amount)
+    async def withdraw_amount(message: Message, state: FSMContext) -> None:
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        try:
+            amount = float((message.text or "").strip())
+        except ValueError:
+            await message.answer("সঠিক সংখ্যা লিখুন, যেমন 250 অথবা 250.50")
+            return
+        if amount <= 0 or amount > admin.balance_confirmed:
+            await message.answer(
+                f"পরিমাণ অবশ্যই ০ থেকে বড় এবং নিশ্চিত ব্যালেন্সের ({admin.balance_confirmed:.2f}) মধ্যে হতে হবে।"
+            )
+            return
+        data = await state.get_data()
+        req = await storage.create_withdrawal(
+            admin.telegram_id, amount, WithdrawMethod(data["method"]), data["account_number"]
+        )
+        await state.clear()
+        await notify_owner_of_withdrawal(message.bot, settings, admin, req)
+        await message.answer(
+            f"✅ আবেদন গ্রহণ করা হয়েছে (ID: <code>{req.request_id[:8]}</code>)।\n"
+            "Owner-কে সাথে সাথে জানানো হয়েছে — তিনি যাচাই করে টাকা পাঠাবেন।",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+    # ------------------------------------------------------------------
+    # /panel, /help
+    # ------------------------------------------------------------------
+
+    @dp.message(Command("panel"))
+    async def panel_cmd(message: Message) -> None:
+        await _ensure_admin(message.from_user.id, message.from_user.username)
+        panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="📊 ড্যাশবোর্ড খুলুন", web_app=WebAppInfo(url=panel_url))]]
+        )
+        await message.answer("আপনার ড্যাশবোর্ড খুলতে নিচের বাটনে চাপ দিন:", reply_markup=kb)
+
+    @dp.message(Command("help"))
+    async def help_cmd(message: Message) -> None:
+        await message.answer(
+            "কমান্ডসমূহ:\n"
+            "/trafficsource — ট্রাফিক সোর্স সেট/আপডেট করুন\n"
+            "/newlink &lt;url&gt; — নতুন শর্ট লিংক তৈরি\n"
+            "/mybalance — ব্যালেন্স ও পেআউট তথ্য\n"
+            "/withdraw — টাকা তোলার আবেদন\n"
+            "/panel — পূর্ণাঙ্গ ড্যাশবোর্ড খুলুন"
+        )

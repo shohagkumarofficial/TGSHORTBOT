@@ -1,324 +1,328 @@
+"""In-memory + JSON-file-backed storage for TGSHORTBOT (MVP).
+
+Everything lives in memory for fast reads; every mutation is flushed to
+`data/store.json` immediately (write-through) using an atomic
+tmp-file-then-rename so a crash mid-write can never corrupt the store.
+
+An `asyncio.Lock` serializes all mutations. Because the whole app runs on
+a single asyncio event loop, this is sufficient to make check-then-act
+sequences (e.g. the view dedupe check) atomic with no real concurrency
+bugs, without needing a database transaction.
+
+Swapping this module for a SQLite/Postgres-backed one later can reuse the
+exact same method signatures and the Link/View/Admin/etc. models
+unchanged (see PRD Section 9.3).
+"""
+from __future__ import annotations
+
+import asyncio
 import json
 import os
-import threading
-from typing import List, Optional, Dict
-from datetime import datetime, timezone
-from uuid import UUID
+import tempfile
+import uuid
+from typing import Dict, List, Optional, Tuple
 
-from pydantic import TypeAdapter
+from models import (
+    Admin,
+    AdminStatus,
+    CPMHistoryEntry,
+    CPMSetting,
+    Link,
+    Role,
+    View,
+    WithdrawMethod,
+    WithdrawRequest,
+    WithdrawStatus,
+    now_iso,
+)
 
-from models import Admin, Link, View, CPMSetting, WithdrawRequest, CPMAuditLog
-
-STORE_PATH = os.path.join(os.path.dirname(__file__), "data", "store.json")
 
 class Storage:
-    """Thread-safe JSON file storage for the bot."""
-    def __init__(self, store_path: str = STORE_PATH):
-        self.store_path = store_path
-        self._lock = threading.Lock()
-        self._ensure_store_exists()
+    def __init__(self, data_file: str):
+        self.data_file = data_file
+        self._lock = asyncio.Lock()
 
-    def _ensure_store_exists(self):
-        """Creates the data folder and store.json with default structure if not exist."""
-        os.makedirs(os.path.dirname(self.store_path), exist_ok=True)
-        if not os.path.exists(self.store_path):
-            initial_data = {
-                "admins": {},
-                "links": {},
-                "views": [],
-                "cpm_setting": None,
-                "withdraw_requests": [],
-                "cpm_audit_log": []
+        self.admins: Dict[int, Admin] = {}
+        self.links: Dict[str, Link] = {}
+        self.views: Dict[str, View] = {}
+        self.withdrawals: Dict[str, WithdrawRequest] = {}
+        self.cpm_setting: CPMSetting = CPMSetting()
+        self.cpm_history: List[CPMHistoryEntry] = []
+
+        self._view_index: Dict[Tuple[str, int], str] = {}
+        self._loaded = False
+
+    # ------------------------------------------------------------------
+    # Load / persist
+    # ------------------------------------------------------------------
+
+    async def load(self) -> None:
+        os.makedirs(os.path.dirname(self.data_file) or ".", exist_ok=True)
+        if os.path.exists(self.data_file):
+            with open(self.data_file, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            self.admins = {int(k): Admin(**v) for k, v in raw.get("admins", {}).items()}
+            self.links = {k: Link(**v) for k, v in raw.get("links", {}).items()}
+            self.views = {k: View(**v) for k, v in raw.get("views", {}).items()}
+            self.withdrawals = {
+                k: WithdrawRequest(**v) for k, v in raw.get("withdrawals", {}).items()
             }
-            with open(self.store_path, "w", encoding="utf-8") as f:
-                json.dump(initial_data, f)
-
-    def _load(self) -> dict:
-        """Loads data from JSON file."""
-        with open(self.store_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-
-    def _save(self, data: dict):
-        """Saves data to JSON file."""
-        with open(self.store_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, default=str, indent=2)
-
-    # --- Admin Methods ---
-    def get_admin(self, telegram_id: int) -> Optional[Admin]:
-        with self._lock:
-            data = self._load()
-            admin_data = data["admins"].get(str(telegram_id))
-            if admin_data:
-                return Admin.model_validate(admin_data)
-            return None
-
-    def upsert_admin(self, admin: Admin):
-        with self._lock:
-            data = self._load()
-            data["admins"][str(admin.telegram_id)] = admin.model_dump(mode="json")
-            self._save(data)
-
-    def get_all_admins(self) -> List[Admin]:
-        with self._lock:
-            data = self._load()
-            return [Admin.model_validate(a) for a in data["admins"].values()]
-
-    def ban_admin(self, telegram_id: int):
-        with self._lock:
-            data = self._load()
-            if str(telegram_id) in data["admins"]:
-                data["admins"][str(telegram_id)]["status"] = "banned"
-                self._save(data)
-
-    def unban_admin(self, telegram_id: int):
-        with self._lock:
-            data = self._load()
-            if str(telegram_id) in data["admins"]:
-                data["admins"][str(telegram_id)]["status"] = "active"
-                self._save(data)
-
-    # --- Link Methods ---
-    def create_link(self, link: Link):
-        with self._lock:
-            data = self._load()
-            data["links"][link.short_code] = link.model_dump(mode="json")
-            self._save(data)
-
-    def get_link(self, short_code: str) -> Optional[Link]:
-        with self._lock:
-            data = self._load()
-            link_data = data["links"].get(short_code)
-            if link_data:
-                return Link.model_validate(link_data)
-            return None
-
-    def get_links_by_admin(self, telegram_id: int) -> List[Link]:
-        with self._lock:
-            data = self._load()
-            return [Link.model_validate(l) for l in data["links"].values() if l["owner_telegram_id"] == telegram_id]
-
-    def get_all_links(self) -> List[Link]:
-        with self._lock:
-            data = self._load()
-            return [Link.model_validate(l) for l in data["links"].values()]
-
-    def get_pending_links(self) -> List[Link]:
-        with self._lock:
-            data = self._load()
-            return [Link.model_validate(l) for l in data["links"].values() if l["verification_status"] == "pending"]
-
-    def update_link_proof(self, short_code: str, proof_url: str):
-        with self._lock:
-            data = self._load()
-            if short_code in data["links"]:
-                data["links"][short_code]["proof_url"] = proof_url
-                self._save(data)
-
-    def verify_link(self, short_code: str, status: str):
-        with self._lock:
-            data = self._load()
-            if short_code in data["links"]:
-                data["links"][short_code]["verification_status"] = status
-                self._save(data)
-
-    # --- View Methods ---
-    def log_view(self, view: View):
-        with self._lock:
-            data = self._load()
-            data["views"].append(view.model_dump(mode="json"))
-            self._save(data)
-
-    def is_duplicate_view(self, short_code: str, viewer_telegram_id: int) -> bool:
-        with self._lock:
-            data = self._load()
-            for v in data["views"]:
-                if v["short_code"] == short_code and v["viewer_telegram_id"] == viewer_telegram_id:
-                    return True
-            return False
-
-    def get_views_by_link(self, short_code: str) -> List[View]:
-        with self._lock:
-            data = self._load()
-            return [View.model_validate(v) for v in data["views"] if v["short_code"] == short_code]
-
-    def get_views_by_status(self, status: str) -> List[View]:
-        with self._lock:
-            data = self._load()
-            return [View.model_validate(v) for v in data["views"] if v["counted_status"] == status]
-
-    def update_view_status(self, view_id: UUID, status: str, earned_amount: Optional[float] = None):
-        with self._lock:
-            data = self._load()
-            view_id_str = str(view_id)
-            for v in data["views"]:
-                if v["view_id"] == view_id_str:
-                    v["counted_status"] = status
-                    if earned_amount is not None:
-                        v["earned_amount"] = earned_amount
-                    break
-            self._save(data)
-
-    def get_pending_payout_views(self, cycle_id: str) -> List[View]:
-        with self._lock:
-            data = self._load()
-            return [View.model_validate(v) for v in data["views"] if v["counted_status"] == "pending_payout" and v.get("cpm_cycle_id") == cycle_id]
-
-    def count_views_by_link(self, short_code: str) -> int:
-        with self._lock:
-            data = self._load()
-            return sum(1 for v in data["views"] if v["short_code"] == short_code)
-
-    # --- CPM Setting Methods ---
-    def get_cpm_setting(self) -> Optional[CPMSetting]:
-        with self._lock:
-            data = self._load()
-            if data["cpm_setting"]:
-                return CPMSetting.model_validate(data["cpm_setting"])
-            return None
-
-    def update_cpm_setting(self, setting: CPMSetting):
-        with self._lock:
-            data = self._load()
-            data["cpm_setting"] = setting.model_dump(mode="json")
-            self._save(data)
-
-    def init_cpm_setting(self, owner_id: int):
-        with self._lock:
-            data = self._load()
-            if not data["cpm_setting"]:
-                setting = CPMSetting(updated_by=owner_id)
-                data["cpm_setting"] = setting.model_dump(mode="json")
-                self._save(data)
-
-    # --- Withdrawal Methods ---
-    def create_withdraw_request(self, request: WithdrawRequest):
-        with self._lock:
-            data = self._load()
-            data["withdraw_requests"].append(request.model_dump(mode="json"))
-            self._save(data)
-
-    def get_pending_withdrawals(self) -> List[WithdrawRequest]:
-        with self._lock:
-            data = self._load()
-            return [WithdrawRequest.model_validate(r) for r in data["withdraw_requests"] if r["status"] == "pending"]
-
-    def get_withdrawals_by_admin(self, telegram_id: int) -> List[WithdrawRequest]:
-        with self._lock:
-            data = self._load()
-            return [WithdrawRequest.model_validate(r) for r in data["withdraw_requests"] if r["admin_telegram_id"] == telegram_id]
-
-    def resolve_withdrawal(self, request_id: UUID, status: str, reason: Optional[str] = None):
-        with self._lock:
-            data = self._load()
-            req_id_str = str(request_id)
-            for r in data["withdraw_requests"]:
-                if r["request_id"] == req_id_str:
-                    r["status"] = status
-                    r["resolved_at"] = datetime.now(timezone.utc).isoformat()
-                    if reason:
-                        r["reject_reason"] = reason
-                    break
-            self._save(data)
-
-    # --- Audit Log Methods ---
-    def add_audit_log(self, log_entry: CPMAuditLog):
-        with self._lock:
-            data = self._load()
-            data["cpm_audit_log"].append(log_entry.model_dump(mode="json"))
-            self._save(data)
-
-    # --- Balance Management ---
-    def credit_admin_balance(self, telegram_id: int, amount: float, balance_type: str):
-        with self._lock:
-            data = self._load()
-            tid_str = str(telegram_id)
-            if tid_str in data["admins"]:
-                if balance_type == 'confirmed':
-                    data["admins"][tid_str]["balance_confirmed"] += amount
-                elif balance_type == 'pending':
-                    data["admins"][tid_str]["balance_pending"] += amount
-                self._save(data)
-
-    def move_pending_to_confirmed(self, telegram_id: int):
-        with self._lock:
-            data = self._load()
-            tid_str = str(telegram_id)
-            if tid_str in data["admins"]:
-                pending_amt = data["admins"][tid_str]["balance_pending"]
-                data["admins"][tid_str]["balance_confirmed"] += pending_amt
-                data["admins"][tid_str]["balance_pending"] = 0.0
-                self._save(data)
-
-    def debit_admin_balance(self, telegram_id: int, amount: float):
-        with self._lock:
-            data = self._load()
-            tid_str = str(telegram_id)
-            if tid_str in data["admins"]:
-                data["admins"][tid_str]["balance_confirmed"] -= amount
-                self._save(data)
-
-    def get_analytics_data(self, telegram_id: int, period: str = "24h", start_date_str: Optional[str] = None, end_date_str: Optional[str] = None) -> dict:
-        with self._lock:
-            data = self._load()
-            user_links = {l["short_code"] for l in data["links"].values() if l["owner_telegram_id"] == telegram_id}
-            user_views = [v for v in data["views"] if v["short_code"] in user_links]
-            user_withdrawals = [w for w in data["withdraw_requests"] if w["admin_telegram_id"] == telegram_id]
-            
-            total_withdrawn = sum(w["amount"] for w in user_withdrawals if w["status"] == "paid")
-            
-            now = datetime.now(timezone.utc)
-            filtered_views = []
-            
-            for v in user_views:
-                v_time_str = v.get("created_at")
-                if not v_time_str:
-                    continue
-                try:
-                    v_time = datetime.fromisoformat(str(v_time_str).replace("Z", "+00:00"))
-                    if v_time.tzinfo is None:
-                        v_time = v_time.replace(tzinfo=timezone.utc)
-                except Exception:
-                    continue
-
-                if period == "24h":
-                    if (now - v_time).total_seconds() <= 86400:
-                        filtered_views.append((v, v_time))
-                elif period == "7d":
-                    if (now - v_time).total_seconds() <= 7 * 86400:
-                        filtered_views.append((v, v_time))
-                elif period == "30d":
-                    if (now - v_time).total_seconds() <= 30 * 86400:
-                        filtered_views.append((v, v_time))
-                elif period == "custom" and start_date_str and end_date_str:
-                    try:
-                        s_dt = datetime.fromisoformat(start_date_str).replace(tzinfo=timezone.utc)
-                        e_dt = datetime.fromisoformat(end_date_str).replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
-                        if s_dt <= v_time <= e_dt:
-                            filtered_views.append((v, v_time))
-                    except Exception:
-                        pass
-                else:
-                    filtered_views.append((v, v_time))
-
-            daily_dict = {}
-            total_period_earned = 0.0
-            for v, v_time in filtered_views:
-                day_key = v_time.strftime("%Y-%m-%d")
-                earned = v.get("earned_amount", 0.0)
-                total_period_earned += earned
-                
-                if day_key not in daily_dict:
-                    daily_dict[day_key] = {"date": day_key, "views": 0, "earned": earned}
-                else:
-                    daily_dict[day_key]["views"] += 1
-                    daily_dict[day_key]["earned"] += earned
-
-            daily_breakdown = sorted(daily_dict.values(), key=lambda x: x["date"], reverse=True)
-            
-            return {
-                "period": period,
-                "period_views": len(filtered_views),
-                "period_earnings": total_period_earned,
-                "total_withdrawn": total_withdrawn,
-                "daily_breakdown": daily_breakdown
+            if raw.get("cpm_setting"):
+                self.cpm_setting = CPMSetting(**raw["cpm_setting"])
+            self.cpm_history = [CPMHistoryEntry(**e) for e in raw.get("cpm_history", [])]
+            self._view_index = {
+                (v.short_code, v.viewer_telegram_id): v.view_id for v in self.views.values()
             }
+        else:
+            await self._save_locked()
+        self._loaded = True
+
+    async def _save_locked(self) -> None:
+        """Caller must already hold self._lock."""
+        payload = {
+            "admins": {str(k): v.model_dump() for k, v in self.admins.items()},
+            "links": {k: v.model_dump() for k, v in self.links.items()},
+            "views": {k: v.model_dump() for k, v in self.views.items()},
+            "withdrawals": {k: v.model_dump() for k, v in self.withdrawals.items()},
+            "cpm_setting": self.cpm_setting.model_dump(),
+            "cpm_history": [e.model_dump() for e in self.cpm_history],
+        }
+        dir_name = os.path.dirname(self.data_file) or "."
+        os.makedirs(dir_name, exist_ok=True)
+        fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix=".store_", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, self.data_file)
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
+
+    async def save(self) -> None:
+        async with self._lock:
+            await self._save_locked()
+
+    # ------------------------------------------------------------------
+    # Admin
+    # ------------------------------------------------------------------
+
+    async def get_admin(self, telegram_id: int) -> Optional[Admin]:
+        return self.admins.get(telegram_id)
+
+    async def get_or_create_admin(
+        self, telegram_id: int, username: Optional[str], owner_id: int
+    ) -> Admin:
+        """Auto-creates an Admin/Owner record on first /start (Section 2)."""
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if admin:
+                if username and admin.username != username:
+                    admin.username = username
+                    await self._save_locked()
+                return admin
+            role = Role.OWNER if telegram_id == owner_id else Role.ADMIN
+            admin = Admin(telegram_id=telegram_id, username=username, role=role)
+            self.admins[telegram_id] = admin
+            await self._save_locked()
+            return admin
+
+    async def list_admins(self) -> List[Admin]:
+        return list(self.admins.values())
+
+    async def set_admin_status(self, telegram_id: int, status: AdminStatus) -> Optional[Admin]:
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            admin.status = status
+            await self._save_locked()
+            return admin
+
+    async def set_traffic_source(self, telegram_id: int, platform: str, url: str) -> Optional[Admin]:
+        """Admin-level "where do your viewers come from" info — required
+        once before an Admin can create any short links (Section: Traffic
+        Source workflow).
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            admin.traffic_source_platform = platform
+            admin.traffic_source_url = url
+            admin.traffic_source_updated_at = now_iso()
+            await self._save_locked()
+            return admin
+
+    # ------------------------------------------------------------------
+    # Link
+    # ------------------------------------------------------------------
+
+    async def create_link(self, short_code: str, owner_telegram_id: int, destination_url: str) -> Link:
+        async with self._lock:
+            link = Link(
+                short_code=short_code,
+                owner_telegram_id=owner_telegram_id,
+                destination_url=destination_url,
+            )
+            self.links[short_code] = link
+            await self._save_locked()
+            return link
+
+    async def get_link(self, short_code: str) -> Optional[Link]:
+        return self.links.get(short_code)
+
+    async def list_links_by_owner(self, owner_telegram_id: int) -> List[Link]:
+        return [l for l in self.links.values() if l.owner_telegram_id == owner_telegram_id]
+
+    # ------------------------------------------------------------------
+    # View
+    # ------------------------------------------------------------------
+
+    async def find_view(self, short_code: str, viewer_telegram_id: int) -> Optional[View]:
+        vid = self._view_index.get((short_code, viewer_telegram_id))
+        return self.views.get(vid) if vid else None
+
+    async def create_view(self, short_code: str, viewer_telegram_id: int) -> Optional[View]:
+        """Returns None if this (short_code, viewer) pair already has a
+        view — the dedupe rule from Section 9.3. The check-then-insert is
+        atomic because no `await` happens between them while the lock is
+        held.
+        """
+        async with self._lock:
+            key = (short_code, viewer_telegram_id)
+            if key in self._view_index:
+                return None
+            view = View(short_code=short_code, viewer_telegram_id=viewer_telegram_id)
+            self.views[view.view_id] = view
+            self._view_index[key] = view.view_id
+            await self._save_locked()
+            return view
+
+    async def list_views_by_short_code(self, short_code: str) -> List[View]:
+        return [v for v in self.views.values() if v.short_code == short_code]
+
+    # ------------------------------------------------------------------
+    # Withdrawals
+    # ------------------------------------------------------------------
+
+    async def create_withdrawal(
+        self,
+        admin_telegram_id: int,
+        amount: float,
+        method: WithdrawMethod,
+        account_number: str,
+    ) -> WithdrawRequest:
+        async with self._lock:
+            req = WithdrawRequest(
+                admin_telegram_id=admin_telegram_id,
+                amount=amount,
+                method=method,
+                account_number=account_number,
+            )
+            self.withdrawals[req.request_id] = req
+            await self._save_locked()
+            return req
+
+    async def list_withdrawals(self, status: Optional[WithdrawStatus] = None) -> List[WithdrawRequest]:
+        vals = list(self.withdrawals.values())
+        if status:
+            vals = [w for w in vals if w.status == status]
+        return vals
+
+    async def get_withdrawal(self, request_id: str) -> Optional[WithdrawRequest]:
+        return self.withdrawals.get(request_id)
+
+    async def resolve_withdrawal(
+        self, request_id: str, decision: WithdrawStatus, reason: Optional[str] = None
+    ) -> Optional[WithdrawRequest]:
+        """Balance is deducted only when marked Paid (Section 4.6 step 4)."""
+        async with self._lock:
+            req = self.withdrawals.get(request_id)
+            if not req or req.status != WithdrawStatus.PENDING:
+                return None
+            req.status = decision
+            req.resolved_at = now_iso()
+            if reason:
+                req.reject_reason = reason
+            if decision == WithdrawStatus.PAID:
+                admin = self.admins.get(req.admin_telegram_id)
+                if admin:
+                    admin.balance_confirmed = round(max(0.0, admin.balance_confirmed - req.amount), 6)
+            await self._save_locked()
+            return req
+
+    # ------------------------------------------------------------------
+    # CPM
+    # ------------------------------------------------------------------
+
+    async def get_cpm_setting(self) -> CPMSetting:
+        return self.cpm_setting
+
+    async def update_cpm_setting(
+        self,
+        *,
+        mode=None,
+        current_cpm: Optional[float] = None,
+        cycle_duration_hours: Optional[float] = None,
+        updated_by: Optional[int] = None,
+    ) -> CPMSetting:
+        async with self._lock:
+            cs = self.cpm_setting
+            detail: dict = {}
+            reset_cycle = False
+
+            if mode is not None and mode != cs.mode:
+                detail["mode"] = {"from": cs.mode.value, "to": mode.value}
+                cs.mode = mode
+                reset_cycle = True
+            if current_cpm is not None and current_cpm != cs.current_cpm:
+                detail["current_cpm"] = {"from": cs.current_cpm, "to": current_cpm}
+                cs.current_cpm = current_cpm
+            if cycle_duration_hours is not None and cycle_duration_hours != cs.cycle_duration_hours:
+                detail["cycle_duration_hours"] = {
+                    "from": cs.cycle_duration_hours,
+                    "to": cycle_duration_hours,
+                }
+                cs.cycle_duration_hours = cycle_duration_hours
+                reset_cycle = True
+
+            if reset_cycle:
+                cs.cycle_started_at = now_iso()
+                cs.cycle_id = str(uuid.uuid4())
+
+            cs.updated_at = now_iso()
+            cs.updated_by = updated_by
+
+            if detail:
+                detail["by"] = updated_by
+                self.cpm_history.append(CPMHistoryEntry(event="cpm_change", detail=detail))
+
+            await self._save_locked()
+            return cs
+
+    async def append_history(self, event: str, detail: dict) -> None:
+        async with self._lock:
+            self.cpm_history.append(CPMHistoryEntry(event=event, detail=detail))
+            await self._save_locked()
+
+    # ------------------------------------------------------------------
+    # Stats
+    # ------------------------------------------------------------------
+
+    async def platform_stats(self) -> dict:
+        from models import CountedStatus  # local import avoids a cycle at module load
+
+        pending_payout_views = len(
+            [v for v in self.views.values() if v.counted_status == CountedStatus.PENDING_PAYOUT]
+        )
+        total_confirmed_liability = sum(a.balance_confirmed for a in self.admins.values())
+        total_paid_out = sum(w.amount for w in self.withdrawals.values() if w.status == WithdrawStatus.PAID)
+        return {
+            "total_admins": len(self.admins),
+            "total_links": len(self.links),
+            "total_views": len(self.views),
+            "pending_payout_views": pending_payout_views,
+            "total_confirmed_liability": round(total_confirmed_liability, 4),
+            "total_paid_out": round(total_paid_out, 4),
+        }

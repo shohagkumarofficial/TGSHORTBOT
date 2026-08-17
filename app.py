@@ -1,496 +1,412 @@
+"""FastAPI app for TGSHORTBOT — webhook receiver, short-link redirect
+entrypoint, and the Mini App API.
+
+Run locally with:
+    uvicorn app:app --reload
+
+Deployed on Render with:
+    uvicorn app:app --host 0.0.0.0 --port $PORT
+"""
+from __future__ import annotations
+
 import asyncio
-import hashlib
-import hmac
-import json
 import logging
-import time
+import random
+import string
 from contextlib import asynccontextmanager
-from urllib.parse import parse_qs, unquote
-from typing import Dict, Any, Optional
-from uuid import UUID
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-import uvicorn
-from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
-from aiogram.client.default import DefaultBotProperties
 from aiogram.types import Update
-from fastapi import FastAPI, Request, HTTPException, Depends, Header
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
-from config import settings
+import cpm_engine
+from bot import build_bot_and_dispatcher, notify_owner_of_withdrawal, register_handlers
+from config import get_settings
+from models import Admin, AdminStatus, CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
 from storage import Storage
-from models import Admin, Link, View, CPMSetting, WithdrawRequest, CPMAuditLog
-from cpm_engine import CPMEngine, start_cpm_background_task
-import bot as bot_module
+from telegram_auth import InitDataError, validate_init_data
 
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("app")
 
-# Initialize core components
-storage = Storage()
-cpm_engine = CPMEngine(storage)
-bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
-background_tasks = set()
+settings = get_settings()
+storage = Storage(settings.DATA_FILE)
+bot, dp = build_bot_and_dispatcher(settings.BOT_TOKEN)
+register_handlers(dp, storage, settings)
+
+_cpm_watcher_task: Optional[asyncio.Task] = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up FastAPI application")
-    
-    # 1. Setup bot_module & router
-    try:
-        bot_info = await bot.get_me()
-        bot_module.setup(storage, cpm_engine, settings, bot_info.username)
-        dp.include_router(bot_module.router)
-    except Exception as e:
-        logger.error(f"Error initializing bot info or router: {e}")
+    await storage.load()
 
-    # 2. Set webhook URL with secret token
-    webhook_url = settings.WEBHOOK_URL or f"{settings.WEBAPP_BASE_URL}/webhook"
-    if webhook_url.startswith("http"):
-        try:
-            await bot.set_webhook(
-                url=webhook_url,
-                secret_token=settings.WEBHOOK_SECRET if settings.WEBHOOK_SECRET else None,
-                drop_pending_updates=False
-            )
-            logger.info(f"Webhook set to {webhook_url}")
-        except Exception as e:
-            logger.error(f"Failed to set webhook: {e}")
-    else:
-        logger.warning(f"WEBHOOK_URL or WEBAPP_BASE_URL not configured properly: {webhook_url}")
-    
-    # 3. Start CPM background task
-    task = asyncio.create_task(start_cpm_background_task(cpm_engine))
-    background_tasks.add(task)
-    
-    # 4. Initialize CPM setting
-    storage.init_cpm_setting(settings.OWNER_TELEGRAM_ID)
-    
+    try:
+        await bot.set_webhook(
+            url=settings.WEBHOOK_URL,
+            secret_token=settings.WEBHOOK_SECRET,
+            drop_pending_updates=False,
+        )
+        logger.info("Webhook set to %s", settings.WEBHOOK_URL)
+    except Exception:
+        logger.exception("Could not set webhook on startup — set it manually with scripts/set_webhook.py")
+
+    global _cpm_watcher_task
+    _cpm_watcher_task = asyncio.create_task(
+        cpm_engine.run_cpm_cycle_watcher(storage, settings.CPM_CHECK_INTERVAL_SECONDS)
+    )
+    logger.info("TGSHORTBOT backend started")
+
     yield
-    
-    # Shutdown:
-    logger.info("Shutting down FastAPI application")
-    for task in background_tasks:
-        task.cancel()
-    
-    # DO NOT call delete_webhook on shutdown so Telegram keeps webhook registered
+
+    if _cpm_watcher_task:
+        _cpm_watcher_task.cancel()
+    await bot.session.close()
+
+
+app = FastAPI(title="TGSHORTBOT", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory="webapp"), name="webapp-static")
+
+
+# ---------------------------------------------------------------------------
+# Auth dependencies — every Mini App call is validated against Telegram's
+# initData signature server-side (never trust a client-supplied Telegram ID).
+# ---------------------------------------------------------------------------
+
+async def _extract_user(x_telegram_init_data: Optional[str]) -> dict:
+    if not x_telegram_init_data:
+        raise HTTPException(status_code=401, detail="missing X-Telegram-Init-Data header")
     try:
-        await bot.session.close()
-    except Exception as e:
-        logger.error(f"Error closing bot session: {e}")
-
-app = FastAPI(lifespan=lifespan)
-
-# Telegram initData Validation
-def validate_telegram_init_data(init_data: str) -> dict:
-    if not init_data:
-        raise HTTPException(status_code=401, detail="Missing initData")
-        
-    try:
-        parsed_data = parse_qs(init_data, keep_blank_values=True)
-        user_str = None
-        if "user" in parsed_data:
-            user_str = parsed_data["user"][0]
-        else:
-            for part in init_data.split("&"):
-                if part.startswith("user="):
-                    user_str = unquote(part[5:])
-                    break
-
-        if not user_str:
-            raise HTTPException(status_code=401, detail="Missing user field in initData")
-            
-        user_data = json.loads(user_str)
-        return user_data
-    except Exception as e:
-        logger.error(f"Error parsing Telegram initData: {e}")
-        raise HTTPException(status_code=401, detail=f"Invalid initData: {str(e)}")
-
-async def get_telegram_user(request: Request) -> dict:
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("tma "):
-        init_data = auth_header[4:]
-    else:
-        init_data = request.query_params.get("tgWebAppData")
-        
-    if not init_data:
-        try:
-            body = await request.json()
-            init_data = body.get("init_data")
-        except:
-            pass
-            
-    return validate_telegram_init_data(init_data)
-
-async def require_owner(user: dict = Depends(get_telegram_user)):
-    user_id = user.get("id")
-    if int(user_id or 0) != int(settings.OWNER_TELEGRAM_ID):
-        raise HTTPException(status_code=403, detail="Forbidden: Owner access required")
+        result = validate_init_data(x_telegram_init_data, settings.BOT_TOKEN)
+    except InitDataError as e:
+        raise HTTPException(status_code=401, detail=f"invalid init data: {e}")
+    user = result.get("user")
+    if not user or "id" not in user:
+        raise HTTPException(status_code=401, detail="init data missing user")
     return user
 
-# Models for request bodies
-class LogViewRequest(BaseModel):
-    short_code: str
-    init_data: str
 
-class CreateLinkRequest(BaseModel):
-    destination_url: str
+async def require_admin(
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data")
+) -> Admin:
+    user = await _extract_user(x_telegram_init_data)
+    admin = await storage.get_or_create_admin(user["id"], user.get("username"), settings.OWNER_TELEGRAM_ID)
+    if admin.status == AdminStatus.BANNED:
+        raise HTTPException(status_code=403, detail="account suspended")
+    return admin
 
-class UpdateCPMRequest(BaseModel):
-    mode: Optional[str] = None
-    current_cpm: Optional[float] = None
-    cycle_duration_hours: Optional[int] = None
-    min_withdrawal_amount: Optional[float] = None
-    payout_processing_hours: Optional[int] = None
 
-class CreateWithdrawalRequest(BaseModel):
-    amount: float
-    method: str
-    account_number: str
+async def require_owner(admin: Admin = Depends(require_admin)) -> Admin:
+    if admin.role != Role.OWNER:
+        raise HTTPException(status_code=403, detail="owner only")
+    return admin
 
-# Routes
-@app.get("/")
-async def root():
-    return RedirectResponse(url="/panel")
+
+# ---------------------------------------------------------------------------
+# Health & webhook
+# ---------------------------------------------------------------------------
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "timestamp": time.time()}
+    """Keeps Render's free-tier service awake (NFR, Section 6)."""
+    return {"ok": True}
+
 
 @app.post("/webhook")
-async def webhook(request: Request, x_telegram_bot_api_secret_token: str = Header(None)):
-    if settings.WEBHOOK_SECRET and x_telegram_bot_api_secret_token:
-        if x_telegram_bot_api_secret_token != settings.WEBHOOK_SECRET:
-            logger.warning(f"Secret token mismatch on /webhook. Received: {x_telegram_bot_api_secret_token}")
-            raise HTTPException(status_code=401, detail="Invalid secret token")
-            
-    try:
-        update_data = await request.json()
-        update = Update(**update_data)
-        await dp.feed_update(bot, update)
-    except Exception as e:
-        logger.error(f"Error processing Telegram update: {e}", exc_info=True)
-        # Return 200 OK so Telegram doesn't retry broken updates endlessly
-        return {"status": "error", "message": str(e)}
+async def telegram_webhook(
+    request: Request,
+    x_telegram_bot_api_secret_token: Optional[str] = Header(default=None),
+):
+    if x_telegram_bot_api_secret_token != settings.WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="bad secret token")
+    data = await request.json()
+    update = Update.model_validate(data)
+    await dp.feed_update(bot, update)
+    return {"ok": True}
 
-    return {"status": "ok"}
+
+# ---------------------------------------------------------------------------
+# Short-link entrypoint — serves the ad-lock Mini App page (Section 4.2)
+# ---------------------------------------------------------------------------
 
 @app.get("/r/{short_code}", response_class=HTMLResponse)
-async def viewer_page(short_code: str):
-    link = storage.get_link(short_code)
+async def redirect_entry(short_code: str):
+    link = await storage.get_link(short_code)
     if not link:
-        raise HTTPException(status_code=404, detail="Link not found")
-        
-    try:
-        with open("webapp/viewer.html", "r", encoding="utf-8") as f:
-            html = f.read()
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="Viewer template not found")
-        
-    html = html.replace("{{SHORT_CODE}}", short_code)
-    html = html.replace("{{ADSGRAM_BLOCK_ID}}", settings.ADSGRAM_BLOCK_ID)
-    html = html.replace("{{API_BASE_URL}}", settings.WEBAPP_BASE_URL)
-    
-    return HTMLResponse(content=html)
+        raise HTTPException(status_code=404, detail="link not found")
+    with open("webapp/viewer.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    html = html.replace("__SHORT_CODE__", short_code).replace(
+        "__ADSGRAM_BLOCK_ID__", settings.ADSGRAM_BLOCK_ID
+    )
+    return HTMLResponse(html)
+
 
 @app.get("/panel", response_class=HTMLResponse)
 async def panel_page():
-    try:
-        with open("webapp/panel.html", "r", encoding="utf-8") as f:
-            html = f.read()
-        html = html.replace("{{API_BASE_URL}}", settings.WEBAPP_BASE_URL)
-        return HTMLResponse(content=html)
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="Panel template not found")
+    with open("webapp/panel.html", "r", encoding="utf-8") as f:
+        return HTMLResponse(f.read())
 
-# === Mini App API Routes ===
+
+# ---------------------------------------------------------------------------
+# Viewer API
+# ---------------------------------------------------------------------------
 
 @app.post("/api/log-view")
-async def log_view(req: LogViewRequest, request: Request):
-    try:
-        user_data = validate_telegram_init_data(req.init_data)
-        viewer_id = user_data.get("id")
-        if not viewer_id:
-            raise HTTPException(status_code=401, detail="Invalid user data")
-            
-        link = storage.get_link(req.short_code)
-        if not link:
-            raise HTTPException(status_code=404, detail="Link not found")
-            
-        # Check duplicate view
-        if storage.is_duplicate_view(req.short_code, viewer_id):
-            return {"success": True, "destination_url": link.destination_url, "paid": False}
-            
-        view = View(
-            short_code=req.short_code,
-            viewer_telegram_id=viewer_id,
-            counted_status="unverified"
-        )
-        storage.log_view(view)
-        earned = cpm_engine.process_view(view, link)
-        return {"success": True, "destination_url": link.destination_url, "paid": earned > 0}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error logging view: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+async def log_view(
+    payload: dict,
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    user = await _extract_user(x_telegram_init_data)
+    short_code = payload.get("short_code")
+    if not short_code:
+        raise HTTPException(status_code=400, detail="short_code required")
+
+    link = await storage.get_link(short_code)
+    if not link:
+        raise HTTPException(status_code=404, detail="link not found")
+
+    viewer_id = user["id"]
+    view = await storage.create_view(short_code, viewer_id)
+    if view is None:
+        # Dedupe rule: only the first completed view per viewer per link counts.
+        return {"ok": True, "already_counted": True}
+
+    await cpm_engine.credit_new_view(storage, view, link)
+    return {"ok": True, "already_counted": False}
+
 
 @app.get("/api/link/{short_code}")
-async def get_link_destination(short_code: str):
-    link = storage.get_link(short_code)
+async def get_link_destination(
+    short_code: str,
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    # Only called by viewer.html *after* the view has been logged.
+    await _extract_user(x_telegram_init_data)
+    link = await storage.get_link(short_code)
     if not link:
-        raise HTTPException(status_code=404, detail="Link not found")
+        raise HTTPException(status_code=404, detail="link not found")
     return {"destination_url": link.destination_url}
 
-@app.post("/api/links")
-async def create_link(req: CreateLinkRequest, user: dict = Depends(get_telegram_user)):
-    admin_id = user["id"]
-    admin = storage.get_admin(admin_id)
-    if not admin or admin.status == 'banned':
-        raise HTTPException(status_code=403, detail="Not an active admin")
-        
-    short_code = hashlib.md5(f"{admin_id}_{time.time()}".encode()).hexdigest()[:6]
-    
-    link = Link(
-        short_code=short_code,
-        owner_telegram_id=admin_id,
-        destination_url=req.destination_url,
-        verification_status="verified"
+
+# ---------------------------------------------------------------------------
+# Admin: my profile
+# ---------------------------------------------------------------------------
+
+@app.get("/api/me")
+async def me(admin: Admin = Depends(require_admin)):
+    return admin.model_dump()
+
+
+@app.post("/api/traffic-source")
+async def set_traffic_source(payload: dict, admin: Admin = Depends(require_admin)):
+    platform = (payload.get("platform") or "").strip()
+    url = (payload.get("url") or "").strip()
+    if not platform:
+        raise HTTPException(status_code=400, detail="platform required")
+    if not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="url must be a valid http(s) link")
+    updated = await storage.set_traffic_source(admin.telegram_id, platform, url)
+    await storage.append_history(
+        "traffic_source_change", {"telegram_id": admin.telegram_id, "platform": platform, "url": url}
     )
-    storage.create_link(link)
-    
-    return {"short_code": short_code, "verification_status": "verified"}
+    return updated.model_dump()
 
-@app.patch("/api/links/{short_code}/proof")
-async def update_proof(short_code: str, request: Request, user: dict = Depends(get_telegram_user)):
-    admin_id = user["id"]
-    link = storage.get_link(short_code)
-    if not link or link.owner_telegram_id != admin_id:
-        raise HTTPException(status_code=404, detail="Link not found or unauthorized")
-        
-    body = await request.json()
-    proof_url = body.get("proof_url")
-    if proof_url:
-        storage.update_link_proof(short_code, proof_url)
-    return {"success": True}
 
-@app.get("/api/my/stats")
-async def my_stats(user: dict = Depends(get_telegram_user)):
-    admin_id = int(user["id"])
-    owner_id = int(settings.OWNER_TELEGRAM_ID)
-    is_owner = (admin_id == owner_id)
-    
-    admin = storage.get_admin(admin_id)
-    if not admin:
-        admin = Admin(
-            telegram_id=admin_id,
-            username=user.get("username"),
-            full_name=f"{user.get('first_name', '')} {user.get('last_name', '')}".strip() or "User",
-            role="owner" if is_owner else "admin",
-            balance_confirmed=50.0,
-            balance_pending=10.0
+# ---------------------------------------------------------------------------
+# Admin: links
+# ---------------------------------------------------------------------------
+
+def _gen_short_code(length: int = 7) -> str:
+    alphabet = string.ascii_letters + string.digits
+    return "".join(random.choices(alphabet, k=length))
+
+
+def _short_url_for(code: str) -> str:
+    return f"https://t.me/{settings.BOT_USERNAME}?start={code}"
+
+
+@app.post("/api/links")
+async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
+    if not admin.traffic_source_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Set your Traffic Source before creating links (POST /api/traffic-source)",
         )
-        storage.upsert_admin(admin)
-    else:
-        # Give test balance boost if balance is 0
-        if admin.balance_confirmed == 0.0 and admin.balance_pending == 0.0:
-            admin.balance_confirmed = 50.0
-            admin.balance_pending = 10.0
-            storage.upsert_admin(admin)
+    destination_url = (payload.get("destination_url") or "").strip()
+    if not destination_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
 
-        if is_owner and admin.role != "owner":
-            admin.role = "owner"
-            storage.upsert_admin(admin)
-            
-    links = storage.get_links_by_admin(admin_id)
-    withdrawals = storage.get_withdrawals_by_admin(admin_id)
-    
-    total_views = sum(storage.count_views_by_link(l.short_code) for l in links)
-    cycle_info = cpm_engine.get_cycle_info()
-    
-    total_withdrawn = sum(w.amount for w in withdrawals if w.status == "paid")
-    lifetime_earned = admin.balance_confirmed + admin.balance_pending + total_withdrawn
-    initial_analytics = storage.get_analytics_data(admin_id, "7d")
-    
-    return {
-        "role": "owner" if is_owner else admin.role,
-        "balance_confirmed": admin.balance_confirmed,
-        "balance_pending": admin.balance_pending,
-        "total_withdrawn": total_withdrawn,
-        "lifetime_earned": lifetime_earned,
-        "total_views": total_views,
-        "cycle_info": cycle_info,
-        "analytics": initial_analytics,
-        "links": [l.model_dump() for l in links],
-        "withdrawals": [w.model_dump() for w in withdrawals]
-    }
+    code = _gen_short_code()
+    while await storage.get_link(code):
+        code = _gen_short_code()
+    link = await storage.create_link(code, admin.telegram_id, destination_url)
+    return {"short_code": link.short_code, "short_url": _short_url_for(link.short_code)}
 
-@app.get("/api/my/analytics")
-async def get_my_analytics(
-    period: str = "7d",
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    user: dict = Depends(get_telegram_user)
-):
-    admin_id = int(user["id"])
-    return storage.get_analytics_data(admin_id, period, start_date, end_date)
 
-@app.get("/api/admin/links")
-async def admin_list_links(user: dict = Depends(require_owner)):
-    pending = storage.get_pending_links()
-    return [l.model_dump() for l in pending]
+@app.get("/api/links")
+async def my_links(admin: Admin = Depends(require_admin)):
+    links = await storage.list_links_by_owner(admin.telegram_id)
+    out = []
+    for l in links:
+        views = await storage.list_views_by_short_code(l.short_code)
+        out.append(
+            {
+                **l.model_dump(),
+                "short_url": _short_url_for(l.short_code),
+                "view_count": len(views),
+                "confirmed_views": len([v for v in views if v.counted_status == CountedStatus.CONFIRMED]),
+                "pending_views": len([v for v in views if v.counted_status == CountedStatus.PENDING_PAYOUT]),
+            }
+        )
+    out.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"links": out}
 
-@app.post("/api/admin/links/{short_code}/verify")
-async def admin_verify_link(short_code: str, request: Request, user: dict = Depends(require_owner)):
-    body = await request.json()
-    decision = body.get("decision")
-    
-    if decision == "verified":
-        cpm_engine.on_link_verified(short_code)
-    elif decision == "rejected":
-        cpm_engine.on_link_rejected(short_code)
-    else:
-        raise HTTPException(status_code=400, detail="Invalid decision")
-        
-    return {"success": True}
+
+# ---------------------------------------------------------------------------
+# CPM
+# ---------------------------------------------------------------------------
 
 @app.get("/api/cpm")
-async def get_cpm():
-    return cpm_engine.get_cycle_info()
+async def get_cpm(admin: Admin = Depends(require_admin)):
+    cs = await storage.get_cpm_setting()
+    data = cs.model_dump()
+    if cs.mode == CPMMode.SCHEDULED:
+        started = datetime.fromisoformat(cs.cycle_started_at)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        deadline = started + timedelta(hours=cs.cycle_duration_hours)
+        data["seconds_to_payout"] = max(0, int((deadline - datetime.now(timezone.utc)).total_seconds()))
+        if admin.role != Role.OWNER:
+            # Sub-admins see the countdown and pending-view count, but not
+            # a pre-calculated rate, since it isn't final until payout (Section 4.5).
+            data.pop("current_cpm", None)
+    return data
+
 
 @app.post("/api/admin/cpm")
-async def admin_update_cpm(req: UpdateCPMRequest, user: dict = Depends(require_owner)):
-    owner_id = int(user["id"])
-    if req.current_cpm is not None:
-        cpm_engine.change_cpm_rate(req.current_cpm, owner_id)
-    if req.mode is not None:
-        cpm_engine.change_mode(req.mode, owner_id, req.cycle_duration_hours or 24)
-    if req.min_withdrawal_amount is not None:
-        cpm_engine.set_min_withdrawal_amount(req.min_withdrawal_amount, owner_id)
-    if req.payout_processing_hours is not None:
-        cpm_engine.set_payout_processing_hours(req.payout_processing_hours, owner_id)
-        
-    return cpm_engine.get_cycle_info()
+async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner)):
+    mode_enum = None
+    if payload.get("mode") is not None:
+        try:
+            mode_enum = CPMMode(payload["mode"])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="mode must be 'realtime' or 'scheduled'")
 
-async def notify_owner_withdrawal(withdrawal: WithdrawRequest):
-    if not bot or not settings.OWNER_TELEGRAM_ID:
-        return
-    try:
-        method_name = withdrawal.method.upper()
-        msg = (
-            f"🔔 <b>নতুন উইথড্র রিকোয়েস্ট এসেছে!</b>\n\n"
-            f"👤 <b>ইউজার Telegram ID:</b> <code>{withdrawal.admin_telegram_id}</code>\n"
-            f"💰 <b>পরিমাণ:</b> <b>${withdrawal.amount:.4f}</b>\n"
-            f"📱 <b>মেথড:</b> <b>{method_name}</b> (<code>{html.escape(withdrawal.account_number)}</code>)\n\n"
-            f"💻 ওনার ড্যাশবোর্ডে (পেন্ডিং পেমেন্ট) গিয়ে এপ্রুভ করুন।"
-        )
-        await bot.send_message(settings.OWNER_TELEGRAM_ID, msg)
-    except Exception as e:
-        logger.error(f"Error sending owner notification: {e}")
+    current_cpm = payload.get("current_cpm")
+    if current_cpm is not None:
+        current_cpm = float(current_cpm)
+        if current_cpm < 0:
+            raise HTTPException(status_code=400, detail="current_cpm must be >= 0")
+
+    cycle_duration_hours = payload.get("cycle_duration_hours")
+    if cycle_duration_hours is not None:
+        cycle_duration_hours = float(cycle_duration_hours)
+        if cycle_duration_hours <= 0:
+            raise HTTPException(status_code=400, detail="cycle_duration_hours must be > 0")
+
+    cs = await storage.update_cpm_setting(
+        mode=mode_enum,
+        current_cpm=current_cpm,
+        cycle_duration_hours=cycle_duration_hours,
+        updated_by=owner.telegram_id,
+    )
+    return cs.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Withdrawals
+# ---------------------------------------------------------------------------
 
 @app.post("/api/withdraw")
-async def create_withdrawal(req: CreateWithdrawalRequest, user: dict = Depends(get_telegram_user)):
-    admin_id = user["id"]
-    admin = storage.get_admin(admin_id)
-    if not admin or admin.status == 'banned':
-        raise HTTPException(status_code=403, detail="Forbidden")
-        
-    cpm_info = cpm_engine.get_cycle_info()
-    min_withdrawal = cpm_info.get("min_withdrawal_amount", settings.MIN_WITHDRAWAL_AMOUNT)
+async def request_withdrawal(payload: dict, admin: Admin = Depends(require_admin)):
+    try:
+        amount = float(payload.get("amount"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="amount must be a number")
+    method = payload.get("method")
+    account_number = (payload.get("account_number") or "").strip()
 
-    if admin.balance_confirmed < req.amount or req.amount < min_withdrawal:
-        raise HTTPException(status_code=400, detail=f"উইথড্র অ্যামাউন্ট অন্তত ${min_withdrawal} হতে হবে")
-        
-    withdrawal = WithdrawRequest(
-        admin_telegram_id=admin_id,
-        amount=req.amount,
-        method=req.method,
-        account_number=req.account_number,
-        status="pending"
+    if method not in ("bkash", "nagad"):
+        raise HTTPException(status_code=400, detail="method must be 'bkash' or 'nagad'")
+    if not account_number:
+        raise HTTPException(status_code=400, detail="account_number required")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+    if amount > admin.balance_confirmed:
+        raise HTTPException(status_code=400, detail="amount exceeds confirmed balance")
+
+    req = await storage.create_withdrawal(admin.telegram_id, amount, WithdrawMethod(method), account_number)
+    await notify_owner_of_withdrawal(bot, settings, admin, req)
+    return req.model_dump()
+
+
+@app.get("/api/withdrawals/mine")
+async def my_withdrawals(admin: Admin = Depends(require_admin)):
+    all_w = await storage.list_withdrawals()
+    mine = sorted(
+        (w.model_dump() for w in all_w if w.admin_telegram_id == admin.telegram_id),
+        key=lambda w: w["created_at"],
+        reverse=True,
     )
-    storage.create_withdraw_request(withdrawal)
-    
-    # Notify owner instantly via Telegram message
-    await notify_owner_withdrawal(withdrawal)
-    
-    return withdrawal.model_dump()
+    return {"withdrawals": mine}
+
 
 @app.get("/api/admin/withdrawals")
-async def admin_list_withdrawals(user: dict = Depends(require_owner)):
-    withdrawals = storage.get_pending_withdrawals()
-    return [w.model_dump() for w in withdrawals]
+async def admin_pending_withdrawals(owner: Admin = Depends(require_owner)):
+    pending = await storage.list_withdrawals(status=WithdrawStatus.PENDING)
+    pending.sort(key=lambda w: w.created_at)
+    out = []
+    for w in pending:
+        requester = await storage.get_admin(w.admin_telegram_id)
+        d = w.model_dump()
+        d["admin_username"] = requester.username if requester else None
+        d["traffic_source_platform"] = requester.traffic_source_platform if requester else None
+        d["traffic_source_url"] = requester.traffic_source_url if requester else None
+        out.append(d)
+    return {"withdrawals": out}
+
 
 @app.post("/api/admin/withdrawals/{request_id}/resolve")
-async def admin_resolve_withdrawal(request_id: str, request: Request, user: dict = Depends(require_owner)):
-    try:
-        req_id = UUID(request_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid UUID")
-        
-    body = await request.json()
-    status = body.get("status") or body.get("decision")
-    
-    if status == "paid":
-        withdrawal_list = storage.get_pending_withdrawals()
-        withdrawal = next((w for w in withdrawal_list if str(w.request_id) == str(req_id)), None)
-        if not withdrawal:
-            raise HTTPException(status_code=404, detail="Not found")
-            
-        storage.resolve_withdrawal(req_id, "paid")
-        storage.debit_admin_balance(withdrawal.admin_telegram_id, withdrawal.amount)
-    elif status == "rejected":
-        reason = body.get("reason")
-        storage.resolve_withdrawal(req_id, "rejected", reason)
-    else:
-        raise HTTPException(status_code=400, detail="Invalid status")
-        
-    return {"success": True}
+async def admin_resolve_withdrawal(request_id: str, payload: dict, owner: Admin = Depends(require_owner)):
+    decision = payload.get("decision")
+    if decision not in ("paid", "rejected"):
+        raise HTTPException(status_code=400, detail="decision must be 'paid' or 'rejected'")
+    reason = payload.get("reason")
+    status_enum = WithdrawStatus.PAID if decision == "paid" else WithdrawStatus.REJECTED
+    req = await storage.resolve_withdrawal(request_id, status_enum, reason)
+    if not req:
+        raise HTTPException(status_code=404, detail="withdrawal not found or already resolved")
+    return req.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Owner: admins list, ban/unban, platform stats
+# ---------------------------------------------------------------------------
 
 @app.get("/api/admin/admins")
-async def admin_list_admins(user: dict = Depends(require_owner)):
-    admins = storage.get_all_admins()
-    return [a.model_dump() for a in admins]
+async def list_all_admins(owner: Admin = Depends(require_owner)):
+    admins = await storage.list_admins()
+    admins.sort(key=lambda a: a.created_at)
+    return {"admins": [a.model_dump() for a in admins]}
 
-@app.post("/api/admin/admins/{telegram_id}/ban")
-async def admin_ban_toggle(telegram_id: int, request: Request, user: dict = Depends(require_owner)):
-    body = await request.json()
-    is_banned = body.get("is_banned", True)
-    
-    admin = storage.get_admin(telegram_id)
+
+@app.post("/api/admin/admins/{telegram_id}/status")
+async def set_admin_status(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
+    status = payload.get("status")
+    if status not in ("active", "banned"):
+        raise HTTPException(status_code=400, detail="status must be 'active' or 'banned'")
+    if telegram_id == owner.telegram_id:
+        raise HTTPException(status_code=400, detail="cannot change your own status")
+    admin = await storage.set_admin_status(telegram_id, AdminStatus(status))
     if not admin:
-        raise HTTPException(status_code=404, detail="Admin not found")
-        
-    if is_banned:
-        storage.ban_admin(telegram_id)
-    else:
-        storage.unban_admin(telegram_id)
-        
-    return {"success": True, "is_banned": is_banned}
+        raise HTTPException(status_code=404, detail="admin not found")
+    return admin.model_dump()
+
 
 @app.get("/api/admin/stats")
-async def admin_platform_stats(user: dict = Depends(require_owner)):
-    links = storage.get_all_links()
-    admins = storage.get_all_admins()
-    
-    total_views = sum(storage.count_views_by_link(l.short_code) for l in links)
-    
-    # Calculate total paid by looking at admins' withdrawals
-    total_paid = 0.0
-    for a in admins:
-        withdrawals = storage.get_withdrawals_by_admin(a.telegram_id)
-        total_paid += sum(w.amount for w in withdrawals if w.status == "paid")
-        
-    total_liability = sum(a.balance_confirmed for a in admins)
-    
-    return {
-        "total_views": total_views,
-        "total_paid": total_paid,
-        "total_pending_liability": total_liability
-    }
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    uvicorn.run(app, host="0.0.0.0", port=settings.PORT)
+async def platform_stats(owner: Admin = Depends(require_owner)):
+    return await storage.platform_stats()

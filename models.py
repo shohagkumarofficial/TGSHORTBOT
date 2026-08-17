@@ -1,65 +1,130 @@
+"""Data models for TGSHORTBOT.
+
+These mirror the JSON shapes in PRD Section 9.3 exactly, so the same
+models can be reused unchanged when storage.py is swapped from JSON to
+SQLite/Postgres later.
+"""
+from __future__ import annotations
+
+import uuid
 from datetime import datetime, timezone
-from typing import Literal, Optional, Dict, Any
-from uuid import UUID, uuid4
-from pydantic import BaseModel, ConfigDict, Field
+from enum import Enum
+from typing import Optional
+
+from pydantic import BaseModel, Field
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class Role(str, Enum):
+    OWNER = "owner"
+    ADMIN = "admin"
+
+
+class AdminStatus(str, Enum):
+    ACTIVE = "active"
+    BANNED = "banned"
+
+
+class CountedStatus(str, Enum):
+    """A view is routed straight into one of these two states the instant
+    it's logged (see cpm_engine.credit_new_view) — there is no longer a
+    per-link "unverified" holding state. The human review step now
+    happens once per Admin, at Traffic Source level, and again by the
+    Owner at withdrawal time — not per link.
+    """
+
+    PENDING_PAYOUT = "pending_payout"
+    CONFIRMED = "confirmed"
+
+
+class CPMMode(str, Enum):
+    REALTIME = "realtime"
+    SCHEDULED = "scheduled"
+
+
+class WithdrawMethod(str, Enum):
+    BKASH = "bkash"
+    NAGAD = "nagad"
+
+
+class WithdrawStatus(str, Enum):
+    PENDING = "pending"
+    PAID = "paid"
+    REJECTED = "rejected"
+
 
 class Admin(BaseModel):
     telegram_id: int
     username: Optional[str] = None
-    full_name: str
-    role: Literal["owner", "admin"]
-    balance_confirmed: float = 50.0  # Initial test balance
-    balance_pending: float = 10.0   # Initial test balance
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    status: Literal["active", "banned"] = "active"
-    model_config = ConfigDict(populate_by_name=True)
+    role: Role = Role.ADMIN
+    balance_confirmed: float = 0.0
+    balance_pending: float = 0.0
+    created_at: str = Field(default_factory=now_iso)
+    status: AdminStatus = AdminStatus.ACTIVE
+
+    # Where this Admin brings viewers from (e.g. their Telegram channel or
+    # YouTube channel link). Set once by the Admin before they can create
+    # any links, and shown to the Owner alongside withdrawal requests so
+    # the Owner can judge where the traffic is really coming from.
+    traffic_source_platform: Optional[str] = None
+    traffic_source_url: Optional[str] = None
+    traffic_source_updated_at: Optional[str] = None
+
 
 class Link(BaseModel):
     short_code: str
     owner_telegram_id: int
     destination_url: str
-    proof_url: Optional[str] = None
-    verification_status: Literal["pending", "verified", "rejected"] = "verified"
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    model_config = ConfigDict(populate_by_name=True)
+    created_at: str = Field(default_factory=now_iso)
+
 
 class View(BaseModel):
-    view_id: UUID = Field(default_factory=uuid4)
+    """One row per completed 3-ad viewing."""
+
+    view_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     short_code: str
     viewer_telegram_id: int
-    counted_status: Literal["unverified", "pending_payout", "confirmed", "rejected"] = "unverified"
+    counted_status: CountedStatus = CountedStatus.PENDING_PAYOUT
     cpm_cycle_id: Optional[str] = None
-    earned_amount: float = 0.0
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    model_config = ConfigDict(populate_by_name=True)
+    created_at: str = Field(default_factory=now_iso)
+
 
 class CPMSetting(BaseModel):
-    mode: Literal["realtime", "scheduled"] = "scheduled"
-    current_cpm: float = 0.50
-    cycle_duration_hours: int = 24
-    min_withdrawal_amount: float = 50.0
-    payout_processing_hours: int = 24
-    cycle_started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    cycle_id: UUID = Field(default_factory=uuid4)
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_by: int
-    model_config = ConfigDict(populate_by_name=True)
+    """Single active record. `cycle_id` is an implementation addition (not
+    spelled out verbatim in the PRD JSON shape) so that View.cpm_cycle_id
+    can unambiguously reference exactly which scheduled cycle a view
+    belongs to.
+    """
+
+    mode: CPMMode = CPMMode.REALTIME
+    current_cpm: float = 0.5
+    cycle_duration_hours: float = 24
+    cycle_started_at: str = Field(default_factory=now_iso)
+    cycle_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    updated_at: str = Field(default_factory=now_iso)
+    updated_by: Optional[int] = None
+
+
+class CPMHistoryEntry(BaseModel):
+    """Audit trail entry — every CPM change and payout event (NFR in
+    Section 6)."""
+
+    entry_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    event: str  # "cpm_change" | "cycle_payout" | "traffic_source_change"
+    detail: dict
+    created_at: str = Field(default_factory=now_iso)
+
 
 class WithdrawRequest(BaseModel):
-    request_id: UUID = Field(default_factory=uuid4)
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     admin_telegram_id: int
     amount: float
-    method: Literal["bkash", "nagad"]
+    method: WithdrawMethod
     account_number: str
-    status: Literal["pending", "paid", "rejected"] = "pending"
+    status: WithdrawStatus = WithdrawStatus.PENDING
+    created_at: str = Field(default_factory=now_iso)
+    resolved_at: Optional[str] = None
     reject_reason: Optional[str] = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    resolved_at: Optional[datetime] = None
-    model_config = ConfigDict(populate_by_name=True)
-
-class CPMAuditLog(BaseModel):
-    event_type: Literal["cpm_change", "cycle_payout", "mode_change"]
-    details: Dict[str, Any]
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    triggered_by: int
-    model_config = ConfigDict(populate_by_name=True)
