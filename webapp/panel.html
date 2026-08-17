@@ -177,6 +177,26 @@
     padding: 11px 12px; border-radius: 10px; outline:none;
   }
   input:focus, select:focus{ border-color: var(--brass); }
+  input.input-error, input.input-error:focus{ border-color: var(--red); }
+  .field-error{
+    display:none; font-size:12px; color: var(--red); margin-top:6px;
+  }
+  .field-error.show{ display:block; }
+
+  .ts-item{
+    display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
+    padding: 10px 0; border-bottom: 1px solid var(--hairline);
+  }
+  .ts-item:last-child{ border-bottom:none; }
+  .ts-item .ts-info .ts-platform{ font-size:13px; font-weight:600; color: var(--text); }
+  .ts-item .ts-info .ts-url{ font-size:12px; color: var(--brass); word-break: break-all; }
+  .ts-item .ts-actions{ display:flex; gap:6px; flex:0 0 auto; }
+  .ts-icon-btn{
+    width:30px; height:30px; border-radius:8px; border:1px solid var(--hairline);
+    background: var(--panel-raised); color: var(--text-dim); font-size:13px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .ts-icon-btn.danger{ color: var(--red); border-color: rgba(226,104,92,.3); }
 
   .btn{
     font-family: var(--body); font-weight:600; font-size:13.5px;
@@ -364,11 +384,154 @@
     return data;
   }
 
+  // ---- bKash/Nagad account number validation (mirrors validators.py) --
+
+  function normalizeBDMobile(raw) {
+    let s = String(raw == null ? "" : raw).replace(/[\s\-]/g, "");
+    if (s.startsWith("+880")) s = "0" + s.slice(4);
+    else if (s.startsWith("880") && s.length === 13) s = "0" + s.slice(3);
+    return s;
+  }
+
+  function bdMobileError(raw) {
+    const s = normalizeBDMobile(raw);
+    if (!s) return "Account number is required.";
+    if (!/^\d+$/.test(s)) return "Account number must contain digits only, e.g. 017XXXXXXXX.";
+    if (s.length !== 11) return `A bKash/Nagad number must be exactly 11 digits (got ${s.length}).`;
+    if (!/^01[3-9]/.test(s)) return "Enter a valid bKash/Nagad number — it must start with 013, 014, 015, 016, 017, 018 or 019.";
+    return null;
+  }
+
+  // Wires an account-number <input> + adjacent <div class="field-error">
+  // to validate on submit and clear the error state as the user retypes.
+  function setFieldError(inputEl, errEl, message) {
+    if (message) {
+      inputEl.classList.add("input-error");
+      errEl.textContent = message;
+      errEl.classList.add("show");
+    } else {
+      inputEl.classList.remove("input-error");
+      errEl.classList.remove("show");
+    }
+  }
+
   function secondsToClock(s) {
     s = Math.max(0, s | 0);
     const h = Math.floor(s / 3600);
     const m = Math.floor((s % 3600) / 60);
     return h + "h " + m + "m";
+  }
+
+  // ---- Traffic Sources: shared list + add/edit form (multiple sources) -
+
+  const TS_PLATFORMS = ["Telegram", "YouTube", "Facebook", "TikTok", "Other"];
+
+  // `prefix` namespaces element ids so this can be dropped into more than
+  // one tab (the dedicated "traffic" tab and the Profile tab) without id
+  // collisions, since only one of those is ever on screen at a time.
+  function trafficSourceSectionHTML(prefix, sources) {
+    const listHtml = (sources && sources.length)
+      ? sources.map((s) => `
+          <div class="ts-item">
+            <div class="ts-info">
+              <div class="ts-platform">${esc(s.platform)}</div>
+              <div class="ts-url"><a href="${esc(s.url)}" target="_blank" style="color:var(--brass); text-decoration:none;">${esc(s.url)}</a></div>
+            </div>
+            <div class="ts-actions">
+              <button class="ts-icon-btn ${prefix}EditBtn" data-id="${s.id}" title="Edit">✏️</button>
+              <button class="ts-icon-btn danger ${prefix}DelBtn" data-id="${s.id}" title="Remove">🗑</button>
+            </div>
+          </div>
+        `).join("")
+      : `<div class="empty" style="padding:14px 4px;">No traffic sources yet — add at least one before creating links.</div>`;
+    return `
+      <div class="card">
+        <h3>Traffic Sources</h3>
+        <div class="meta">Where you'll share your short links — the Owner sees all of these alongside your withdrawal requests. Add as many as you use, and update any of them any time.</div>
+        <div id="${prefix}List" style="margin-top:6px;">${listHtml}</div>
+      </div>
+      <div class="card">
+        <h3 id="${prefix}FormTitle">Add a traffic source</h3>
+        <label>Platform</label>
+        <select id="${prefix}Platform">
+          ${TS_PLATFORMS.map((p) => `<option value="${p}">${p}</option>`).join("")}
+        </select>
+        <label>Channel / group / profile link</label>
+        <input type="url" id="${prefix}Url" placeholder="https://t.me/yourchannel" />
+        <div class="btn-row">
+          <button class="btn btn-primary btn-block" id="${prefix}Save">Add source</button>
+          <button class="btn btn-outline" id="${prefix}Cancel" style="display:none;">Cancel</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // `afterChange` is called (and expected to fully re-render the tab) once
+  // an add/edit/delete succeeds, so this never has to reconcile state by
+  // hand — it just asks the caller to redraw from the fresh /api/me data.
+  function wireTrafficSourceSection(el, prefix, afterChange) {
+    let editingId = null;
+    const platformSel = el.querySelector(`#${prefix}Platform`);
+    const urlInput = el.querySelector(`#${prefix}Url`);
+    const saveBtn = el.querySelector(`#${prefix}Save`);
+    const cancelBtn = el.querySelector(`#${prefix}Cancel`);
+    const titleEl = el.querySelector(`#${prefix}FormTitle`);
+
+    function setFormMode(source) {
+      editingId = source ? source.id : null;
+      titleEl.textContent = source ? "Edit traffic source" : "Add a traffic source";
+      saveBtn.textContent = source ? "Save changes" : "Add source";
+      cancelBtn.style.display = source ? "" : "none";
+      platformSel.value = source && TS_PLATFORMS.includes(source.platform) ? source.platform : "Telegram";
+      urlInput.value = source ? source.url : "";
+    }
+
+    el.querySelectorAll(`.${prefix}EditBtn`).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const source = (state.me.traffic_sources || []).find((s) => s.id === btn.dataset.id);
+        if (source) setFormMode(source);
+      });
+    });
+
+    el.querySelectorAll(`.${prefix}DelBtn`).forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/traffic-sources/${btn.dataset.id}`, { method: "DELETE" });
+          toast("Traffic source removed", "ok");
+          await loadMe();
+          afterChange();
+        } catch (e) {
+          toast(e.message, "err");
+          btn.disabled = false;
+        }
+      });
+    });
+
+    cancelBtn.addEventListener("click", () => setFormMode(null));
+
+    saveBtn.addEventListener("click", async () => {
+      const platform = platformSel.value;
+      const url = urlInput.value.trim();
+      if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
+      saveBtn.disabled = true;
+      saveBtn.textContent = editingId ? "Saving…" : "Adding…";
+      try {
+        if (editingId) {
+          await api(`/api/traffic-sources/${editingId}`, { method: "PUT", body: JSON.stringify({ platform, url }) });
+          toast("Traffic source updated", "ok");
+        } else {
+          await api("/api/traffic-sources", { method: "POST", body: JSON.stringify({ platform, url }) });
+          toast("Traffic source added", "ok");
+        }
+        await loadMe();
+        afterChange();
+      } catch (e) {
+        toast(e.message, "err");
+        saveBtn.disabled = false;
+        saveBtn.textContent = editingId ? "Save changes" : "Add source";
+      }
+    });
   }
 
   // ---- navigation: owner top tabs, admin bottom nav, owner drawer -----
@@ -586,11 +749,11 @@
     const confirmedViews = state.links.reduce((s, l) => s + (l.confirmed_views || 0), 0);
     const totalViews = state.links.reduce((s, l) => s + (l.view_count || 0), 0);
     el.innerHTML = `
-      ${!state.me.traffic_source_url ? `
+      ${!(state.me.traffic_sources && state.me.traffic_sources.length) ? `
         <div class="card" style="border-color: rgba(226,104,92,.35);">
-          <h3 style="color:var(--red);">⚠️ Traffic Source not set</h3>
-          <div class="meta">You need this before you can create any short links.</div>
-          <div class="btn-row"><button class="btn btn-primary btn-block" id="ctaTraffic">Set Traffic Source</button></div>
+          <h3 style="color:var(--red);">⚠️ No Traffic Source yet</h3>
+          <div class="meta">Add at least one before you can create any short links.</div>
+          <div class="btn-row"><button class="btn btn-primary btn-block" id="ctaTraffic">Add Traffic Source</button></div>
         </div>` : ""}
       <div class="section-title">At a glance</div>
       <div class="stat-grid">
@@ -620,59 +783,21 @@
 
   async function renderTraffic(el) {
     await loadMe();
-    const platforms = ["Telegram", "YouTube", "Facebook", "TikTok", "Other"];
-    el.innerHTML = `
-      <div class="card">
-        <h3>Your Traffic Source</h3>
-        <div class="meta">Where you'll share your short links — the Owner sees this alongside your withdrawal requests.</div>
-        ${state.me.traffic_source_url
-          ? `<div class="meta" style="margin-top:8px;">Current: <b style="color:var(--text)">${esc(state.me.traffic_source_platform)}</b> —
-              <a href="${esc(state.me.traffic_source_url)}" target="_blank" style="color:var(--brass);">${esc(state.me.traffic_source_url)}</a></div>`
-          : `<div class="meta" style="color:var(--red); margin-top:8px;">Not set yet — you can't create links until this is set.</div>`}
-        <label>Platform</label>
-        <select id="tsPlatform">
-          ${platforms.map((p) => `<option value="${p}">${p}</option>`).join("")}
-        </select>
-        <label>Channel / group / profile link</label>
-        <input type="url" id="tsUrl" placeholder="https://t.me/yourchannel" value="${esc(state.me.traffic_source_url || "")}" />
-        <div class="btn-row"><button class="btn btn-primary btn-block" id="tsSave">Save Traffic Source</button></div>
-      </div>
-    `;
-    const sel = el.querySelector("#tsPlatform");
-    if (state.me.traffic_source_platform && platforms.includes(state.me.traffic_source_platform)) {
-      sel.value = state.me.traffic_source_platform;
-    }
-    el.querySelector("#tsSave").addEventListener("click", async () => {
-      const platform = sel.value;
-      const url = el.querySelector("#tsUrl").value.trim();
-      if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
-      const btn = el.querySelector("#tsSave");
-      btn.disabled = true; btn.textContent = "Saving…";
-      try {
-        await api("/api/traffic-source", { method: "POST", body: JSON.stringify({ platform, url }) });
-        toast("Traffic Source saved", "ok");
-        await loadMe();
-        renderTopCard();
-        renderTab();
-      } catch (e) {
-        toast(e.message, "err");
-      } finally {
-        btn.disabled = false; btn.textContent = "Save Traffic Source";
-      }
-    });
+    el.innerHTML = trafficSourceSectionHTML("ts", state.me.traffic_sources);
+    wireTrafficSourceSection(el, "ts", () => { renderTopCard(); renderTraffic(el); });
   }
 
   // ---- Short Link (quick create) -----------------------------------
 
   async function renderQuickLink(el) {
     await loadMe();
-    if (!state.me.traffic_source_url) {
+    if (!(state.me.traffic_sources && state.me.traffic_sources.length)) {
       el.innerHTML = `
         <div class="card" style="border-color: rgba(226,104,92,.35);">
           <div class="empty" style="padding:14px 4px; color:var(--red);">
-            Set your Traffic Source before you can create links.
+            Add a Traffic Source before you can create links.
           </div>
-          <button class="btn btn-primary btn-block" id="goProfile">Set Traffic Source</button>
+          <button class="btn btn-primary btn-block" id="goProfile">Add Traffic Source</button>
         </div>
       `;
       el.querySelector("#goProfile").addEventListener("click", () => {
@@ -717,13 +842,13 @@
     await loadLinks();
     await loadMe();
 
-    if (!state.me.traffic_source_url) {
+    if (!(state.me.traffic_sources && state.me.traffic_sources.length)) {
       el.innerHTML = `
         <div class="card" style="border-color: rgba(226,104,92,.35);">
           <div class="empty" style="padding:14px 4px; color:var(--red);">
-            Set your Traffic Source before you can create links.
+            Add a Traffic Source before you can create links.
           </div>
-          <button class="btn btn-primary btn-block" id="goProfile">Set Traffic Source</button>
+          <button class="btn btn-primary btn-block" id="goProfile">Add Traffic Source</button>
         </div>
         <div class="section-title">My links</div>
         <div id="linksList"></div>
@@ -776,7 +901,8 @@
           <option value="nagad">Nagad</option>
         </select>
         <label>Account number</label>
-        <input type="text" id="wAccount" placeholder="01XXXXXXXXX" />
+        <input type="text" id="wAccount" inputmode="numeric" placeholder="01XXXXXXXXX (11 digits)" />
+        <div class="field-error" id="wAccountErr"></div>
         <label>Amount</label>
         <input type="number" id="wAmount" min="0" step="0.01" placeholder="0.00" />
         <div class="btn-row"><button class="btn btn-primary btn-block" id="wSubmit">Submit request</button></div>
@@ -784,23 +910,34 @@
       <div class="section-title">History</div>
       <div id="wHistory"></div>
     `;
+    const accountInput = el.querySelector("#wAccount");
+    const accountErr = el.querySelector("#wAccountErr");
+    accountInput.addEventListener("input", () => setFieldError(accountInput, accountErr, null));
     el.querySelector("#wSubmit").addEventListener("click", async () => {
       const method = el.querySelector("#wMethod").value;
-      const account_number = el.querySelector("#wAccount").value.trim();
+      const account_number = accountInput.value.trim();
       const amount = parseFloat(el.querySelector("#wAmount").value);
-      if (!account_number) { toast("Enter an account number", "err"); return; }
+      const accountError = bdMobileError(account_number);
+      if (accountError) {
+        setFieldError(accountInput, accountErr, accountError);
+        toast(accountError, "err");
+        accountInput.focus();
+        return;
+      }
+      setFieldError(accountInput, accountErr, null);
       if (!(amount > 0)) { toast("Enter a valid amount", "err"); return; }
       if (amount > state.me.balance_confirmed) { toast("Amount exceeds your confirmed balance", "err"); return; }
       const btn = el.querySelector("#wSubmit");
       btn.disabled = true; btn.textContent = "Submitting…";
       try {
-        await api("/api/withdraw", { method: "POST", body: JSON.stringify({ method, account_number, amount }) });
+        await api("/api/withdraw", { method: "POST", body: JSON.stringify({ method, account_number: normalizeBDMobile(account_number), amount }) });
         toast("Withdrawal requested — the Owner has been notified", "ok");
         await loadMe();
         await loadMyWithdrawals();
         renderWithdrawHistory();
         renderTopCard();
       } catch (e) {
+        setFieldError(accountInput, accountErr, e.message);
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Submit request";
@@ -833,7 +970,6 @@
 
   async function renderProfile(el) {
     await Promise.all([loadMe(), loadMyWithdrawals()]);
-    const platforms = ["Telegram", "YouTube", "Facebook", "TikTok", "Other"];
     const paidTotal = state.withdrawals
       .filter((w) => w.status === "paid")
       .reduce((s, w) => s + w.amount, 0);
@@ -854,21 +990,8 @@
         <div class="stat-box"><div class="n">${fmt(paidTotal)}</div><div class="l">Withdrawn</div></div>
       </div>
 
-      <div class="section-title" style="margin-top:18px;">Traffic Source</div>
-      <div class="card">
-        <div class="meta">Where you'll share your short links — the Owner sees this alongside your withdrawal requests.</div>
-        ${state.me.traffic_source_url
-          ? `<div class="meta" style="margin-top:8px;">Current: <b style="color:var(--text)">${esc(state.me.traffic_source_platform)}</b> —
-              <a href="${esc(state.me.traffic_source_url)}" target="_blank" style="color:var(--brass);">${esc(state.me.traffic_source_url)}</a></div>`
-          : `<div class="meta" style="color:var(--red); margin-top:8px;">Not set yet — required before you can create links.</div>`}
-        <label>Platform</label>
-        <select id="pTsPlatform">
-          ${platforms.map((p) => `<option value="${p}">${p}</option>`).join("")}
-        </select>
-        <label>Channel / group / profile link</label>
-        <input type="url" id="pTsUrl" placeholder="https://t.me/yourchannel" value="${esc(state.me.traffic_source_url || "")}" />
-        <div class="btn-row"><button class="btn btn-primary btn-block" id="pTsSave">Save Traffic Source</button></div>
-      </div>
+      <div class="section-title" style="margin-top:18px;">Traffic Sources</div>
+      ${trafficSourceSectionHTML("pTs", state.me.traffic_sources)}
 
       <div class="section-title" style="margin-top:18px;">Withdraw</div>
       <div class="card">
@@ -879,7 +1002,8 @@
           <option value="nagad">Nagad</option>
         </select>
         <label>Account number</label>
-        <input type="text" id="pWAccount" placeholder="01XXXXXXXXX" />
+        <input type="text" id="pWAccount" inputmode="numeric" placeholder="01XXXXXXXXX (11 digits)" />
+        <div class="field-error" id="pWAccountErr"></div>
         <label>Amount</label>
         <input type="number" id="pWAmount" min="0" step="0.01" placeholder="0.00" />
         <div class="btn-row"><button class="btn btn-primary btn-block" id="pWSubmit">Submit request</button></div>
@@ -888,43 +1012,35 @@
       <div id="pWHistory"></div>
     `;
 
-    const sel = el.querySelector("#pTsPlatform");
-    if (state.me.traffic_source_platform && platforms.includes(state.me.traffic_source_platform)) {
-      sel.value = state.me.traffic_source_platform;
-    }
-    el.querySelector("#pTsSave").addEventListener("click", async () => {
-      const platform = sel.value;
-      const url = el.querySelector("#pTsUrl").value.trim();
-      if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
-      const btn = el.querySelector("#pTsSave");
-      btn.disabled = true; btn.textContent = "Saving…";
-      try {
-        await api("/api/traffic-source", { method: "POST", body: JSON.stringify({ platform, url }) });
-        toast("Traffic Source saved", "ok");
-        renderTopCard();
-        renderTab();
-      } catch (e) {
-        toast(e.message, "err");
-      } finally {
-        btn.disabled = false; btn.textContent = "Save Traffic Source";
-      }
-    });
+    wireTrafficSourceSection(el, "pTs", () => { renderTopCard(); renderProfile(el); });
+
+    const pAccountInput = el.querySelector("#pWAccount");
+    const pAccountErr = el.querySelector("#pWAccountErr");
+    pAccountInput.addEventListener("input", () => setFieldError(pAccountInput, pAccountErr, null));
 
     el.querySelector("#pWSubmit").addEventListener("click", async () => {
       const method = el.querySelector("#pWMethod").value;
-      const account_number = el.querySelector("#pWAccount").value.trim();
+      const account_number = pAccountInput.value.trim();
       const amount = parseFloat(el.querySelector("#pWAmount").value);
-      if (!account_number) { toast("Enter an account number", "err"); return; }
+      const accountError = bdMobileError(account_number);
+      if (accountError) {
+        setFieldError(pAccountInput, pAccountErr, accountError);
+        toast(accountError, "err");
+        pAccountInput.focus();
+        return;
+      }
+      setFieldError(pAccountInput, pAccountErr, null);
       if (!(amount > 0)) { toast("Enter a valid amount", "err"); return; }
       if (amount > state.me.balance_confirmed) { toast("Amount exceeds your confirmed balance", "err"); return; }
       const btn = el.querySelector("#pWSubmit");
       btn.disabled = true; btn.textContent = "Submitting…";
       try {
-        await api("/api/withdraw", { method: "POST", body: JSON.stringify({ method, account_number, amount }) });
+        await api("/api/withdraw", { method: "POST", body: JSON.stringify({ method, account_number: normalizeBDMobile(account_number), amount }) });
         toast("Withdrawal requested — the Owner has been notified", "ok");
         renderTopCard();
         renderTab();
       } catch (e) {
+        setFieldError(pAccountInput, pAccountErr, e.message);
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Submit request";
@@ -974,8 +1090,8 @@
         <div class="meta">Admin: ${esc(w.admin_username ? "@" + w.admin_username : "id " + w.admin_telegram_id)}</div>
         <div class="meta">Account: ${esc(w.account_number)}</div>
         <div class="meta">Requested ${esc(new Date(w.created_at).toLocaleString())}</div>
-        ${w.traffic_source_url
-          ? `<div class="meta">Traffic Source: <a href="${esc(w.traffic_source_url)}" target="_blank" style="color:var(--brass);">${esc(w.traffic_source_platform)} — view ↗</a></div>`
+        ${(w.traffic_sources && w.traffic_sources.length)
+          ? w.traffic_sources.map((s) => `<div class="meta">Traffic Source: <a href="${esc(s.url)}" target="_blank" style="color:var(--brass);">${esc(s.platform)} — view ↗</a></div>`).join("")
           : `<div class="meta" style="color:var(--red);">No Traffic Source on file</div>`}
         <div class="btn-row">
           <button class="btn btn-success btn-sm payBtn" data-id="${w.request_id}">Mark paid</button>
@@ -1067,9 +1183,9 @@
         </div>
         <div class="meta">${a.role === "owner" ? "Owner" : "Admin"} · <code>${a.telegram_id}</code></div>
         <div class="meta">Confirmed: ${fmt(a.balance_confirmed)}</div>
-        ${a.traffic_source_url
-          ? `<div class="meta">Traffic Source: <a href="${esc(a.traffic_source_url)}" target="_blank" style="color:var(--brass);">${esc(a.traffic_source_platform)} — view ↗</a></div>`
-          : `<div class="meta" style="color:var(--text-faint);">Traffic Source not set</div>`}
+        ${(a.traffic_sources && a.traffic_sources.length)
+          ? a.traffic_sources.map((s) => `<div class="meta">Traffic Source: <a href="${esc(s.url)}" target="_blank" style="color:var(--brass);">${esc(s.platform)} — view ↗</a></div>`).join("")
+          : `<div class="meta" style="color:var(--text-faint);">No Traffic Source on file</div>`}
         ${a.role !== "owner" ? `
           <div class="btn-row">
             ${a.status === "active"
