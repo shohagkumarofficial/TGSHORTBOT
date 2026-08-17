@@ -23,7 +23,12 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 import cpm_engine
-from bot import build_bot_and_dispatcher, notify_owner_of_withdrawal, register_handlers
+from bot import (
+    build_bot_and_dispatcher,
+    notify_admin_of_withdrawal_resolution,
+    notify_owner_of_withdrawal,
+    register_handlers,
+)
 from config import get_settings
 from models import Admin, AdminStatus, CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
 from storage import Storage
@@ -380,6 +385,9 @@ async def admin_resolve_withdrawal(request_id: str, payload: dict, owner: Admin 
     req = await storage.resolve_withdrawal(request_id, status_enum, reason)
     if not req:
         raise HTTPException(status_code=404, detail="withdrawal not found or already resolved")
+    requester = await storage.get_admin(req.admin_telegram_id)
+    if requester:
+        await notify_admin_of_withdrawal_resolution(bot, settings, requester, req)
     return req.model_dump()
 
 

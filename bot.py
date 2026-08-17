@@ -29,7 +29,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from models import CountedStatus, CPMMode, Role, WithdrawMethod
+from models import CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
 
 logger = logging.getLogger("bot")
 
@@ -98,6 +98,34 @@ async def notify_owner_of_withdrawal(bot: Bot, settings, admin, req) -> None:
         await bot.send_message(settings.OWNER_TELEGRAM_ID, text, reply_markup=kb)
     except Exception:
         logger.exception("failed to notify owner about withdrawal request")
+
+
+async def notify_admin_of_withdrawal_resolution(bot: Bot, settings, admin, req) -> None:
+    """Pings the *requesting* Admin's Telegram chat the moment the Owner
+    resolves their withdrawal — Paid or Rejected — so they find out
+    immediately instead of having to keep re-opening the panel.
+    """
+    method_label = "bKash" if req.method.value == "bkash" else "Nagad"
+    if req.status == WithdrawStatus.PAID:
+        text = (
+            "✅ <b>আপনার টাকা পাঠানো হয়েছে</b>\n\n"
+            f"পরিমাণ: <b>{req.amount:.2f}</b>\n"
+            f"পদ্ধতি: {method_label}\n"
+            f"অ্যাকাউন্ট: <code>{req.account_number}</code>\n\n"
+            f"আপনার {method_label} অ্যাকাউন্টে পেমেন্টটি চেক করুন।"
+        )
+    else:
+        reason_line = f"\nকারণ: {req.reject_reason}" if req.reject_reason else ""
+        text = (
+            "❌ <b>আপনার উইথড্র রিকোয়েস্টটি প্রত্যাখ্যান করা হয়েছে</b>\n\n"
+            f"পরিমাণ: <b>{req.amount:.2f}</b>\n"
+            f"পদ্ধতি: {method_label}{reason_line}\n\n"
+            "বিস্তারিত জানতে Owner-এর সাথে যোগাযোগ করুন।"
+        )
+    try:
+        await bot.send_message(admin.telegram_id, text)
+    except Exception:
+        logger.exception("failed to notify admin about withdrawal resolution")
 
 
 def register_handlers(dp: Dispatcher, storage, settings) -> None:

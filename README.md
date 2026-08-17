@@ -68,7 +68,10 @@ committed, so there's nothing to conflict with in version control.
   a Telegram DM with the amount, method, account number, and a link to
   the requester's Traffic Source, plus a button into the panel. Owner
   marks Paid/Rejected in the panel's Withdrawals queue; balance is only
-  deducted on Paid.
+  deducted on Paid. The moment the Owner resolves it, the *requesting*
+  Admin gets a Telegram DM back — confirming the payment (and account
+  it was sent to) on Paid, or the reason on Rejected — so they know
+  their money is on its way without having to re-check the panel.
 
 ## Dashboard layout
 
@@ -81,10 +84,12 @@ re-skinned:
   admins, current CPM) instead of a personal balance card, and three
   primary tabs: Overview, Withdrawals (the queue, with a badge showing
   the pending count), and Admins (each with their Traffic Source visible
-  and a suspend/reactivate toggle). Less-frequent configuration —
-  the Owner's own My Links / Traffic Source / Withdraw, CPM Settings, and
-  Platform Stats — lives behind the ⋮ menu at the top right, as a
-  bottom-sheet drawer, instead of cluttering the main tab bar.
+  and a suspend/reactivate toggle). The Owner's own personal actions —
+  My Links, Traffic Source, and Request Withdrawal — are listed right on
+  the Overview tab as a simple stacked list, since the Owner uses these
+  just like any Admin would. Only genuine platform-level configuration —
+  CPM Settings and Platform Stats — lives behind the ⚙️ menu at the top
+  right, as a bottom-sheet drawer, instead of cluttering the main tab bar.
 
 ## Local setup
 
