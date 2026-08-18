@@ -91,7 +91,11 @@ re-skinned:
   admins, current CPM) instead of a personal balance card, and three
   primary tabs: Overview, Withdrawals (the queue, with a badge showing
   the pending count), and Admins (each with all of their Traffic Sources
-  visible and a suspend/reactivate toggle). The Owner's own personal
+  visible and a suspend/reactivate toggle). Tapping an Admin opens a
+  detail view — today's income, lifetime income, confirmed balance,
+  total withdrawn, pending views/withdrawals, link and view counts — plus
+  a manual balance-correction tool for undoing fraud or fixing a mistake
+  (see "Owner balance corrections" below). The Owner's own personal
   actions — My Links, Traffic Sources, and Request Withdrawal — are
   listed right on the Overview tab as a simple stacked list, since the
   Owner uses these just like any Admin would. Only genuine platform-level
@@ -99,13 +103,41 @@ re-skinned:
   CPM Settings and Platform Stats — lives behind the ⚙️ menu at the top
   right, as a bottom-sheet drawer, instead of cluttering the main tab bar.
 
+## Owner balance corrections
+
+From an Admin's detail view (Admins tab → tap an Admin), the Owner can
+set that Admin's confirmed balance to any value — e.g. to claw back a
+suspicious credit or fix a mistake. This is a deliberately heavyweight
+action:
+
+- The panel shows the exact change (`old → new`, with the delta) and
+  requires the Owner to type the literal word `CONFIRM` before the
+  "Apply change" button enables — this is enforced again server-side
+  (`POST /api/admin/admins/{id}/balance` rejects the request unless
+  `confirm_text` is exactly `"CONFIRM"`), so the safeguard can't be
+  skipped by calling the API directly.
+- An optional reason can be attached for your own records.
+- The affected Admin is **not** notified — this is a private Owner-side
+  tool, not a withdrawal action — but every change is permanently logged
+  (`cpm_history`, event `balance_adjustment`: old value, new value,
+  reason, who did it, when) and shown back in that Admin's detail view
+  under "Balance adjustment history", so nothing here is a silent edit.
+
+The same detail view also surfaces today's income and lifetime income
+per Admin, computed from each view's own `credited_amount` (see
+"Per-view income tracking" below) rather than just the current balance
+— so the numbers stay trustworthy even after a manual correction, which
+is the whole point of having them for fraud-watching in the first place.
+
 ## Local setup
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and grab both
    the token and the bot's `@username`.
 2. Get your numeric Telegram ID from [@userinfobot](https://t.me/userinfobot)
    — this is your `OWNER_TELEGRAM_ID`.
-3. Get an Adsgram block ID from your Adsgram dashboard.
+3. Get an Adsgram block ID from your Adsgram dashboard — create it as a
+   **Reward** (or Interstitial) block, not a Task block; see "Adsgram
+   integration notes" below for why.
 4. Copy `.env.example` to `.env` and fill in the values. For local dev,
    `WEBHOOK_URL`/`WEBAPP_BASE_URL` need to be a publicly reachable HTTPS
    URL (e.g. via `ngrok http 8000`), since Telegram can't call `localhost`
@@ -127,6 +159,30 @@ re-skinned:
 
 6. Message your bot `/start` from your Owner account, then `/newlink` to
    try the full loop.
+
+## Adsgram integration notes
+
+`webapp/viewer.html` calls `window.Adsgram.init({ blockId }).show()` —
+per Adsgram's own docs, this exact call is shared by both **Reward** and
+**Interstitial** block types, so no code changes are needed for either.
+The two differ in one important way for this app's payout model: an
+Interstitial block can resolve `.show()` successfully even if the viewer
+closes the ad early, while a Reward block only resolves once the ad is
+watched in full. Since a resolved `.show()` here directly triggers a
+credited view (and therefore money owed to the Admin), **create the
+Adsgram block as Reward, not Interstitial** — otherwise a viewer who
+skips the ad can still trigger a payout that Adsgram itself may not
+compensate for. Avoid Task-type blocks entirely for this flow; they use
+a completely different `<adsgram-task>` embed, not `.show()`, and are
+meant for one-off actions rather than a repeated "watch 3 ads" loop.
+
+The bare root domain (`https://tgshortbot.onrender.com`, no path) is the
+one registered with both BotFather (as the bot's Mini App / menu button
+URL) and Adsgram (as the platform's Web App URL) — `GET /` just redirects
+to `/panel`. Both `/panel` and `/r/{code}` already live under this same
+origin, so this is about having one stable, canonical URL to register
+externally rather than a functional requirement; it doesn't change who
+can access what, since role is still decided server-side by Telegram ID.
 
 ## Deploying to Render
 
@@ -159,8 +215,9 @@ re-skinned:
 - All balance math happens server-side only, inside `storage.py` and
   `cpm_engine.py` — the Mini App frontends never compute or submit a
   balance figure.
-- Every CPM change, Traffic Source update, and cycle payout is appended to
-  an in-memory + persisted audit log (`cpm_history` in `store.json`).
+- Every CPM change, Traffic Source update, cycle payout, and manual
+  balance correction is appended to an in-memory + persisted audit log
+  (`cpm_history` in `store.json`).
 
 ## Notes on a few implementation decisions
 
@@ -192,12 +249,30 @@ re-skinned:
   invalid number is rejected with an inline error before a request is
   ever created — both in the bot chat and as a popup + red-highlighted
   field in the panel.
+- **Per-view income tracking**: `View` now carries `credited_amount` and
+  `credited_at`, filled in by `cpm_engine.py` the moment a view's status
+  becomes CONFIRMED (immediately in Real-time mode; at cycle-close time
+  in Scheduled mode, since the rate isn't known any earlier). This is
+  what makes the Owner's per-Admin "today's income" / "lifetime income"
+  figures possible — without it, only the current balance total would be
+  recoverable, with no way to say how much of it came from today. A
+  still-`pending_payout` view has `credited_amount: null` until its cycle
+  closes; the Admin detail view shows those separately as an *estimated*
+  pending amount (view count × the current CPM rate) rather than
+  pretending to know the exact figure early.
+- **Copy buttons on short links**: both the "Create a short link" result
+  and every row in "My Links" now have a Copy button
+  (`navigator.clipboard`, with a `document.execCommand("copy")` fallback
+  for older WebViews) — there was previously no way to copy a generated
+  link without manually selecting the text.
 - **A few extra API endpoints** beyond a literal reading of the PRD's
   Section 9.4 table were added because the panel Mini App genuinely
   needs them: `GET /api/me`, `GET /api/withdrawals/mine`,
   `GET/POST /api/traffic-sources` + `PUT/DELETE /api/traffic-sources/{id}`,
-  and `POST /api/admin/admins/{id}/status` (ban/unban, called out as an
-  Owner capability in Section 2).
+  `POST /api/admin/admins/{id}/status` (ban/unban, called out as an
+  Owner capability in Section 2), and `GET /api/admin/admins/{id}` +
+  `POST /api/admin/admins/{id}/balance` for the Owner's per-Admin detail
+  view and balance-correction tool.
 
 ## Out of scope (unchanged from the PRD)
 

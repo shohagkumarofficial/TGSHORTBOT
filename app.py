@@ -19,7 +19,7 @@ from typing import Optional
 
 from aiogram.types import Update
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import cpm_engine
@@ -119,6 +119,18 @@ async def require_owner(admin: Admin = Depends(require_admin)) -> Admin:
 async def health():
     """Keeps Render's free-tier service awake (NFR, Section 6)."""
     return {"ok": True}
+
+
+@app.get("/")
+async def root():
+    """The bare domain is the canonical URL registered with BotFather and
+    with Adsgram (both `/panel` and `/r/{code}` already live under this
+    same origin, so this is purely about having one stable, memorable
+    root URL rather than a path — it doesn't change what anyone can
+    access, since role is still decided server-side by Telegram ID, not
+    by which URL was opened).
+    """
+    return RedirectResponse(url="/panel")
 
 
 @app.post("/webhook")
@@ -445,6 +457,41 @@ async def list_all_admins(owner: Admin = Depends(require_owner)):
     admins = await storage.list_admins()
     admins.sort(key=lambda a: a.created_at)
     return {"admins": [a.model_dump() for a in admins]}
+
+
+@app.get("/api/admin/admins/{telegram_id}")
+async def admin_detail(telegram_id: int, owner: Admin = Depends(require_owner)):
+    stats = await storage.admin_stats(telegram_id)
+    if not stats:
+        raise HTTPException(status_code=404, detail="admin not found")
+    stats["balance_adjustments"] = await storage.list_balance_adjustments(telegram_id)
+    return stats
+
+
+@app.post("/api/admin/admins/{telegram_id}/balance")
+async def edit_admin_balance(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
+    """Manually corrects an Admin's confirmed balance. Requires the
+    literal string "CONFIRM" in `confirm_text` — this mirrors the
+    two-step confirmation the panel UI walks the Owner through, enforced
+    again here so the safeguard can't be skipped by calling the API
+    directly. The change is always logged (see storage.set_admin_balance)
+    and the affected Admin is *not* notified — this is a private
+    Owner-side correction tool, not a withdrawal action.
+    """
+    try:
+        new_balance = float(payload.get("new_balance"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="new_balance must be a number")
+    if new_balance < 0:
+        raise HTTPException(status_code=400, detail="new_balance cannot be negative")
+    if payload.get("confirm_text") != "CONFIRM":
+        raise HTTPException(status_code=400, detail='type CONFIRM to apply this balance change')
+
+    reason = (payload.get("reason") or "").strip() or None
+    admin = await storage.set_admin_balance(telegram_id, new_balance, reason, owner.telegram_id)
+    if not admin:
+        raise HTTPException(status_code=404, detail="admin not found")
+    return admin.model_dump()
 
 
 @app.post("/api/admin/admins/{telegram_id}/status")

@@ -38,6 +38,8 @@ async def credit_new_view(storage: Storage, view: View, link: Link) -> None:
                 admin.balance_confirmed = round(admin.balance_confirmed + cpm_setting.current_cpm, 6)
             view.counted_status = CountedStatus.CONFIRMED
             view.cpm_cycle_id = cpm_setting.cycle_id
+            view.credited_amount = cpm_setting.current_cpm
+            view.credited_at = now_iso()
         else:
             view.counted_status = CountedStatus.PENDING_PAYOUT
             view.cpm_cycle_id = cpm_setting.cycle_id
@@ -77,6 +79,7 @@ async def maybe_close_cycle(storage: Storage) -> bool:
         rate = cs.current_cpm
         payouts_by_admin: dict[str, float] = {}
         views_paid = 0
+        paid_at = now_iso()
 
         for v in storage.views.values():
             if v.counted_status != CountedStatus.PENDING_PAYOUT or v.cpm_cycle_id != closing_cycle_id:
@@ -97,6 +100,8 @@ async def maybe_close_cycle(storage: Storage) -> bool:
                 key = str(link.owner_telegram_id)
                 payouts_by_admin[key] = round(payouts_by_admin.get(key, 0.0) + rate, 6)
             v.counted_status = CountedStatus.CONFIRMED
+            v.credited_amount = rate
+            v.credited_at = paid_at
             views_paid += 1
 
         # Start the next cycle automatically; the rate carries over until

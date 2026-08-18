@@ -20,6 +20,7 @@ import json
 import os
 import tempfile
 import uuid
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from models import (
@@ -193,6 +194,36 @@ class Storage:
             await self._save_locked()
             return admin
 
+    async def set_admin_balance(
+        self, telegram_id: int, new_balance: float, reason: Optional[str], changed_by: int
+    ) -> Optional[Admin]:
+        """Owner-only manual correction of an Admin's confirmed balance —
+        e.g. to fix a mistake or claw back a fraudulent payout. Always
+        logged to cpm_history (old value, new value, reason, who did it)
+        so this is never a silent, untraceable edit even though the
+        affected Admin isn't notified.
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            old_balance = admin.balance_confirmed
+            admin.balance_confirmed = round(new_balance, 6)
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="balance_adjustment",
+                    detail={
+                        "telegram_id": telegram_id,
+                        "old_balance": old_balance,
+                        "new_balance": admin.balance_confirmed,
+                        "reason": reason,
+                        "by": changed_by,
+                    },
+                )
+            )
+            await self._save_locked()
+            return admin
+
     async def add_traffic_source(self, telegram_id: int, platform: str, url: str) -> Optional[TrafficSource]:
         """Appends one more "where do your viewers come from" entry for
         this Admin. An Admin can hold several at once (one per platform,
@@ -289,6 +320,12 @@ class Storage:
 
     async def list_views_by_short_code(self, short_code: str) -> List[View]:
         return [v for v in self.views.values() if v.short_code == short_code]
+
+    async def list_views_by_owner(self, owner_telegram_id: int) -> List[View]:
+        owned_codes = {l.short_code for l in self.links.values() if l.owner_telegram_id == owner_telegram_id}
+        if not owned_codes:
+            return []
+        return [v for v in self.views.values() if v.short_code in owned_codes]
 
     # ------------------------------------------------------------------
     # Withdrawals
@@ -414,3 +451,68 @@ class Storage:
             "total_confirmed_liability": round(total_confirmed_liability, 4),
             "total_paid_out": round(total_paid_out, 4),
         }
+
+    async def admin_stats(self, telegram_id: int) -> Optional[dict]:
+        """Everything the Owner's per-Admin detail view needs in one call:
+        today's income, lifetime income (computed from each view's own
+        `credited_amount`, not just the current balance — so it stays
+        accurate even after a manual balance correction), withdrawal
+        totals, and link/view counts. This is the read side of the
+        fraud-watching feature; `set_admin_balance` is the write side.
+        """
+        from models import CountedStatus  # local import avoids a cycle at module load
+
+        admin = self.admins.get(telegram_id)
+        if not admin:
+            return None
+
+        views = await self.list_views_by_owner(telegram_id)
+        confirmed_views = [v for v in views if v.counted_status == CountedStatus.CONFIRMED]
+        pending_views = [v for v in views if v.counted_status == CountedStatus.PENDING_PAYOUT]
+
+        today = datetime.now(timezone.utc).date()
+        today_income = 0.0
+        lifetime_income = 0.0
+        for v in confirmed_views:
+            amount = v.credited_amount or 0.0
+            lifetime_income = round(lifetime_income + amount, 6)
+            try:
+                created = datetime.fromisoformat(v.created_at)
+            except ValueError:
+                created = None
+            if created is not None:
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                if created.date() == today:
+                    today_income = round(today_income + amount, 6)
+
+        links = await self.list_links_by_owner(telegram_id)
+
+        admin_withdrawals = [w for w in self.withdrawals.values() if w.admin_telegram_id == telegram_id]
+        total_withdrawn = round(
+            sum(w.amount for w in admin_withdrawals if w.status == WithdrawStatus.PAID), 6
+        )
+        pending_withdrawals = [w for w in admin_withdrawals if w.status == WithdrawStatus.PENDING]
+
+        return {
+            "admin": admin.model_dump(),
+            "today_income": today_income,
+            "lifetime_income": lifetime_income,
+            "total_withdrawn": total_withdrawn,
+            "pending_withdrawal_count": len(pending_withdrawals),
+            "pending_withdrawal_amount": round(sum(w.amount for w in pending_withdrawals), 6),
+            "total_links": len(links),
+            "total_views": len(views),
+            "confirmed_views": len(confirmed_views),
+            "pending_views": len(pending_views),
+            "estimated_pending_amount": round(len(pending_views) * self.cpm_setting.current_cpm, 6),
+        }
+
+    async def list_balance_adjustments(self, telegram_id: int, limit: int = 20) -> List[dict]:
+        entries = [
+            e.model_dump()
+            for e in self.cpm_history
+            if e.event == "balance_adjustment" and e.detail.get("telegram_id") == telegram_id
+        ]
+        entries.sort(key=lambda e: e["created_at"], reverse=True)
+        return entries[:limit]

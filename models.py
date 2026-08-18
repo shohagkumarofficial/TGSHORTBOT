@@ -94,13 +94,25 @@ class Link(BaseModel):
 
 
 class View(BaseModel):
-    """One row per completed 3-ad viewing."""
+    """One row per completed 3-ad viewing.
+
+    `credited_amount` is filled in the moment this view's status becomes
+    CONFIRMED — immediately in Real-time mode, or at cycle-close time in
+    Scheduled mode (since the PRD's no-retroactive-rate-splitting rule
+    means the rate isn't known until the cycle actually closes). It's
+    None for a still-pending view. This is what lets the Owner's
+    per-Admin stats (today's income, lifetime income) be reconstructed
+    accurately after the fact, instead of only ever knowing the current
+    balance total.
+    """
 
     view_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     short_code: str
     viewer_telegram_id: int
     counted_status: CountedStatus = CountedStatus.PENDING_PAYOUT
     cpm_cycle_id: Optional[str] = None
+    credited_amount: Optional[float] = None
+    credited_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 
