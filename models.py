@@ -104,6 +104,14 @@ class View(BaseModel):
     per-Admin stats (today's income, lifetime income) be reconstructed
     accurately after the fact, instead of only ever knowing the current
     balance total.
+
+    `daily_capped` is set once, by cpm_engine.credit_new_view, when this
+    view is the one that crosses the Admin's daily anti-abuse limit
+    (CPMSetting.max_daily_views_per_admin) for its viewer. The viewer
+    still watches all 3 ads as normal; this view is simply routed
+    straight to CONFIRMED with `credited_amount = 0` instead of adding to
+    anyone's balance, so a viewer hammering one Admin's links repeatedly
+    in a day can't keep dragging that Admin's CPM down.
     """
 
     view_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -114,6 +122,7 @@ class View(BaseModel):
     credited_amount: Optional[float] = None
     credited_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
+    daily_capped: bool = False
 
 
 class CPMSetting(BaseModel):
@@ -133,6 +142,16 @@ class CPMSetting(BaseModel):
     allowed to request as a withdrawal. Both `/withdraw` in the bot and the
     panel's withdrawal form reject a request below this amount before it's
     ever created.
+
+    `max_daily_views_per_admin` is the Anti-Abuse System's cap: the most
+    views a single viewer can have *credited* against one Admin's links
+    per calendar day (UTC, same convention `admin_stats` already uses for
+    "today's income"). `0` means no cap. Once a viewer crosses it,
+    cpm_engine.credit_new_view still lets every further view play its 3
+    ads and reach the destination as normal — it just stops adding to
+    that Admin's balance, marking the view `daily_capped` instead, so a
+    single viewer re-opening many of one Admin's links in a day can't
+    keep dragging that Admin's CPM down.
     """
 
     mode: CPMMode = CPMMode.REALTIME
@@ -142,6 +161,7 @@ class CPMSetting(BaseModel):
     cycle_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     ad_view_delay_seconds: float = 7
     min_withdraw_amount: float = 0
+    max_daily_views_per_admin: int = 0
     updated_at: str = Field(default_factory=now_iso)
     updated_by: Optional[int] = None
 

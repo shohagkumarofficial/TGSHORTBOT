@@ -390,12 +390,22 @@ async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner))
         if min_withdraw_amount < 0:
             raise HTTPException(status_code=400, detail="min_withdraw_amount must be >= 0")
 
+    max_daily_views_per_admin = payload.get("max_daily_views_per_admin")
+    if max_daily_views_per_admin is not None:
+        try:
+            max_daily_views_per_admin = int(max_daily_views_per_admin)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="max_daily_views_per_admin must be a whole number")
+        if max_daily_views_per_admin < 0:
+            raise HTTPException(status_code=400, detail="max_daily_views_per_admin must be >= 0")
+
     cs = await storage.update_cpm_setting(
         mode=mode_enum,
         current_cpm=current_cpm,
         cycle_duration_hours=cycle_duration_hours,
         ad_view_delay_seconds=ad_view_delay_seconds,
         min_withdraw_amount=min_withdraw_amount,
+        max_daily_views_per_admin=max_daily_views_per_admin,
         updated_by=owner.telegram_id,
     )
     return cs.model_dump()

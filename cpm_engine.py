@@ -26,13 +26,57 @@ from storage import Storage
 logger = logging.getLogger("cpm_engine")
 
 
+def _is_daily_capped(storage: Storage, view: View, link: Link, max_daily_views: int) -> bool:
+    """Anti-Abuse System check (see CPMSetting.max_daily_views_per_admin).
+
+    Counts how many *other* views this same viewer already has logged
+    today against this same Admin's links (across every link the Admin
+    owns, not just this one — a viewer could otherwise dodge the cap by
+    spreading views across several of the Admin's links) and reports
+    whether the view being credited right now would be the one that
+    crosses the limit. Already-capped views don't count toward this
+    tally, since they never earned anything to begin with.
+
+    Must be called with `storage._lock` already held, so the count and
+    the crediting decision that follows it are atomic — otherwise two
+    views logged in the same instant could each see a count just under
+    the limit and both get credited, letting the cap slip by one.
+    """
+    today = datetime.now(timezone.utc).date()
+    counted_today = 0
+    for other in storage.views.values():
+        if other.view_id == view.view_id or other.daily_capped:
+            continue
+        if other.viewer_telegram_id != view.viewer_telegram_id:
+            continue
+        other_link = storage.links.get(other.short_code)
+        if not other_link or other_link.owner_telegram_id != link.owner_telegram_id:
+            continue
+        created = datetime.fromisoformat(other.created_at)
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created.astimezone(timezone.utc).date() == today:
+            counted_today += 1
+    return counted_today >= max_daily_views
+
+
 async def credit_new_view(storage: Storage, view: View, link: Link) -> None:
     """Call right after a View row is created. Credits it immediately
-    (Real-time mode) or queues it for the current cycle (Scheduled mode).
+    (Real-time mode) or queues it for the current cycle (Scheduled mode)
+    — unless the viewer has already hit this Admin's daily anti-abuse
+    view cap today, in which case the view is logged as watched (the
+    viewer's ads still played and Adsgram still paid out) but earns
+    nothing.
     """
     cpm_setting = await storage.get_cpm_setting()
     async with storage._lock:
-        if cpm_setting.mode == CPMMode.REALTIME:
+        max_daily_views = cpm_setting.max_daily_views_per_admin
+        if max_daily_views > 0 and _is_daily_capped(storage, view, link, max_daily_views):
+            view.counted_status = CountedStatus.CONFIRMED
+            view.credited_amount = 0.0
+            view.credited_at = now_iso()
+            view.daily_capped = True
+        elif cpm_setting.mode == CPMMode.REALTIME:
             admin = storage.admins.get(link.owner_telegram_id)
             if admin:
                 admin.balance_confirmed = round(admin.balance_confirmed + cpm_setting.current_cpm, 6)

@@ -58,7 +58,16 @@ committed, so there's nothing to conflict with in version control.
   (`webapp/viewer.html`) that runs 3 sequential Adsgram ads, then calls
   `POST /api/log-view`, then `GET /api/link/{code}`, then redirects.
 - **Fraud/dedupe** (4.3): one countable view per `(short_code, viewer)`
-  pair, enforced atomically in `storage.create_view`.
+  pair, enforced atomically in `storage.create_view`. On top of that, an
+  **Anti-Abuse System** caps how many views a single viewer can have
+  *credited* against one Admin's links per day
+  (`CPMSetting.max_daily_views_per_admin`, Owner-only, set from the
+  panel's CPM Settings drawer, default `0` = no cap): once a viewer
+  crosses it, `cpm_engine.credit_new_view` still lets every further view
+  play its ads and reach the destination as normal, it just stops adding
+  to that Admin's balance (the `View` row is flagged `daily_capped`
+  instead), so a viewer re-opening many of one Admin's links in a day
+  can't keep dragging that Admin's CPM down.
 - **CPM engine** (4.5 / 9.5): `cpm_engine.py` handles both modes.
   Real-time credits `balance_confirmed` the instant a view is logged.
   Scheduled holds views as `pending_payout`; a background watcher
@@ -305,6 +314,24 @@ can access what, since role is still decided server-side by Telegram ID.
   confirmed balance, and `POST /api/withdraw` enforces it again
   server-side regardless of which frontend was used. Every change to it
   is logged in `cpm_history` the same way a CPM-rate change is.
+- **Anti-abuse daily view cap**: `CPMSetting.max_daily_views_per_admin`
+  (default `0`, meaning no cap) is Owner-only, platform-wide config set
+  from the panel's CPM Settings drawer — same "nowhere else to sit"
+  reasoning as `ad_view_delay_seconds` and `min_withdraw_amount`. It
+  counts per `(Admin, viewer, UTC calendar day)` — every view a viewer
+  has logged today across *all* of that Admin's links, not just one, so
+  spreading views across several links doesn't dodge it. The check and
+  the credit decision happen atomically inside `cpm_engine.
+  credit_new_view`'s existing lock, so two views logged in the same
+  instant can't both slip in just under the limit. A capped view is
+  still marked `CONFIRMED` with `credited_amount: 0` (not left
+  `pending_payout`) since there's nothing left to pay out on it later —
+  it's flagged `daily_capped: true` instead, which is how the Owner's
+  per-Admin detail view and Platform Stats surface a "Daily-capped
+  views" count. The viewer experience in `webapp/viewer.html` is
+  unchanged either way — ads still play and the redirect still happens,
+  since the whole point is that Adsgram gets paid regardless; only the
+  Admin's earning silently stops.
 - **Copy buttons on short links**: both the "Create a short link" result
   and every row in "My Links" now have a Copy button
   (`navigator.clipboard`, with a `document.execCommand("copy")` fallback

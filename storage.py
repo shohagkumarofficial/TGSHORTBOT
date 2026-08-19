@@ -392,6 +392,7 @@ class Storage:
         cycle_duration_hours: Optional[float] = None,
         ad_view_delay_seconds: Optional[float] = None,
         min_withdraw_amount: Optional[float] = None,
+        max_daily_views_per_admin: Optional[int] = None,
         updated_by: Optional[int] = None,
     ) -> CPMSetting:
         async with self._lock:
@@ -425,6 +426,15 @@ class Storage:
                     "to": min_withdraw_amount,
                 }
                 cs.min_withdraw_amount = min_withdraw_amount
+            if (
+                max_daily_views_per_admin is not None
+                and max_daily_views_per_admin != cs.max_daily_views_per_admin
+            ):
+                detail["max_daily_views_per_admin"] = {
+                    "from": cs.max_daily_views_per_admin,
+                    "to": max_daily_views_per_admin,
+                }
+                cs.max_daily_views_per_admin = max_daily_views_per_admin
 
             if reset_cycle:
                 cs.cycle_started_at = now_iso()
@@ -455,6 +465,7 @@ class Storage:
         pending_payout_views = len(
             [v for v in self.views.values() if v.counted_status == CountedStatus.PENDING_PAYOUT]
         )
+        daily_capped_views = len([v for v in self.views.values() if v.daily_capped])
         total_confirmed_liability = sum(a.balance_confirmed for a in self.admins.values())
         total_paid_out = sum(w.amount for w in self.withdrawals.values() if w.status == WithdrawStatus.PAID)
         return {
@@ -462,6 +473,7 @@ class Storage:
             "total_links": len(self.links),
             "total_views": len(self.views),
             "pending_payout_views": pending_payout_views,
+            "daily_capped_views": daily_capped_views,
             "total_confirmed_liability": round(total_confirmed_liability, 4),
             "total_paid_out": round(total_paid_out, 4),
         }
@@ -473,6 +485,11 @@ class Storage:
         accurate even after a manual balance correction), withdrawal
         totals, and link/view counts. This is the read side of the
         fraud-watching feature; `set_admin_balance` is the write side.
+
+        `daily_capped_views` is the read side of the Anti-Abuse System
+        (see CPMSetting.max_daily_views_per_admin / cpm_engine.py): how
+        many of this Admin's views were watched but excluded from
+        earnings for crossing a viewer's daily cap.
         """
         from models import CountedStatus  # local import avoids a cycle at module load
 
@@ -501,6 +518,7 @@ class Storage:
                     today_income = round(today_income + amount, 6)
 
         links = await self.list_links_by_owner(telegram_id)
+        daily_capped_views = len([v for v in views if v.daily_capped])
 
         admin_withdrawals = [w for w in self.withdrawals.values() if w.admin_telegram_id == telegram_id]
         total_withdrawn = round(
@@ -519,6 +537,7 @@ class Storage:
             "total_views": len(views),
             "confirmed_views": len(confirmed_views),
             "pending_views": len(pending_views),
+            "daily_capped_views": daily_capped_views,
             "estimated_pending_amount": round(len(pending_views) * self.cpm_setting.current_cpm, 6),
         }
 
