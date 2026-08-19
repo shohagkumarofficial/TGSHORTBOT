@@ -67,7 +67,19 @@ committed, so there's nothing to conflict with in version control.
   play its ads and reach the destination as normal, it just stops adding
   to that Admin's balance (the `View` row is flagged `daily_capped`
   instead), so a viewer re-opening many of one Admin's links in a day
-  can't keep dragging that Admin's CPM down.
+  can't keep dragging that Admin's CPM down. **Missed Earnings
+  Analytics** (`storage.missed_earnings_trend` /
+  `missed_earnings_by_link` / `suggested_daily_limit`, folded into the
+  existing `platform_stats`/`admin_stats` payloads) turns the raw
+  `daily_capped_views` counter into something actionable: a 14-day daily
+  trend (so the Owner can see whether capped views are climbing or just
+  had a one-off spike, on both the platform-wide Stats tab and each
+  Admin's detail view), a link-wise breakdown ranking which *specific*
+  links are absorbing the abuse instead of only an Admin-level total,
+  and a "suggested limit" that looks at the trailing 14 days of
+  per-viewer-per-day activity and proposes a `max_daily_views_per_admin`
+  around the 90th percentile — a starting point for the Owner to review
+  and apply from the Stats tab, not an automatic change.
 - **CPM engine** (4.5 / 9.5): `cpm_engine.py` handles both modes.
   Real-time credits `balance_confirmed` the instant a view is logged.
   Scheduled holds views as `pending_payout`; a background watcher

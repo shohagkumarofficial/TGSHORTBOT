@@ -20,7 +20,7 @@ import json
 import os
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from models import (
@@ -476,6 +476,9 @@ class Storage:
             "daily_capped_views": daily_capped_views,
             "total_confirmed_liability": round(total_confirmed_liability, 4),
             "total_paid_out": round(total_paid_out, 4),
+            "missed_earnings_trend": await self.missed_earnings_trend(),
+            "missed_earnings_by_link": await self.missed_earnings_by_link(),
+            "suggested_daily_limit": await self.suggested_daily_limit(),
         }
 
     async def admin_stats(self, telegram_id: int) -> Optional[dict]:
@@ -539,6 +542,182 @@ class Storage:
             "pending_views": len(pending_views),
             "daily_capped_views": daily_capped_views,
             "estimated_pending_amount": round(len(pending_views) * self.cpm_setting.current_cpm, 6),
+            "missed_earnings_trend": await self.missed_earnings_trend(admin_telegram_id=telegram_id),
+            "missed_earnings_by_link": await self.missed_earnings_by_link(admin_telegram_id=telegram_id),
+        }
+
+    async def missed_earnings_trend(
+        self, admin_telegram_id: Optional[int] = None, days: int = 14
+    ) -> List[dict]:
+        """Day-by-day view of the Anti-Abuse System's bite: how many views
+        were watched but excluded from earnings (`daily_capped`) on each of
+        the trailing `days` calendar days (UTC), alongside that day's total
+        view count for context. A single cumulative number hides whether
+        abuse is trending up, down, or was a one-off spike; this is the
+        read side that makes the shape visible.
+
+        `estimated_missed_amount` is necessarily an estimate: a capped view
+        is routed straight to `credited_amount = 0` and never learns what
+        rate it would have earned (see cpm_engine.credit_new_view), so this
+        multiplies the day's capped count by *today's* current_cpm rather
+        than reconstructing a historical rate.
+
+        Pass `admin_telegram_id` to scope the trend to one Admin's links
+        only (the per-admin detail view); omit it for the platform-wide
+        trend on the Owner's Stats tab.
+        """
+        cpm_setting = await self.get_cpm_setting()
+        today = datetime.now(timezone.utc).date()
+        earliest = today - timedelta(days=days - 1)
+        buckets: Dict[object, dict] = {
+            earliest + timedelta(days=i): {"capped": 0, "total": 0} for i in range(days)
+        }
+
+        for v in self.views.values():
+            if admin_telegram_id is not None:
+                link = self.links.get(v.short_code)
+                if not link or link.owner_telegram_id != admin_telegram_id:
+                    continue
+            try:
+                created = datetime.fromisoformat(v.created_at)
+            except ValueError:
+                continue
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            d = created.astimezone(timezone.utc).date()
+            bucket = buckets.get(d)
+            if bucket is None:
+                continue
+            bucket["total"] += 1
+            if v.daily_capped:
+                bucket["capped"] += 1
+
+        return [
+            {
+                "date": d.isoformat(),
+                "capped_views": buckets[d]["capped"],
+                "total_views": buckets[d]["total"],
+                "estimated_missed_amount": round(buckets[d]["capped"] * cpm_setting.current_cpm, 6),
+            }
+            for d in sorted(buckets.keys())
+        ]
+
+    async def missed_earnings_by_link(
+        self, admin_telegram_id: Optional[int] = None, limit: int = 15
+    ) -> List[dict]:
+        """Ranks links by how many of their views got excluded from
+        earnings by the Anti-Abuse daily cap — the read side of "which
+        specific link is getting hammered", since a single Admin-level
+        `daily_capped_views` count can't distinguish one abused link from
+        several clean ones.
+
+        Pass `admin_telegram_id` to restrict to one Admin's own links (their
+        per-admin detail view); omit it for the platform-wide top-offenders
+        list, which also carries each link's owner so abuse concentrated on
+        one Admin — rather than spread thinly across many — is visible at a
+        glance instead of buried in an admin-wise total.
+        """
+        cpm_setting = await self.get_cpm_setting()
+        per_link: Dict[str, dict] = {}
+        for v in self.views.values():
+            link = self.links.get(v.short_code)
+            if not link:
+                continue
+            if admin_telegram_id is not None and link.owner_telegram_id != admin_telegram_id:
+                continue
+            row = per_link.setdefault(v.short_code, {"total": 0, "capped": 0})
+            row["total"] += 1
+            if v.daily_capped:
+                row["capped"] += 1
+
+        out = []
+        for short_code, row in per_link.items():
+            if row["capped"] == 0:
+                continue
+            link = self.links.get(short_code)
+            owner = self.admins.get(link.owner_telegram_id) if link else None
+            out.append(
+                {
+                    "short_code": short_code,
+                    "destination_url": link.destination_url if link else None,
+                    "owner_telegram_id": link.owner_telegram_id if link else None,
+                    "owner_username": owner.username if owner else None,
+                    "total_views": row["total"],
+                    "capped_views": row["capped"],
+                    "capped_rate": round(row["capped"] / row["total"], 4) if row["total"] else 0.0,
+                    "estimated_missed_amount": round(row["capped"] * cpm_setting.current_cpm, 6),
+                }
+            )
+        out.sort(key=lambda r: r["capped_views"], reverse=True)
+        return out[:limit]
+
+    async def suggested_daily_limit(
+        self, admin_telegram_id: Optional[int] = None, days: int = 14
+    ) -> dict:
+        """Anti-Abuse System tuning aid (advanced / can ship later): looks
+        at how many times each (Admin, viewer) pair actually showed up per
+        calendar day over the trailing `days` window — counting every
+        logged View regardless of `daily_capped`, since a capped view still
+        means "this viewer hit this Admin's links again today" — and
+        suggests a `max_daily_views_per_admin` at roughly the 90th
+        percentile of that per-viewer-per-day activity.
+
+        The idea: a cap set there catches the heaviest ~10% of repeat-
+        viewing days (the likely abuse) while leaving ordinary viewers, who
+        rarely reopen the same Admin's links many times in one day,
+        uncapped. This is a heuristic, not a guarantee — it's offered as a
+        starting point for the Owner to review, not applied automatically.
+
+        Pass `admin_telegram_id` to suggest a limit from one Admin's own
+        traffic only; omit it to suggest a platform-wide default from
+        every Admin's combined history.
+        """
+        today = datetime.now(timezone.utc).date()
+        earliest = today - timedelta(days=days - 1)
+        counts: Dict[Tuple[int, int, object], int] = {}
+        for v in self.views.values():
+            link = self.links.get(v.short_code)
+            if not link:
+                continue
+            if admin_telegram_id is not None and link.owner_telegram_id != admin_telegram_id:
+                continue
+            try:
+                created = datetime.fromisoformat(v.created_at)
+            except ValueError:
+                continue
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            d = created.astimezone(timezone.utc).date()
+            if d < earliest or d > today:
+                continue
+            key = (link.owner_telegram_id, v.viewer_telegram_id, d)
+            counts[key] = counts.get(key, 0) + 1
+
+        cpm_setting = await self.get_cpm_setting()
+        values = sorted(counts.values())
+        n = len(values)
+        if n == 0:
+            return {
+                "sample_size": 0,
+                "window_days": days,
+                "suggested_limit": None,
+                "current_limit": cpm_setting.max_daily_views_per_admin,
+            }
+
+        def percentile(p: float) -> int:
+            if n == 1:
+                return values[0]
+            idx = min(n - 1, max(0, round(p * (n - 1))))
+            return values[idx]
+
+        return {
+            "sample_size": n,
+            "window_days": days,
+            "median_views_per_viewer_per_day": percentile(0.50),
+            "p90_views_per_viewer_per_day": percentile(0.90),
+            "p99_views_per_viewer_per_day": percentile(0.99),
+            "suggested_limit": max(percentile(0.90), 1),
+            "current_limit": cpm_setting.max_daily_views_per_admin,
         }
 
     async def list_balance_adjustments(self, telegram_id: int, limit: int = 20) -> List[dict]:
