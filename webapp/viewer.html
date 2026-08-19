@@ -176,26 +176,20 @@
     <div class="dial">
       <svg viewBox="0 0 180 180">
         <circle class="dial-track" cx="90" cy="90" r="78"></circle>
-        <circle id="seg1" class="dial-seg" cx="90" cy="90" r="78" stroke="var(--hairline)"></circle>
-        <circle id="seg2" class="dial-seg" cx="90" cy="90" r="78" stroke="var(--hairline)"></circle>
-        <circle id="seg3" class="dial-seg" cx="90" cy="90" r="78" stroke="var(--hairline)"></circle>
+        <g id="segGroup"></g>
       </svg>
       <div class="dial-center">
-        <div class="dial-step" id="stepNum">0<small>/3</small></div>
+        <div class="dial-step" id="stepNum">0</div>
         <div class="dial-label" id="dialLabel">LOCKED</div>
       </div>
     </div>
 
-    <div class="steps">
-      <div class="step-dot" id="dot1"></div>
-      <div class="step-dot" id="dot2"></div>
-      <div class="step-dot" id="dot3"></div>
-    </div>
+    <div class="steps" id="stepsRow"></div>
 
-    <h1 id="headline">Watch 3 short ads to unlock</h1>
-    <p class="sub" id="subtext">This link is sponsor-supported — three quick ads, then you're through to your destination.</p>
+    <h1 id="headline">Watch a few short ads to unlock</h1>
+    <p class="sub" id="subtext">This link is sponsor-supported — a few quick ads, then you're through to your destination.</p>
 
-    <button class="primary" id="mainBtn">Watch ad 1 of 3</button>
+    <button class="primary" id="mainBtn">Watch ad</button>
     <button class="ghost" id="retryBtn" style="display:none;">Try that ad again</button>
 
     <div class="status-line" id="statusLine"></div>
@@ -207,7 +201,9 @@
 (function () {
   const SHORT_CODE = "__SHORT_CODE__";
   const BLOCK_ID = "__ADSGRAM_BLOCK_ID__";
-  const TOTAL_ADS = 3;
+  // Set per-link by the Owner (Link.ad_count, default 3) — never fixed
+  // in this file. Clamped defensively here too in case of a bad value.
+  const TOTAL_ADS = Math.max(1, Math.min(20, parseInt("__TOTAL_ADS__", 10) || 3));
   // Adsgram doesn't have the next reward ad ready the instant one
   // finishes, so we pause this many seconds before the next ad becomes
   // tappable. Configurable by the Owner from the panel's CPM Settings.
@@ -224,11 +220,29 @@
   }
 
   const CIRC = 2 * Math.PI * 78;
-  const segEls = [document.getElementById("seg1"), document.getElementById("seg2"), document.getElementById("seg3")];
-  segEls.forEach((el) => {
-    el.style.strokeDasharray = CIRC;
-    el.style.strokeDashoffset = CIRC;
-  });
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  // Build TOTAL_ADS dial segments + step dots up front — the markup
+  // above only has the empty containers, since the count is per-link.
+  const segGroup = document.getElementById("segGroup");
+  const stepsRow = document.getElementById("stepsRow");
+  const segEls = [];
+  const dots = [];
+  for (let i = 0; i < TOTAL_ADS; i++) {
+    const seg = document.createElementNS(SVG_NS, "circle");
+    seg.setAttribute("class", "dial-seg");
+    seg.setAttribute("cx", "90");
+    seg.setAttribute("cy", "90");
+    seg.setAttribute("r", "78");
+    seg.setAttribute("stroke", "var(--hairline)");
+    segGroup.appendChild(seg);
+    segEls.push(seg);
+
+    const dot = document.createElement("div");
+    dot.className = "step-dot";
+    stepsRow.appendChild(dot);
+    dots.push(dot);
+  }
 
   const stepNum = document.getElementById("stepNum");
   const dialLabel = document.getElementById("dialLabel");
@@ -237,7 +251,6 @@
   const mainBtn = document.getElementById("mainBtn");
   const retryBtn = document.getElementById("retryBtn");
   const statusLine = document.getElementById("statusLine");
-  const dots = [document.getElementById("dot1"), document.getElementById("dot2"), document.getElementById("dot3")];
 
   let adsWatched = 0;
   let inFlight = false;
@@ -253,17 +266,20 @@
   }
 
   function renderProgress() {
-    stepNum.innerHTML = adsWatched + "<small>/3</small>";
+    stepNum.innerHTML = adsWatched + "<small>/" + TOTAL_ADS + "</small>";
     for (let i = 0; i < TOTAL_ADS; i++) {
       dots[i].className = "step-dot" + (i < adsWatched ? " done" : i === adsWatched ? " active" : "");
     }
-    // Fill each segment fully in its own arc third as it completes.
+    // Fill each segment fully in its own arc share as it completes. A
+    // smaller gap when there are many segments keeps thin slices visible.
+    const gapPx = TOTAL_ADS > 6 ? 3 : 6;
     segEls.forEach((el, idx) => {
       const filled = idx < adsWatched;
+      const segLen = Math.max(2, CIRC / TOTAL_ADS - gapPx);
       el.style.stroke = filled ? "var(--emerald)" : "var(--hairline)";
       el.style.strokeDashoffset = filled ? 0 : CIRC;
-      el.style.strokeDasharray = CIRC / TOTAL_ADS - 6 + " " + (CIRC - (CIRC / TOTAL_ADS - 6));
-      const rotation = (idx * 120);
+      el.style.strokeDasharray = segLen + " " + (CIRC - segLen);
+      const rotation = idx * (360 / TOTAL_ADS);
       el.setAttribute("transform", "rotate(" + rotation + " 90 90)");
     });
 
@@ -282,9 +298,9 @@
   }
 
   function showAdStep(n) {
-    headline.textContent = "Watch ad " + n + " of 3 to unlock";
+    headline.textContent = "Watch ad " + n + " of " + TOTAL_ADS + " to unlock";
     subtext.textContent = "Tap below, watch the full ad, and it counts automatically.";
-    mainBtn.textContent = "Watch ad " + n + " of 3";
+    mainBtn.textContent = "Watch ad " + n + " of " + TOTAL_ADS;
     mainBtn.style.display = "inline-block";
     retryBtn.style.display = "none";
     mainBtn.disabled = false;
@@ -302,7 +318,7 @@
         return;
       }
 
-      headline.textContent = "Ad " + (n - 1) + " of 3 counted";
+      headline.textContent = "Ad " + (n - 1) + " of " + TOTAL_ADS + " counted";
       subtext.textContent = "The next ad needs a moment to load — hang tight.";
       retryBtn.style.display = "none";
       mainBtn.style.display = "inline-block";
