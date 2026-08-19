@@ -127,6 +127,12 @@ class CPMSetting(BaseModel):
     the Owner's CPM Settings screen: Adsgram doesn't have the next reward
     ad ready the instant one finishes, so `webapp/viewer.html` pauses this
     many seconds between ad N finishing and ad N+1 becoming tappable.
+
+    `min_withdraw_amount` is likewise platform-wide, Owner-only config with
+    nowhere else to sit: the smallest confirmed-balance amount an Admin is
+    allowed to request as a withdrawal. Both `/withdraw` in the bot and the
+    panel's withdrawal form reject a request below this amount before it's
+    ever created.
     """
 
     mode: CPMMode = CPMMode.REALTIME
@@ -135,6 +141,7 @@ class CPMSetting(BaseModel):
     cycle_started_at: str = Field(default_factory=now_iso)
     cycle_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     ad_view_delay_seconds: float = 7
+    min_withdraw_amount: float = 0
     updated_at: str = Field(default_factory=now_iso)
     updated_by: Optional[int] = None
 

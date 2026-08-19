@@ -28,6 +28,7 @@ from bot import (
     notify_admin_of_withdrawal_resolution,
     notify_owner_of_withdrawal,
     register_handlers,
+    set_bot_commands,
 )
 from config import get_settings
 from models import Admin, AdminStatus, CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
@@ -59,6 +60,11 @@ async def lifespan(app: FastAPI):
         logger.info("Webhook set to %s", settings.WEBHOOK_URL)
     except Exception:
         logger.exception("Could not set webhook on startup — set it manually with scripts/set_webhook.py")
+
+    try:
+        await set_bot_commands(bot)
+    except Exception:
+        logger.exception("Could not set bot command menu on startup")
 
     global _cpm_watcher_task
     _cpm_watcher_task = asyncio.create_task(
@@ -378,11 +384,18 @@ async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner))
         if ad_view_delay_seconds < 0:
             raise HTTPException(status_code=400, detail="ad_view_delay_seconds must be >= 0")
 
+    min_withdraw_amount = payload.get("min_withdraw_amount")
+    if min_withdraw_amount is not None:
+        min_withdraw_amount = float(min_withdraw_amount)
+        if min_withdraw_amount < 0:
+            raise HTTPException(status_code=400, detail="min_withdraw_amount must be >= 0")
+
     cs = await storage.update_cpm_setting(
         mode=mode_enum,
         current_cpm=current_cpm,
         cycle_duration_hours=cycle_duration_hours,
         ad_view_delay_seconds=ad_view_delay_seconds,
+        min_withdraw_amount=min_withdraw_amount,
         updated_by=owner.telegram_id,
     )
     return cs.model_dump()
@@ -411,6 +424,13 @@ async def request_withdrawal(payload: dict, admin: Admin = Depends(require_admin
         raise HTTPException(status_code=400, detail="amount must be positive")
     if amount > admin.balance_confirmed:
         raise HTTPException(status_code=400, detail="amount exceeds confirmed balance")
+
+    cs = await storage.get_cpm_setting()
+    if amount < cs.min_withdraw_amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"amount is below the minimum withdrawal amount ({cs.min_withdraw_amount:.2f})",
+        )
 
     req = await storage.create_withdrawal(admin.telegram_id, amount, WithdrawMethod(method), account_number)
     await notify_owner_of_withdrawal(bot, settings, admin, req)

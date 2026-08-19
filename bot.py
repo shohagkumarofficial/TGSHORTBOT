@@ -11,6 +11,7 @@ import logging
 import random
 import string
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -19,6 +20,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
+    BotCommand,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -72,9 +74,70 @@ def build_bot_and_dispatcher(bot_token: str) -> tuple[Bot, Dispatcher]:
     return bot, dp
 
 
+def _default_bot_commands() -> list[BotCommand]:
+    """The command list Telegram shows behind the native "/" menu button
+    next to the message input — a second, native way to reach every
+    command besides the persistent reply keyboard from
+    `_main_menu_keyboard`. Kept in one place so the two never drift apart.
+    """
+    return [
+        BotCommand(command="start", description="বট শুরু করুন / মূল মেনু"),
+        BotCommand(command="newlink", description="নতুন শর্ট লিংক তৈরি করুন"),
+        BotCommand(command="trafficsource", description="ট্রাফিক সোর্স যোগ/এডিট/মুছুন"),
+        BotCommand(command="mybalance", description="ব্যালেন্স ও পেআউট তথ্য দেখুন"),
+        BotCommand(command="withdraw", description="টাকা তোলার আবেদন করুন"),
+        BotCommand(command="panel", description="পূর্ণাঙ্গ ড্যাশবোর্ড খুলুন"),
+        BotCommand(command="help", description="সাহায্য ও কমান্ড তালিকা"),
+    ]
+
+
+async def set_bot_commands(bot: Bot) -> None:
+    """Registers the "/" command menu with Telegram. Safe to call on every
+    startup — Telegram just overwrites the previous list, and failure here
+    (e.g. no network yet) shouldn't block the rest of startup, so callers
+    are expected to wrap this the same way they already wrap set_webhook.
+    """
+    await bot.set_my_commands(_default_bot_commands())
+
+
 def _gen_short_code(length: int = 7) -> str:
     alphabet = string.ascii_letters + string.digits
     return "".join(random.choices(alphabet, k=length))
+
+
+# Labels for the persistent bottom keyboard — every command is a tap away
+# instead of something the user has to remember and type out.
+MAIN_MENU_LABELS = {
+    "newlink": "🔗 নতুন লিংক",
+    "trafficsource": "📡 ট্রাফিক সোর্স",
+    "mybalance": "💰 ব্যালেন্স",
+    "withdraw": "💸 উইথড্র",
+    "help": "❓ সাহায্য",
+}
+
+
+def _main_menu_keyboard(panel_url: str) -> ReplyKeyboardMarkup:
+    """Persistent reply keyboard shown after /start and /help so the
+    Admin never has to type a command by hand — every button here maps
+    1:1 onto one of the bot's slash commands (see the `menu_*` handlers
+    in register_handlers). The dashboard button opens the Mini App
+    directly, same as /panel's inline button.
+    """
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text=MAIN_MENU_LABELS["newlink"]),
+                KeyboardButton(text=MAIN_MENU_LABELS["trafficsource"]),
+            ],
+            [
+                KeyboardButton(text=MAIN_MENU_LABELS["mybalance"]),
+                KeyboardButton(text=MAIN_MENU_LABELS["withdraw"]),
+            ],
+            [KeyboardButton(text="📊 ড্যাশবোর্ড", web_app=WebAppInfo(url=panel_url))],
+            [KeyboardButton(text=MAIN_MENU_LABELS["help"])],
+        ],
+        resize_keyboard=True,
+    )
 
 
 def _traffic_source_menu(admin) -> tuple[str, InlineKeyboardMarkup]:
@@ -174,12 +237,46 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             code = _gen_short_code()
         await storage.create_link(code, admin.telegram_id, url)
         short_url = f"https://t.me/{settings.BOT_USERNAME}?start={code}"
+        panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
         await message.answer(
             f"✅ শর্ট লিংক তৈরি হয়েছে:\n<code>{short_url}</code>\n\n"
             "লিংকটি আপনার Traffic Source-এ (চ্যানেল/গ্রুপ/পোস্ট) শেয়ার করুন। "
             "ভিউয়াররা এতে ক্লিক করলে টেলিগ্রাম বট খুলবে, ৩টি বিজ্ঞাপন দেখাবে, তারপর গন্তব্যে পৌঁছাবে।",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=_main_menu_keyboard(panel_url),
         )
+
+    # ------------------------------------------------------------------
+    # Persistent main-menu buttons — registered first (before any FSM
+    # state handler further down) so a tap always wins, even mid-flow
+    # (e.g. partway through /withdraw), instead of being swallowed as
+    # free text by that state's own handler. Each one clears whatever
+    # state was active and then delegates to the matching slash-command
+    # handler, so the two stay in lockstep by construction.
+    # ------------------------------------------------------------------
+
+    @dp.message(F.text == MAIN_MENU_LABELS["newlink"])
+    async def menu_newlink(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        await newlink_cmd(message, SimpleNamespace(args=None), state)
+
+    @dp.message(F.text == MAIN_MENU_LABELS["trafficsource"])
+    async def menu_trafficsource(message: Message, state: FSMContext) -> None:
+        await trafficsource_cmd(message, state)
+
+    @dp.message(F.text == MAIN_MENU_LABELS["mybalance"])
+    async def menu_mybalance(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        await mybalance_cmd(message)
+
+    @dp.message(F.text == MAIN_MENU_LABELS["withdraw"])
+    async def menu_withdraw(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        await withdraw_cmd(message, state)
+
+    @dp.message(F.text == MAIN_MENU_LABELS["help"])
+    async def menu_help(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        await help_cmd(message)
 
     # ------------------------------------------------------------------
     # /start
@@ -209,19 +306,11 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
         role_label = "Owner" if admin.role == Role.OWNER else "Admin"
         panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
-        kb = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="📊 ড্যাশবোর্ড খুলুন", web_app=WebAppInfo(url=panel_url))]]
-        )
         await message.answer(
             f"স্বাগতম, {role_label}! 👋\n\n"
             "<b>TGSHORTBOT</b> দিয়ে লিংক শর্ট করুন, শেয়ার করুন, আর প্রতিটি ভিউ থেকে আয় করুন।\n\n"
-            "কমান্ডসমূহ:\n"
-            "/trafficsource — ট্রাফিক সোর্স যোগ/এডিট/মুছুন (লিংক তৈরির আগে অন্তত একটি আবশ্যক)\n"
-            "/newlink &lt;url&gt; — নতুন শর্ট লিংক তৈরি করুন\n"
-            "/mybalance — ব্যালেন্স ও পেআউট তথ্য দেখুন\n"
-            "/withdraw — টাকা তোলার আবেদন করুন\n"
-            "/panel — পূর্ণাঙ্গ ড্যাশবোর্ড খুলুন",
-            reply_markup=kb,
+            "নিচের বাটন থেকে যেকোনো অপশনে ট্যাপ করুন:",
+            reply_markup=_main_menu_keyboard(panel_url),
         )
 
     # ------------------------------------------------------------------
@@ -430,8 +519,15 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     @dp.message(Command("withdraw"))
     async def withdraw_cmd(message: Message, state: FSMContext) -> None:
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        cpm_setting = await storage.get_cpm_setting()
         if admin.balance_confirmed <= 0:
             await message.answer("তোলার মতো কোনো নিশ্চিত ব্যালেন্স নেই।")
+            return
+        if admin.balance_confirmed < cpm_setting.min_withdraw_amount:
+            await message.answer(
+                f"সর্বনিম্ন উইথড্র পরিমাণ <b>{cpm_setting.min_withdraw_amount:.2f}</b>।\n"
+                f"আপনার নিশ্চিত ব্যালেন্স ({admin.balance_confirmed:.2f}) এখনো এই সীমায় পৌঁছায়নি।"
+            )
             return
         kb = ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="bKash"), KeyboardButton(text="Nagad")]],
@@ -439,7 +535,14 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             one_time_keyboard=True,
         )
         await state.set_state(WithdrawStates.waiting_for_method)
-        await message.answer(f"নিশ্চিত ব্যালেন্স: {admin.balance_confirmed:.2f}\nপদ্ধতি বেছে নিন:", reply_markup=kb)
+        min_line = (
+            f"\nসর্বনিম্ন উইথড্র: {cpm_setting.min_withdraw_amount:.2f}"
+            if cpm_setting.min_withdraw_amount > 0
+            else ""
+        )
+        await message.answer(
+            f"নিশ্চিত ব্যালেন্স: {admin.balance_confirmed:.2f}{min_line}\nপদ্ধতি বেছে নিন:", reply_markup=kb
+        )
 
     @dp.message(WithdrawStates.waiting_for_method, F.text.in_({"bKash", "Nagad"}))
     async def withdraw_method(message: Message, state: FSMContext) -> None:
@@ -467,6 +570,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     @dp.message(WithdrawStates.waiting_for_amount)
     async def withdraw_amount(message: Message, state: FSMContext) -> None:
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        cpm_setting = await storage.get_cpm_setting()
         try:
             amount = float((message.text or "").strip())
         except ValueError:
@@ -477,16 +581,23 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
                 f"পরিমাণ অবশ্যই ০ থেকে বড় এবং নিশ্চিত ব্যালেন্সের ({admin.balance_confirmed:.2f}) মধ্যে হতে হবে।"
             )
             return
+        if amount < cpm_setting.min_withdraw_amount:
+            await message.answer(
+                f"সর্বনিম্ন উইথড্র পরিমাণ <b>{cpm_setting.min_withdraw_amount:.2f}</b>। এর কম অ্যামাউন্টে আবেদন করা যাবে না।\n"
+                "সঠিক পরিমাণ লিখুন:"
+            )
+            return
         data = await state.get_data()
         req = await storage.create_withdrawal(
             admin.telegram_id, amount, WithdrawMethod(data["method"]), data["account_number"]
         )
         await state.clear()
         await notify_owner_of_withdrawal(message.bot, settings, admin, req)
+        panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
         await message.answer(
             f"✅ আবেদন গ্রহণ করা হয়েছে (ID: <code>{req.request_id[:8]}</code>)।\n"
             "Owner-কে সাথে সাথে জানানো হয়েছে — তিনি যাচাই করে টাকা পাঠাবেন।",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=_main_menu_keyboard(panel_url),
         )
 
     # ------------------------------------------------------------------
@@ -504,11 +615,13 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
 
     @dp.message(Command("help"))
     async def help_cmd(message: Message) -> None:
+        panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
         await message.answer(
-            "কমান্ডসমূহ:\n"
-            "/trafficsource — ট্রাফিক সোর্স যোগ/এডিট/মুছুন\n"
-            "/newlink &lt;url&gt; — নতুন শর্ট লিংক তৈরি\n"
-            "/mybalance — ব্যালেন্স ও পেআউট তথ্য\n"
-            "/withdraw — টাকা তোলার আবেদন\n"
-            "/panel — পূর্ণাঙ্গ ড্যাশবোর্ড খুলুন"
+            "নিচের বাটন থেকে যেকোনো অপশনে ট্যাপ করুন:\n\n"
+            "🔗 নতুন লিংক — নতুন শর্ট লিংক তৈরি\n"
+            "📡 ট্রাফিক সোর্স — সোর্স যোগ/এডিট/মুছুন\n"
+            "💰 ব্যালেন্স — ব্যালেন্স ও পেআউট তথ্য\n"
+            "💸 উইথড্র — টাকা তোলার আবেদন\n"
+            "📊 ড্যাশবোর্ড — পূর্ণাঙ্গ প্যানেল খুলুন",
+            reply_markup=_main_menu_keyboard(panel_url),
         )

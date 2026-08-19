@@ -391,6 +391,7 @@ class Storage:
         current_cpm: Optional[float] = None,
         cycle_duration_hours: Optional[float] = None,
         ad_view_delay_seconds: Optional[float] = None,
+        min_withdraw_amount: Optional[float] = None,
         updated_by: Optional[int] = None,
     ) -> CPMSetting:
         async with self._lock:
@@ -418,6 +419,12 @@ class Storage:
                     "to": ad_view_delay_seconds,
                 }
                 cs.ad_view_delay_seconds = ad_view_delay_seconds
+            if min_withdraw_amount is not None and min_withdraw_amount != cs.min_withdraw_amount:
+                detail["min_withdraw_amount"] = {
+                    "from": cs.min_withdraw_amount,
+                    "to": min_withdraw_amount,
+                }
+                cs.min_withdraw_amount = min_withdraw_amount
 
             if reset_cycle:
                 cs.cycle_started_at = now_iso()

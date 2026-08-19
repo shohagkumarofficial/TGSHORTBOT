@@ -70,15 +70,21 @@ committed, so there's nothing to conflict with in version control.
   mobile number (`01[3-9]XXXXXXXX`, with `+880`/spaces/dashes normalized
   away) before the request is even created — both the bot and the panel
   reject an invalid number with an inline error instead of silently
-  accepting free-form text. The moment a valid request is made — from
-  the bot or the panel — the Owner gets a Telegram DM with the amount,
-  method, account number, and links to every one of the requester's
-  Traffic Sources, plus a button into the panel. Owner marks
-  Paid/Rejected in the panel's Withdrawals queue; balance is only
-  deducted on Paid. The moment the Owner resolves it, the *requesting*
-  Admin gets a Telegram DM back — confirming the payment (and account
-  it was sent to) on Paid, or the reason on Rejected — so they know
-  their money is on its way without having to re-check the panel.
+  accepting free-form text. A platform-wide **minimum withdrawal amount**
+  (`CPMSetting.min_withdraw_amount`, Owner-only, set from the panel's CPM
+  Settings drawer) is enforced the same way — the bot's `/withdraw` flow
+  and the panel's withdrawal form both reject a request below it before
+  it's ever created; the API layer (`POST /api/withdraw`) enforces it
+  again server-side regardless of which frontend was used. The moment a
+  valid request is made — from the bot or the panel — the Owner gets a
+  Telegram DM with the amount, method, account number, and links to
+  every one of the requester's Traffic Sources, plus a button into the
+  panel. Owner marks Paid/Rejected in the panel's Withdrawals queue;
+  balance is only deducted on Paid. The moment the Owner resolves it, the
+  *requesting* Admin gets a Telegram DM back — confirming the payment
+  (and account it was sent to) on Paid, or the reason on Rejected — so
+  they know their money is on its way without having to re-check the
+  panel.
 
 ## Dashboard layout
 
@@ -276,6 +282,29 @@ can access what, since role is still decided server-side by Telegram ID.
   more consistent, professional look that doesn't vary by OS/emoji font.
   This applies to the Mini App only — `bot.py`'s Telegram chat messages
   keep their emoji, since a plain Telegram text message can't render SVG.
+- **Bot commands as tappable buttons**: `/start` and `/help` now show a
+  persistent reply keyboard (`bot.py`'s `_main_menu_keyboard`) with one
+  button per command — 🔗 নতুন লিংক, 📡 ট্রাফিক সোর্স, 💰 ব্যালেন্স,
+  💸 উইথড্র, 📊 ড্যাশবোর্ড (opens the Mini App directly), and ❓ সাহায্য —
+  instead of a plain-text list the Admin has to read and type from. Each
+  button is wired to the exact same handler as its slash command, and the
+  keyboard reappears after any flow completes so it's always one tap away.
+  These button handlers are registered before any FSM-state handler, so a
+  tap always takes priority even mid-flow (e.g. partway through
+  `/withdraw`) rather than being swallowed as free text by that flow.
+  Telegram's own "/" command menu (`bot.set_my_commands`, called on every
+  startup from `app.py`'s lifespan) is also populated as a second, native
+  way to reach every command.
+- **Minimum withdrawal amount**: `CPMSetting.min_withdraw_amount`
+  (default `0`, meaning no minimum) is Owner-only, platform-wide config
+  set from the panel's CPM Settings drawer — same "nowhere else to sit"
+  reasoning as `ad_view_delay_seconds`. Below it, a withdrawal request is
+  rejected before it's ever created: the bot's `/withdraw` flow checks it
+  both when the flow starts and when the amount is entered, the panel's
+  withdrawal form checks it client-side and shows the minimum next to the
+  confirmed balance, and `POST /api/withdraw` enforces it again
+  server-side regardless of which frontend was used. Every change to it
+  is logged in `cpm_history` the same way a CPM-rate change is.
 - **Copy buttons on short links**: both the "Create a short link" result
   and every row in "My Links" now have a Copy button
   (`navigator.clipboard`, with a `document.execCommand("copy")` fallback
