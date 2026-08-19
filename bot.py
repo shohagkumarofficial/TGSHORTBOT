@@ -235,13 +235,13 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         code = _gen_short_code()
         while await storage.get_link(code):
             code = _gen_short_code()
-        await storage.create_link(code, admin.telegram_id, url)
+        link = await storage.create_link(code, admin.telegram_id, url)
         short_url = f"https://t.me/{settings.BOT_USERNAME}?start={code}"
         panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
         await message.answer(
             f"✅ শর্ট লিংক তৈরি হয়েছে:\n<code>{short_url}</code>\n\n"
             "লিংকটি আপনার Traffic Source-এ (চ্যানেল/গ্রুপ/পোস্ট) শেয়ার করুন। "
-            "ভিউয়াররা এতে ক্লিক করলে টেলিগ্রাম বট খুলবে, ৩টি বিজ্ঞাপন দেখাবে, তারপর গন্তব্যে পৌঁছাবে।",
+            f"ভিউয়াররা এতে ক্লিক করলে টেলিগ্রাম বট খুলবে, {link.ad_count}টি বিজ্ঞাপন দেখাবে, তারপর গন্তব্যে পৌঁছাবে।",
             reply_markup=_main_menu_keyboard(panel_url),
         )
 
@@ -293,11 +293,13 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         view_url = f"{settings.WEBAPP_BASE_URL}/r/{code}"
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="👉 চালিয়ে যান (৩টি বিজ্ঞাপন দেখুন)", web_app=WebAppInfo(url=view_url))]
+                [InlineKeyboardButton(
+                    text=f"👉 চালিয়ে যান ({link.ad_count}টি বিজ্ঞাপন দেখুন)", web_app=WebAppInfo(url=view_url)
+                )]
             ]
         )
         await message.answer(
-            "লিংকটি খুলতে নিচের বাটনে চাপ দিন। ৩টি বিজ্ঞাপন দেখা শেষ হলে আপনি স্বয়ংক্রিয়ভাবে গন্তব্য পেজে পৌঁছে যাবেন।",
+            f"লিংকটি খুলতে নিচের বাটনে চাপ দিন। {link.ad_count}টি বিজ্ঞাপন দেখা শেষ হলে আপনি স্বয়ংক্রিয়ভাবে গন্তব্য পেজে পৌঁছে যাবেন।",
             reply_markup=kb,
         )
 

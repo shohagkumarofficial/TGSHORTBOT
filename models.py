@@ -87,14 +87,26 @@ class Admin(BaseModel):
 
 
 class Link(BaseModel):
+    """`ad_count` is how many sequential Adsgram ads a viewer must watch
+    on `webapp/viewer.html` before this link unlocks. It defaults to 3
+    (the platform's original fixed behavior) at creation time regardless
+    of who creates it — an Admin via `/newlink` or the panel's "Create
+    Link" form always gets the default. Changing it afterward is
+    Owner-only (see storage.set_link_ad_count / POST
+    /api/admin/links/{short_code}/ad-count) — an Admin can see the count
+    on their own "My Links" list but has no endpoint that can change it.
+    """
+
     short_code: str
     owner_telegram_id: int
     destination_url: str
+    ad_count: int = 3
     created_at: str = Field(default_factory=now_iso)
 
 
 class View(BaseModel):
-    """One row per completed 3-ad viewing.
+    """One row per completed ad-viewing (the number of ads is the
+    owning Link's `ad_count`, not a fixed count — see Link.ad_count).
 
     `credited_amount` is filled in the moment this view's status becomes
     CONFIRMED — immediately in Real-time mode, or at cycle-close time in
@@ -108,7 +120,7 @@ class View(BaseModel):
     `daily_capped` is set once, by cpm_engine.credit_new_view, when this
     view is the one that crosses the Admin's daily anti-abuse limit
     (CPMSetting.max_daily_views_per_admin) for its viewer. The viewer
-    still watches all 3 ads as normal; this view is simply routed
+    still watches every ad as normal; this view is simply routed
     straight to CONFIRMED with `credited_amount = 0` instead of adding to
     anyone's balance, so a viewer hammering one Admin's links repeatedly
     in a day can't keep dragging that Admin's CPM down.

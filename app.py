@@ -168,6 +168,7 @@ async def redirect_entry(short_code: str):
         html.replace("__SHORT_CODE__", short_code)
         .replace("__ADSGRAM_BLOCK_ID__", settings.ADSGRAM_BLOCK_ID)
         .replace("__AD_VIEW_DELAY_SECONDS__", str(cs.ad_view_delay_seconds))
+        .replace("__TOTAL_ADS__", str(link.ad_count))
     )
     return HTMLResponse(html)
 
@@ -313,8 +314,12 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
     code = _gen_short_code()
     while await storage.get_link(code):
         code = _gen_short_code()
+    # ad_count is never taken from the request here — every new link
+    # starts at storage.Storage.DEFAULT_AD_COUNT regardless of who
+    # creates it; only the Owner can change it afterward, per-link, via
+    # POST /api/admin/links/{short_code}/ad-count.
     link = await storage.create_link(code, admin.telegram_id, destination_url)
-    return {"short_code": link.short_code, "short_url": _short_url_for(link.short_code)}
+    return {"short_code": link.short_code, "short_url": _short_url_for(link.short_code), "ad_count": link.ad_count}
 
 
 @app.get("/api/links")
@@ -329,6 +334,11 @@ async def my_links(admin: Admin = Depends(require_admin)):
     `missed_earnings_trend` / `missed_earnings_by_link`); an Admin simply
     never sees them here, not even as a smaller number — they vanish
     from this endpoint entirely rather than being labelled and shown.
+
+    `ad_count` comes through in `**l.model_dump()` below, so an Admin
+    can see how many ads their own link requires — but read-only: no
+    endpoint reachable with `require_admin` can change it, only
+    `require_owner`'s POST /api/admin/links/{short_code}/ad-count.
     """
     links = await storage.list_links_by_owner(admin.telegram_id)
     out = []
@@ -522,6 +532,38 @@ async def admin_detail(telegram_id: int, owner: Admin = Depends(require_owner)):
         raise HTTPException(status_code=404, detail="admin not found")
     stats["balance_adjustments"] = await storage.list_balance_adjustments(telegram_id)
     return stats
+
+
+@app.get("/api/admin/admins/{telegram_id}/links")
+async def admin_links(telegram_id: int, owner: Admin = Depends(require_owner)):
+    """Every link this Admin owns, with its own ad_count — the list the
+    Owner's per-Admin detail page renders to review and adjust how many
+    ads each individual link requires (see
+    POST /api/admin/links/{short_code}/ad-count)."""
+    if not await storage.admin_stats(telegram_id):
+        raise HTTPException(status_code=404, detail="admin not found")
+    return {"links": await storage.admin_links_detail(telegram_id)}
+
+
+@app.post("/api/admin/links/{short_code}/ad-count")
+async def set_link_ad_count(short_code: str, payload: dict, owner: Admin = Depends(require_owner)):
+    """Owner-only control over how many sequential ads one specific link
+    shows before unlocking. Neither the link's own Admin nor the bot's
+    /newlink flow can reach this — see Link.ad_count and
+    storage.set_link_ad_count."""
+    try:
+        ad_count = int(payload.get("ad_count"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="ad_count must be a whole number")
+    if not (Storage.MIN_AD_COUNT <= ad_count <= Storage.MAX_AD_COUNT):
+        raise HTTPException(
+            status_code=400,
+            detail=f"ad_count must be between {Storage.MIN_AD_COUNT} and {Storage.MAX_AD_COUNT}",
+        )
+    link = await storage.set_link_ad_count(short_code, ad_count)
+    if not link:
+        raise HTTPException(status_code=404, detail="link not found")
+    return link.model_dump()
 
 
 @app.post("/api/admin/admins/{telegram_id}/balance")

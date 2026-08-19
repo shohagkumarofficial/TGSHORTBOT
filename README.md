@@ -52,10 +52,26 @@ committed, so there's nothing to conflict with in version control.
   real Telegram deep link — `https://t.me/<BOT_USERNAME>?start=<code>` —
   so clicking it always opens Telegram and triggers the bot, rather than
   a bare HTTPS URL that might open in a plain browser with no Telegram
-  context.
+  context. Every new link starts at `Storage.DEFAULT_AD_COUNT` (3)
+  regardless of who creates it — see **Ad count per link** below for how
+  that gets changed afterward.
+- **Ad count per link**: how many sequential ads a link's viewer must
+  watch (`Link.ad_count`, 1–10, default 3) is Owner-only to change,
+  per link — not a single platform-wide number. Neither `POST
+  /api/links` nor the bot's `/newlink` flow accepts a client-supplied
+  value; every link starts at the default and stays there until the
+  Owner adjusts it from a specific Admin's detail page in the panel
+  (`GET /api/admin/admins/{id}/links` to list, `POST
+  /api/admin/links/{short_code}/ad-count` to change one — both
+  `require_owner`). The owning Admin can see the current count on their
+  own "My Links" list (`GET /api/links`) but has no endpoint that can
+  change it. `webapp/viewer.html`'s dial, step dots, and copy are all
+  built dynamically from `Link.ad_count` at render time (`/r/{code}`
+  injects it as `__TOTAL_ADS__`) rather than assuming a fixed 3.
 - **Viewer flow** (4.2): the deep link opens the bot, which replies with
   a WebApp button pointing at `/r/{code}` — a Telegram Mini App
-  (`webapp/viewer.html`) that runs 3 sequential Adsgram ads, then calls
+  (`webapp/viewer.html`) that runs that link's `ad_count` sequential
+  Adsgram ads, then calls
   `POST /api/log-view`, then `GET /api/link/{code}`, then redirects.
 - **Fraud/dedupe** (4.3): one countable view per `(short_code, viewer)`
   pair, enforced atomically in `storage.create_view`. On top of that, an
@@ -79,7 +95,18 @@ committed, so there's nothing to conflict with in version control.
   and a "suggested limit" that looks at the trailing 14 days of
   per-viewer-per-day activity and proposes a `max_daily_views_per_admin`
   around the 90th percentile — a starting point for the Owner to review
-  and apply from the Stats tab, not an automatic change.
+  and apply from the Stats tab, not an automatic change. A `daily_capped`
+  view **never** counts toward any `total_views` / `view_count` figure
+  anywhere in the app — platform-wide, per-Admin, or per-link — since it
+  earned nothing; it's tracked only through the separate
+  `daily_capped_views` counter and the Missed Earnings views above. This
+  split is also a visibility boundary: `GET /api/links` (what an Admin
+  sees on their own "My Links" page) excludes capped views from
+  `view_count`/`confirmed_views` entirely rather than showing a smaller,
+  labelled number — an Admin never sees that their views were capped, it
+  simply isn't there. Only the Owner-only endpoints
+  (`/api/admin/stats`, `/api/admin/admins/{id}`) expose
+  `daily_capped_views` and the Missed Earnings breakdowns.
 - **CPM engine** (4.5 / 9.5): `cpm_engine.py` handles both modes.
   Real-time credits `balance_confirmed` the instant a view is logged.
   Scheduled holds views as `pending_payout`; a background watcher
@@ -201,7 +228,7 @@ Adsgram block as Reward, not Interstitial** — otherwise a viewer who
 skips the ad can still trigger a payout that Adsgram itself may not
 compensate for. Avoid Task-type blocks entirely for this flow; they use
 a completely different `<adsgram-task>` embed, not `.show()`, and are
-meant for one-off actions rather than a repeated "watch 3 ads" loop.
+meant for one-off actions rather than a repeated ad-watching loop.
 
 The bare root domain (`https://tgshortbot.onrender.com`, no path) is the
 one registered with both BotFather (as the bot's Mini App / menu button
@@ -227,7 +254,8 @@ can access what, since role is still decided server-side by Telegram ID.
    keeps a free-tier service from sleeping.
 5. Test the full loop: `/start` the bot, `/trafficsource` to set where
    you'll share links, `/newlink`, open the resulting `t.me/...` link,
-   watch the 3 ads, confirm the redirect, then request a withdrawal and
+   watch the ads (3 by default — see **Ad count per link**), confirm the
+   redirect, then request a withdrawal and
    check it shows up both as a Telegram DM and in the Owner panel.
 
 ## Security notes

@@ -277,12 +277,23 @@ class Storage:
     # Link
     # ------------------------------------------------------------------
 
-    async def create_link(self, short_code: str, owner_telegram_id: int, destination_url: str) -> Link:
+    DEFAULT_AD_COUNT = 3
+    MIN_AD_COUNT = 1
+    MAX_AD_COUNT = 10
+
+    async def create_link(
+        self,
+        short_code: str,
+        owner_telegram_id: int,
+        destination_url: str,
+        ad_count: Optional[int] = None,
+    ) -> Link:
         async with self._lock:
             link = Link(
                 short_code=short_code,
                 owner_telegram_id=owner_telegram_id,
                 destination_url=destination_url,
+                ad_count=ad_count if ad_count is not None else self.DEFAULT_AD_COUNT,
             )
             self.links[short_code] = link
             await self._save_locked()
@@ -293,6 +304,46 @@ class Storage:
 
     async def list_links_by_owner(self, owner_telegram_id: int) -> List[Link]:
         return [l for l in self.links.values() if l.owner_telegram_id == owner_telegram_id]
+
+    async def set_link_ad_count(self, short_code: str, ad_count: int) -> Optional[Link]:
+        """Owner-only: how many sequential ads this one link requires
+        before it unlocks. Nothing about an Admin's own access changes —
+        `GET /api/links` shows the Admin the current count read-only, but
+        only the Owner-only endpoint that calls this can change it.
+        """
+        async with self._lock:
+            link = self.links.get(short_code)
+            if not link:
+                return None
+            link.ad_count = ad_count
+            await self._save_locked()
+            return link
+
+    async def admin_links_detail(self, owner_telegram_id: int) -> List[dict]:
+        """Per-link detail for the Owner's per-Admin detail view: every
+        link this Admin owns, each with its own `ad_count` and a genuine
+        (capped-excluded — same rule as everywhere else `view_count`
+        appears) view count, so the Owner can review and adjust any one
+        link's ad count without having to cross-reference the Admin's
+        own "My Links" list.
+        """
+        links = await self.list_links_by_owner(owner_telegram_id)
+        out = []
+        for l in links:
+            views = await self.list_views_by_short_code(l.short_code)
+            genuine_views = [v for v in views if not v.daily_capped]
+            out.append(
+                {
+                    "short_code": l.short_code,
+                    "destination_url": l.destination_url,
+                    "ad_count": l.ad_count,
+                    "created_at": l.created_at,
+                    "view_count": len(genuine_views),
+                    "daily_capped_views": len(views) - len(genuine_views),
+                }
+            )
+        out.sort(key=lambda r: r["created_at"], reverse=True)
+        return out
 
     # ------------------------------------------------------------------
     # View
