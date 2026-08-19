@@ -1,27 +1,46 @@
-"""In-memory + JSON-file-backed storage for TGSHORTBOT (MVP).
+"""In-memory + Supabase(Postgres)-backed storage for TGSHORTBOT.
 
-Everything lives in memory for fast reads; every mutation is flushed to
-`data/store.json` immediately (write-through) using an atomic
-tmp-file-then-rename so a crash mid-write can never corrupt the store.
+This is a drop-in replacement for the original JSON-file-backed storage
+module: every public method keeps the exact same name and signature, so
+bot.py / app.py / cpm_engine.py needed no changes at all — including the
+places that reach directly into `storage.admins`, `storage.links`,
+`storage.views`, `storage.cpm_setting`, `storage.cpm_history`, and
+`storage._lock` (cpm_engine.py's crediting logic mutates those objects
+in place and then calls `storage._save_locked()`).
 
-An `asyncio.Lock` serializes all mutations. Because the whole app runs on
-a single asyncio event loop, this is sufficient to make check-then-act
-sequences (e.g. the view dedupe check) atomic with no real concurrency
-bugs, without needing a database transaction.
+Everything still lives in memory for fast reads. The one thing that
+changed is *where* `_save_locked()` flushes to: instead of rewriting a
+single `data/store.json` file, it upserts the full current in-memory
+state to Supabase, one batched call per table. This keeps the same
+write-through philosophy the JSON version used (every mutation is
+persisted immediately, so a Render restart never loses data) while
+moving the actual storage off Render's ephemeral disk and onto
+Supabase's persistent Postgres database.
 
-Swapping this module for a SQLite/Postgres-backed one later can reuse the
-exact same method signatures and the Link/View/Admin/etc. models
-unchanged (see PRD Section 9.3).
+An `asyncio.Lock` still serializes all mutations for the same reason as
+before: the whole app runs on a single asyncio event loop, so this alone
+is enough to make check-then-act sequences (e.g. the view dedupe check)
+atomic — no real concurrency bugs, no need for a DB transaction. The
+`views` table's `(short_code, viewer_telegram_id)` UNIQUE constraint is
+kept as a second, database-level safety net in `create_view` in case
+that assumption is ever wrong (e.g. two Render instances one day).
+
+NOTE (known trade-off, fine for the current MVP scale): `_save_locked()`
+re-upserts every admin/link/view/withdrawal on every single mutation,
+mirroring how the old JSON version rewrote the whole file on every
+mutation. This is simple and correct, but it's O(total rows) per write.
+If/when views get into the tens of thousands, this is the first place
+to optimize — swap the blanket upsert for a targeted single-row
+upsert/update per call site.
 """
 from __future__ import annotations
 
 import asyncio
-import json
-import os
-import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
+
+from supabase import AsyncClient, create_async_client
 
 from models import (
     Admin,
@@ -40,8 +59,10 @@ from models import (
 
 
 class Storage:
-    def __init__(self, data_file: str):
-        self.data_file = data_file
+    def __init__(self, supabase_url: str, supabase_key: str):
+        self.supabase_url = supabase_url
+        self.supabase_key = supabase_key
+        self.client: Optional[AsyncClient] = None
         self._lock = asyncio.Lock()
 
         self.admins: Dict[int, Admin] = {}
@@ -58,101 +79,84 @@ class Storage:
     # Load / persist
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _migrate_admin_dict(v: dict) -> dict:
-        """Upgrades a pre-multi-traffic-source Admin record (a single
-        `traffic_source_platform` / `traffic_source_url` pair) into the
-        current `traffic_sources: [...]` list shape, in place, so old
-        `data/store.json` files keep working after this change instead of
-        crash-looping on the first load.
-        """
-        if "traffic_sources" in v and v["traffic_sources"] is not None:
-            return v
-        legacy_url = v.pop("traffic_source_url", None)
-        legacy_platform = v.pop("traffic_source_platform", None)
-        legacy_updated_at = v.pop("traffic_source_updated_at", None)
-        if legacy_url:
-            v["traffic_sources"] = [
-                {
-                    "platform": legacy_platform or "Other",
-                    "url": legacy_url,
-                    "created_at": legacy_updated_at or now_iso(),
-                    "updated_at": legacy_updated_at or now_iso(),
-                }
-            ]
-        else:
-            v["traffic_sources"] = []
-        return v
-
-    @staticmethod
-    def _as_dict_items(raw_value, id_field: str):
-        """Normalizes a stored collection to an iterable of (key, value) dicts.
-
-        The store is supposed to always hold collections as JSON objects
-        (dict keyed by id), but a legacy/corrupt file could have them as a
-        JSON array instead. Without this, a single bad field permanently
-        crash-loops the app on every restart since load() never gets far
-        enough to re-save a corrected file. Unknown/other shapes are
-        treated as empty rather than raising.
-        """
-        if isinstance(raw_value, dict):
-            return raw_value.items()
-        if isinstance(raw_value, list):
-            return [(str(item.get(id_field)), item) for item in raw_value if isinstance(item, dict)]
-        return []
-
     async def load(self) -> None:
-        os.makedirs(os.path.dirname(self.data_file) or ".", exist_ok=True)
-        if os.path.exists(self.data_file):
-            with open(self.data_file, "r", encoding="utf-8") as f:
-                raw = json.load(f)
-            self.admins = {
-                int(k): Admin(**self._migrate_admin_dict(dict(v)))
-                for k, v in self._as_dict_items(raw.get("admins", {}), "telegram_id")
-            }
-            self.links = {
-                k: Link(**v) for k, v in self._as_dict_items(raw.get("links", {}), "short_code")
-            }
-            self.views = {
-                k: View(**v) for k, v in self._as_dict_items(raw.get("views", {}), "view_id")
-            }
-            self.withdrawals = {
-                k: WithdrawRequest(**v)
-                for k, v in self._as_dict_items(raw.get("withdrawals", {}), "request_id")
-            }
-            if raw.get("cpm_setting"):
-                self.cpm_setting = CPMSetting(**raw["cpm_setting"])
-            self.cpm_history = [CPMHistoryEntry(**e) for e in raw.get("cpm_history", [])]
-            self._view_index = {
-                (v.short_code, v.viewer_telegram_id): v.view_id for v in self.views.values()
-            }
-            async with self._lock:
-                await self._save_locked()
+        """Connects to Supabase and pulls every table into memory. Call
+        once at startup (same as the JSON version's `load()`)."""
+        self.client = await create_async_client(self.supabase_url, self.supabase_key)
+
+        admins_res = await self.client.table("admins").select("*").execute()
+        traffic_res = await self.client.table("traffic_sources").select("*").execute()
+        links_res = await self.client.table("links").select("*").execute()
+        views_res = await self.client.table("views").select("*").execute()
+        withdrawals_res = await self.client.table("withdrawals").select("*").execute()
+        cpm_setting_res = await self.client.table("cpm_settings").select("*").eq("id", 1).execute()
+        cpm_history_res = await self.client.table("cpm_history").select("*").execute()
+
+        traffic_by_admin: Dict[int, List[TrafficSource]] = {}
+        for row in traffic_res.data:
+            row = dict(row)
+            admin_id = row.pop("admin_telegram_id")
+            traffic_by_admin.setdefault(admin_id, []).append(TrafficSource(**row))
+
+        self.admins = {}
+        for row in admins_res.data:
+            row = dict(row)
+            row["traffic_sources"] = traffic_by_admin.get(row["telegram_id"], [])
+            self.admins[row["telegram_id"]] = Admin(**row)
+
+        self.links = {row["short_code"]: Link(**row) for row in links_res.data}
+        self.views = {row["view_id"]: View(**row) for row in views_res.data}
+        self.withdrawals = {row["request_id"]: WithdrawRequest(**row) for row in withdrawals_res.data}
+
+        if cpm_setting_res.data:
+            cs_row = dict(cpm_setting_res.data[0])
+            cs_row.pop("id", None)
+            self.cpm_setting = CPMSetting(**cs_row)
         else:
+            # Shouldn't happen (the schema script seeds this row), but
+            # self-heal instead of crash-looping if it's ever missing.
+            self.cpm_setting = CPMSetting()
+
+        self.cpm_history = [CPMHistoryEntry(**row) for row in cpm_history_res.data]
+
+        self._view_index = {
+            (v.short_code, v.viewer_telegram_id): v.view_id for v in self.views.values()
+        }
+
+        async with self._lock:
             await self._save_locked()
         self._loaded = True
 
     async def _save_locked(self) -> None:
-        """Caller must already hold self._lock."""
-        payload = {
-            "admins": {str(k): v.model_dump() for k, v in self.admins.items()},
-            "links": {k: v.model_dump() for k, v in self.links.items()},
-            "views": {k: v.model_dump() for k, v in self.views.items()},
-            "withdrawals": {k: v.model_dump() for k, v in self.withdrawals.items()},
-            "cpm_setting": self.cpm_setting.model_dump(),
-            "cpm_history": [e.model_dump() for e in self.cpm_history],
-        }
-        dir_name = os.path.dirname(self.data_file) or "."
-        os.makedirs(dir_name, exist_ok=True)
-        fd, tmp_path = tempfile.mkstemp(dir=dir_name, prefix=".store_", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2, ensure_ascii=False)
-            os.replace(tmp_path, self.data_file)
-        except Exception:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-            raise
+        """Caller must already hold self._lock. Pushes the full current
+        in-memory state to Supabase. Batched: one upsert call per table,
+        regardless of how many rows changed.
+        """
+        admin_rows = [a.model_dump(mode="json", exclude={"traffic_sources"}) for a in self.admins.values()]
+        traffic_rows = [
+            {**s.model_dump(mode="json"), "admin_telegram_id": a.telegram_id}
+            for a in self.admins.values()
+            for s in a.traffic_sources
+        ]
+        link_rows = [l.model_dump(mode="json") for l in self.links.values()]
+        view_rows = [v.model_dump(mode="json") for v in self.views.values()]
+        withdrawal_rows = [w.model_dump(mode="json") for w in self.withdrawals.values()]
+        cpm_setting_row = {"id": 1, **self.cpm_setting.model_dump(mode="json")}
+        cpm_history_rows = [e.model_dump(mode="json") for e in self.cpm_history]
+
+        if admin_rows:
+            await self.client.table("admins").upsert(admin_rows, on_conflict="telegram_id").execute()
+        if traffic_rows:
+            await self.client.table("traffic_sources").upsert(traffic_rows, on_conflict="id").execute()
+        if link_rows:
+            await self.client.table("links").upsert(link_rows, on_conflict="short_code").execute()
+        if view_rows:
+            await self.client.table("views").upsert(view_rows, on_conflict="view_id").execute()
+        if withdrawal_rows:
+            await self.client.table("withdrawals").upsert(withdrawal_rows, on_conflict="request_id").execute()
+        await self.client.table("cpm_settings").upsert(cpm_setting_row, on_conflict="id").execute()
+        if cpm_history_rows:
+            await self.client.table("cpm_history").upsert(cpm_history_rows, on_conflict="entry_id").execute()
 
     async def save(self) -> None:
         async with self._lock:
@@ -270,6 +274,10 @@ class Storage:
             admin.traffic_sources = [s for s in admin.traffic_sources if s.id != source_id]
             changed = len(admin.traffic_sources) != before
             if changed:
+                # A blanket upsert alone would never remove this row from
+                # Supabase (upsert only adds/updates), so it needs an
+                # explicit delete before the usual full-state save.
+                await self.client.table("traffic_sources").delete().eq("id", source_id).execute()
                 await self._save_locked()
             return changed
 
@@ -357,16 +365,23 @@ class Storage:
         """Returns None if this (short_code, viewer) pair already has a
         view — the dedupe rule from Section 9.3. The check-then-insert is
         atomic because no `await` happens between them while the lock is
-        held.
+        held. The `views` table's UNIQUE(short_code, viewer_telegram_id)
+        constraint is a second safety net in case that in-process
+        assumption is ever violated.
         """
         async with self._lock:
             key = (short_code, viewer_telegram_id)
             if key in self._view_index:
                 return None
             view = View(short_code=short_code, viewer_telegram_id=viewer_telegram_id)
+            try:
+                await self.client.table("views").insert(view.model_dump(mode="json")).execute()
+            except Exception as exc:
+                if "duplicate" in str(exc).lower() or "23505" in str(exc):
+                    return None
+                raise
             self.views[view.view_id] = view
             self._view_index[key] = view.view_id
-            await self._save_locked()
             return view
 
     async def list_views_by_short_code(self, short_code: str) -> List[View]:
@@ -509,6 +524,9 @@ class Storage:
     # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
+    # Everything below reads only from the in-memory dicts populated by
+    # load()/_save_locked() — no direct Supabase calls needed, so this
+    # section is unchanged from the original JSON-backed version.
 
     async def platform_stats(self) -> dict:
         """Platform-wide numbers for the Owner's Stats tab.
