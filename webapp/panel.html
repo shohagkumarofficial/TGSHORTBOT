@@ -389,6 +389,34 @@
     }[c]));
   }
 
+  // ---- SVG icons (stroke-based, feather-style — replaces emoji glyphs
+  // everywhere in this dashboard for a cleaner, more consistent look) ---
+
+  const ICON_PATHS = {
+    home: '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline>',
+    scissors: '<circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><line x1="20" y1="4" x2="8.12" y2="15.88"></line><line x1="14.47" y1="14.48" x2="20" y2="20"></line><line x1="8.12" y1="8.12" x2="12" y2="12"></line>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>',
+    user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>',
+    users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>',
+    settings: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.06a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.06a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path>',
+    barChart: '<line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line>',
+    radio: '<circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.25a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"></path>',
+    banknote: '<rect x="2" y="6" width="20" height="12" rx="2"></rect><circle cx="12" cy="12" r="3"></circle><line x1="6" y1="12" x2="6.01" y2="12"></line><line x1="18" y1="12" x2="18.01" y2="12"></line>',
+    trendingUp: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline>',
+    clock: '<circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>',
+    alertTriangle: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line>',
+    checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>',
+    clipboard: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>',
+    edit: '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>',
+    trash: '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
+    eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>',
+  };
+
+  function icon(name, size) {
+    size = size || 16;
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px; flex:0 0 auto;">${ICON_PATHS[name] || ""}</svg>`;
+  }
+
   function isOwner() {
     return !!(state.me && state.me.role === "owner");
   }
@@ -478,12 +506,12 @@
     container.querySelectorAll(".copyBtn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const url = btn.dataset.url || "";
-        const original = btn.textContent;
+        const original = btn.innerHTML;
         const ok = await copyToClipboard(url);
         if (ok) {
-          btn.textContent = "✅ Copied!";
+          btn.innerHTML = icon("checkCircle", 14) + " Copied!";
           toast("Link copied", "ok");
-          setTimeout(() => { btn.textContent = original; }, 1500);
+          setTimeout(() => { btn.innerHTML = original; }, 1500);
         } else {
           toast("Couldn't copy — long-press the link to copy manually", "err");
         }
@@ -514,8 +542,8 @@
               <div class="ts-url"><a href="${esc(s.url)}" target="_blank" style="color:var(--brass); text-decoration:none;">${esc(s.url)}</a></div>
             </div>
             <div class="ts-actions">
-              <button class="ts-icon-btn ${prefix}EditBtn" data-id="${s.id}" title="Edit">✏️</button>
-              <button class="ts-icon-btn danger ${prefix}DelBtn" data-id="${s.id}" title="Remove">🗑</button>
+              <button class="ts-icon-btn ${prefix}EditBtn" data-id="${s.id}" title="Edit">${icon("edit", 14)}</button>
+              <button class="ts-icon-btn danger ${prefix}DelBtn" data-id="${s.id}" title="Remove">${icon("trash", 14)}</button>
             </div>
           </div>
         `).join("")
@@ -622,10 +650,10 @@
 
   function bottomNavItems() {
     return [
-      ["overview", "🏠", "Home"],
-      ["quicklink", "✂️", "Short Link"],
-      ["links", "🔗", "My Links"],
-      ["profile", "👤", "Profile"],
+      ["overview", icon("home", 19), "Home"],
+      ["quicklink", icon("scissors", 19), "Short Link"],
+      ["links", icon("link", 19), "My Links"],
+      ["profile", icon("user", 19), "Profile"],
     ];
   }
 
@@ -640,16 +668,16 @@
   function drawerItems() {
     if (!isOwner()) return [];
     return [
-      ["cpm", "⚙️", "CPM Settings", "Real-time / Scheduled mode, rate, cycle"],
-      ["stats", "📈", "Platform Stats", "Totals across every admin"],
+      ["cpm", icon("settings", 17), "CPM Settings", "Real-time / Scheduled mode, rate, cycle, ad delay"],
+      ["stats", icon("barChart", 17), "Platform Stats", "Totals across every admin"],
     ];
   }
 
   function ownerToolItems() {
     return [
-      ["links", "🔗", "My Links", "Create & manage your own short links"],
-      ["traffic", "📡", "Traffic Source", "Set where your own links get shared"],
-      ["withdraw", "💸", "Request Withdrawal", "Cash out your own confirmed balance"],
+      ["links", icon("link", 17), "My Links", "Create & manage your own short links"],
+      ["traffic", icon("radio", 17), "Traffic Source", "Set where your own links get shared"],
+      ["withdraw", icon("banknote", 17), "Request Withdrawal", "Cash out your own confirmed balance"],
     ];
   }
 
@@ -758,17 +786,17 @@
           <div class="balance-item pending"><div class="label">Pending withdrawals</div><div class="value">${pendingCount}</div></div>
           <div class="balance-item violet"><div class="label">Awaiting payout</div><div class="value">${fmt(pendingSum)}</div></div>
         </div>
-        <div class="cycle-note">👥 <b>${state.stats ? state.stats.total_admins : "…"}</b> admins ·
-          📈 CPM: ${cpmLine}</div>
+        <div class="cycle-note">${icon("users", 13)} <b>${state.stats ? state.stats.total_admins : "…"}</b> admins ·
+          ${icon("trendingUp", 13)} CPM: ${cpmLine}</div>
       `;
     } else {
       card.className = "balance-card";
       const pendingViews = state.links.reduce((sum, l) => sum + (l.pending_views || 0), 0);
       let cycleNote = "";
       if (state.cpm && state.cpm.mode === "scheduled") {
-        cycleNote = `⏳ Next payout in <b>${secondsToClock(state.cpm.seconds_to_payout)}</b> — rate is set at payout time.`;
+        cycleNote = `${icon("clock", 13)} Next payout in <b>${secondsToClock(state.cpm.seconds_to_payout)}</b> — rate is set at payout time.`;
       } else if (state.cpm) {
-        cycleNote = `📈 Real-time CPM active — currently <b>${fmt(state.cpm.current_cpm)}</b> per view.`;
+        cycleNote = `${icon("trendingUp", 13)} Real-time CPM active — currently <b>${fmt(state.cpm.current_cpm)}</b> per view.`;
       }
       card.innerHTML = `
         <div class="balance-row">
@@ -824,7 +852,7 @@
           `).join("")}
         </div>
         <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
-          CPM settings and platform stats live behind the ⚙️ menu, top right.
+          CPM settings and platform stats live behind the ${icon("settings", 12)} menu, top right.
         </p>
       `;
       el.querySelector("#qaPayouts").addEventListener("click", () => { state.tab = "payouts"; renderTab(); });
@@ -841,7 +869,7 @@
     el.innerHTML = `
       ${!(state.me.traffic_sources && state.me.traffic_sources.length) ? `
         <div class="card" style="border-color: rgba(226,104,92,.35);">
-          <h3 style="color:var(--red);">⚠️ No Traffic Source yet</h3>
+          <h3 style="color:var(--red);">${icon("alertTriangle", 15)} No Traffic Source yet</h3>
           <div class="meta">Add at least one before you can create any short links.</div>
           <div class="btn-row"><button class="btn btn-primary btn-block" id="ctaTraffic">Add Traffic Source</button></div>
         </div>` : ""}
@@ -922,9 +950,9 @@
         const resultEl = el.querySelector("#createResult");
         resultEl.innerHTML = `
           <div class="card" style="border-color: rgba(63,191,127,.35);">
-            <h3>✅ Your short link is ready</h3>
+            <h3>${icon("checkCircle", 15)} Your short link is ready</h3>
             <code class="short-url">${esc(res.short_url)}</code>
-            <div class="btn-row"><button class="btn btn-outline btn-block copyBtn" data-url="${esc(res.short_url)}">📋 Copy link</button></div>
+            <div class="btn-row"><button class="btn btn-outline btn-block copyBtn" data-url="${esc(res.short_url)}">${icon("clipboard", 14)} Copy link</button></div>
           </div>
         `;
         wireCopyButtons(resultEl);
@@ -962,7 +990,7 @@
     }
 
     el.innerHTML = `
-      <button class="btn btn-primary btn-block" id="goQuickLink">✂️ New short link</button>
+      <button class="btn btn-primary btn-block" id="goQuickLink">${icon("scissors", 14)} New short link</button>
       <div class="section-title" style="margin-top:14px;">My links</div>
       <div id="linksList"></div>
     `;
@@ -981,7 +1009,7 @@
       <div class="card">
         <h3>/${esc(l.short_code)}</h3>
         <code class="short-url">${esc(l.short_url)}</code>
-        <div class="btn-row"><button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">📋 Copy</button></div>
+        <div class="btn-row"><button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">${icon("clipboard", 14)} Copy</button></div>
         <div class="meta">→ ${esc(l.destination_url)}</div>
         <div class="meta">${l.view_count} views · ${l.confirmed_views} confirmed · ${l.pending_views} pending</div>
       </div>
@@ -1250,6 +1278,15 @@
           <div class="meta">Current cycle closes in <b style="color:var(--text)">${secondsToClock(cs.seconds_to_payout)}</b>.
           Whatever rate is set at that moment applies to every view accumulated this cycle.</div>
         </div>` : ""}
+      <div class="card">
+        <h3>${icon("clock", 15)} Ad view delay</h3>
+        <div class="meta">Adsgram needs a short gap before the next reward ad is ready — the viewer sees a
+        counting-down button for this many seconds between ad 1→2 and ad 2→3. Default is 7s; 5–8s is the
+        recommended range.</div>
+        <label>Delay between ads (seconds)</label>
+        <input type="number" id="adDelaySeconds" min="0" step="1" value="${cs.ad_view_delay_seconds}" />
+        <div class="btn-row"><button class="btn btn-outline btn-block" id="adDelaySave">Save delay</button></div>
+      </div>
     `;
     el.querySelector("#cpmSave").addEventListener("click", async () => {
       const btn = el.querySelector("#cpmSave");
@@ -1268,6 +1305,21 @@
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Save CPM settings";
+      }
+    });
+    el.querySelector("#adDelaySave").addEventListener("click", async () => {
+      const btn = el.querySelector("#adDelaySave");
+      const ad_view_delay_seconds = parseFloat(el.querySelector("#adDelaySeconds").value);
+      if (!(ad_view_delay_seconds >= 0)) { toast("Enter a valid delay (0 or more seconds)", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ ad_view_delay_seconds }) });
+        toast("Ad view delay updated", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save delay";
       }
     });
   }
@@ -1290,7 +1342,7 @@
           : `<div class="meta" style="color:var(--text-faint);">No Traffic Source on file</div>`}
         ${a.role !== "owner" ? `
           <div class="btn-row">
-            <button class="btn btn-outline btn-sm detailBtn" data-id="${a.telegram_id}">📊 View details</button>
+            <button class="btn btn-outline btn-sm detailBtn" data-id="${a.telegram_id}">${icon("eye", 14)} View details</button>
             ${a.status === "active"
               ? `<button class="btn btn-danger btn-sm banBtn" data-id="${a.telegram_id}" data-status="banned">Suspend</button>`
               : `<button class="btn btn-success btn-sm banBtn" data-id="${a.telegram_id}" data-status="active">Reactivate</button>`}
