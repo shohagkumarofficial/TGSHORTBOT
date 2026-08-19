@@ -1025,6 +1025,7 @@
       <div class="card">
         <h3>Request a withdrawal</h3>
         <div class="meta">Confirmed balance: <b style="color:var(--text)">${fmt(state.me.balance_confirmed)}</b></div>
+        ${state.cpm && state.cpm.min_withdraw_amount > 0 ? `<div class="meta">Minimum withdrawal: <b style="color:var(--text)">${fmt(state.cpm.min_withdraw_amount)}</b></div>` : ""}
         <label>Method</label>
         <select id="wMethod">
           <option value="bkash">bKash</option>
@@ -1057,6 +1058,8 @@
       setFieldError(accountInput, accountErr, null);
       if (!(amount > 0)) { toast("Enter a valid amount", "err"); return; }
       if (amount > state.me.balance_confirmed) { toast("Amount exceeds your confirmed balance", "err"); return; }
+      const minAmt = state.cpm ? state.cpm.min_withdraw_amount : 0;
+      if (minAmt > 0 && amount < minAmt) { toast(`Minimum withdrawal amount is ${fmt(minAmt)}`, "err"); return; }
       const btn = el.querySelector("#wSubmit");
       btn.disabled = true; btn.textContent = "Submitting…";
       try {
@@ -1126,6 +1129,7 @@
       <div class="section-title" style="margin-top:18px;">Withdraw</div>
       <div class="card">
         <div class="meta">Confirmed balance: <b style="color:var(--text)">${fmt(state.me.balance_confirmed)}</b></div>
+        ${state.cpm && state.cpm.min_withdraw_amount > 0 ? `<div class="meta">Minimum withdrawal: <b style="color:var(--text)">${fmt(state.cpm.min_withdraw_amount)}</b></div>` : ""}
         <label>Method</label>
         <select id="pWMethod">
           <option value="bkash">bKash</option>
@@ -1162,6 +1166,8 @@
       setFieldError(pAccountInput, pAccountErr, null);
       if (!(amount > 0)) { toast("Enter a valid amount", "err"); return; }
       if (amount > state.me.balance_confirmed) { toast("Amount exceeds your confirmed balance", "err"); return; }
+      const pMinAmt = state.cpm ? state.cpm.min_withdraw_amount : 0;
+      if (pMinAmt > 0 && amount < pMinAmt) { toast(`Minimum withdrawal amount is ${fmt(pMinAmt)}`, "err"); return; }
       const btn = el.querySelector("#pWSubmit");
       btn.disabled = true; btn.textContent = "Submitting…";
       try {
@@ -1287,6 +1293,14 @@
         <input type="number" id="adDelaySeconds" min="0" step="1" value="${cs.ad_view_delay_seconds}" />
         <div class="btn-row"><button class="btn btn-outline btn-block" id="adDelaySave">Save delay</button></div>
       </div>
+      <div class="card">
+        <h3>${icon("banknote", 15)} Minimum withdrawal amount</h3>
+        <div class="meta">Admins (and you) won't be able to submit a withdrawal request below this amount —
+        enforced both in the bot's /withdraw flow and here in the panel. Set to 0 to allow any amount.</div>
+        <label>Minimum withdrawal amount</label>
+        <input type="number" id="minWithdrawAmount" min="0" step="0.01" value="${cs.min_withdraw_amount}" />
+        <div class="btn-row"><button class="btn btn-outline btn-block" id="minWithdrawSave">Save minimum</button></div>
+      </div>
     `;
     el.querySelector("#cpmSave").addEventListener("click", async () => {
       const btn = el.querySelector("#cpmSave");
@@ -1320,6 +1334,22 @@
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Save delay";
+      }
+    });
+    el.querySelector("#minWithdrawSave").addEventListener("click", async () => {
+      const btn = el.querySelector("#minWithdrawSave");
+      const min_withdraw_amount = parseFloat(el.querySelector("#minWithdrawAmount").value);
+      if (!(min_withdraw_amount >= 0)) { toast("Enter a valid minimum amount (0 or more)", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ min_withdraw_amount }) });
+        state.cpm.min_withdraw_amount = min_withdraw_amount;
+        toast("Minimum withdrawal amount updated", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save minimum";
       }
     });
   }
