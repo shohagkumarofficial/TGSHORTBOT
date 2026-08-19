@@ -40,7 +40,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app")
 
 settings = get_settings()
-storage = Storage(settings.DATA_FILE)
+storage = Storage(settings.SUPABASE_URL, settings.SUPABASE_KEY)
 bot, dp = build_bot_and_dispatcher(settings.BOT_TOKEN)
 register_handlers(dp, storage, settings)
 
