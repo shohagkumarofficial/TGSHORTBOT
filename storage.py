@@ -390,6 +390,7 @@ class Storage:
         mode=None,
         current_cpm: Optional[float] = None,
         cycle_duration_hours: Optional[float] = None,
+        ad_view_delay_seconds: Optional[float] = None,
         updated_by: Optional[int] = None,
     ) -> CPMSetting:
         async with self._lock:
@@ -411,6 +412,12 @@ class Storage:
                 }
                 cs.cycle_duration_hours = cycle_duration_hours
                 reset_cycle = True
+            if ad_view_delay_seconds is not None and ad_view_delay_seconds != cs.ad_view_delay_seconds:
+                detail["ad_view_delay_seconds"] = {
+                    "from": cs.ad_view_delay_seconds,
+                    "to": ad_view_delay_seconds,
+                }
+                cs.ad_view_delay_seconds = ad_view_delay_seconds
 
             if reset_cycle:
                 cs.cycle_started_at = now_iso()

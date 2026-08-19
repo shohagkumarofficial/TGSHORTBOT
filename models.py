@@ -121,6 +121,12 @@ class CPMSetting(BaseModel):
     spelled out verbatim in the PRD JSON shape) so that View.cpm_cycle_id
     can unambiguously reference exactly which scheduled cycle a view
     belongs to.
+
+    `ad_view_delay_seconds` is a platform-wide UX setting (not a CPM/payout
+    concept) piggybacked on this same record since it already lives behind
+    the Owner's CPM Settings screen: Adsgram doesn't have the next reward
+    ad ready the instant one finishes, so `webapp/viewer.html` pauses this
+    many seconds between ad N finishing and ad N+1 becoming tappable.
     """
 
     mode: CPMMode = CPMMode.REALTIME
@@ -128,6 +134,7 @@ class CPMSetting(BaseModel):
     cycle_duration_hours: float = 24
     cycle_started_at: str = Field(default_factory=now_iso)
     cycle_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    ad_view_delay_seconds: float = 7
     updated_at: str = Field(default_factory=now_iso)
     updated_by: Optional[int] = None
 

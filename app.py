@@ -155,10 +155,13 @@ async def redirect_entry(short_code: str):
     link = await storage.get_link(short_code)
     if not link:
         raise HTTPException(status_code=404, detail="link not found")
+    cs = await storage.get_cpm_setting()
     with open("webapp/viewer.html", "r", encoding="utf-8") as f:
         html = f.read()
-    html = html.replace("__SHORT_CODE__", short_code).replace(
-        "__ADSGRAM_BLOCK_ID__", settings.ADSGRAM_BLOCK_ID
+    html = (
+        html.replace("__SHORT_CODE__", short_code)
+        .replace("__ADSGRAM_BLOCK_ID__", settings.ADSGRAM_BLOCK_ID)
+        .replace("__AD_VIEW_DELAY_SECONDS__", str(cs.ad_view_delay_seconds))
     )
     return HTMLResponse(html)
 
@@ -369,10 +372,17 @@ async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner))
         if cycle_duration_hours <= 0:
             raise HTTPException(status_code=400, detail="cycle_duration_hours must be > 0")
 
+    ad_view_delay_seconds = payload.get("ad_view_delay_seconds")
+    if ad_view_delay_seconds is not None:
+        ad_view_delay_seconds = float(ad_view_delay_seconds)
+        if ad_view_delay_seconds < 0:
+            raise HTTPException(status_code=400, detail="ad_view_delay_seconds must be >= 0")
+
     cs = await storage.update_cpm_setting(
         mode=mode_enum,
         current_cpm=current_cpm,
         cycle_duration_hours=cycle_duration_hours,
+        ad_view_delay_seconds=ad_view_delay_seconds,
         updated_by=owner.telegram_id,
     )
     return cs.model_dump()

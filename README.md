@@ -260,6 +260,22 @@ can access what, since role is still decided server-side by Telegram ID.
   closes; the Admin detail view shows those separately as an *estimated*
   pending amount (view count × the current CPM rate) rather than
   pretending to know the exact figure early.
+- **Ad view delay**: Adsgram doesn't have the next Reward ad ready the
+  instant one finishes — there's typically a 5–8 second gap. Between ad 1
+  and ad 2, and between ad 2 and ad 3, `webapp/viewer.html` shows a
+  disabled, counting-down "Next ad ready in Ns" button instead of letting
+  the viewer tap straight into an ad that isn't loaded yet (which would
+  just surface an Adsgram error). This gap defaults to 7 seconds and is
+  configurable platform-wide from the panel's CPM Settings screen
+  (`CPMSetting.ad_view_delay_seconds`, `POST /api/admin/cpm`) — it lives
+  alongside CPM rather than as its own model since it's Owner-only,
+  platform-wide config with nowhere else to sit.
+- **SVG icons over emoji in the Mini App UI**: `webapp/panel.html`'s nav,
+  drawer, and action-button icons are all small inline stroke-based SVGs
+  now (a shared `icon(name, size)` helper) instead of emoji glyphs, for a
+  more consistent, professional look that doesn't vary by OS/emoji font.
+  This applies to the Mini App only — `bot.py`'s Telegram chat messages
+  keep their emoji, since a plain Telegram text message can't render SVG.
 - **Copy buttons on short links**: both the "Create a short link" result
   and every row in "My Links" now have a Copy button
   (`navigator.clipboard`, with a `document.execCommand("copy")` fallback
