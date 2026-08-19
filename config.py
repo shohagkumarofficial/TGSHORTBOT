@@ -21,7 +21,8 @@ class Settings:
     OWNER_TELEGRAM_ID: int
     PORT: int
     WEBAPP_BASE_URL: str
-    DATA_FILE: str
+    SUPABASE_URL: str
+    SUPABASE_KEY: str
     CPM_CHECK_INTERVAL_SECONDS: int
 
 
@@ -46,6 +47,12 @@ def get_settings() -> Settings:
         OWNER_TELEGRAM_ID=int(_require("OWNER_TELEGRAM_ID")),
         PORT=int(os.environ.get("PORT", "8000")),
         WEBAPP_BASE_URL=_require("WEBAPP_BASE_URL").rstrip("/"),
-        DATA_FILE=os.environ.get("DATA_FILE", "data/store.json"),
+        # Supabase Project URL (e.g. https://xxxx.supabase.co) and the
+        # SECRET / service_role API key — never the anon/publishable one,
+        # since this backend needs to bypass Row Level Security to read
+        # and write every Admin's data. See Settings -> API Keys in the
+        # Supabase dashboard.
+        SUPABASE_URL=_require("SUPABASE_URL"),
+        SUPABASE_KEY=_require("SUPABASE_KEY"),
         CPM_CHECK_INTERVAL_SECONDS=int(os.environ.get("CPM_CHECK_INTERVAL_SECONDS", "60")),
     )
