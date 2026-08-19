@@ -461,7 +461,7 @@
           opts.showOwner ? ` · ${r.owner_username ? "@" + esc(r.owner_username) : "id " + r.owner_telegram_id}` : ""
         }</div>
         <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(r.destination_url || "")}</div>
-        <div class="meta">${r.capped_views} of ${r.total_views} views missed (${Math.round(r.capped_rate * 100)}%) · ~${fmt(r.estimated_missed_amount)} estimated missed</div>
+        <div class="meta">${r.capped_views} of ${r.total_attempts} views missed (${Math.round(r.capped_rate * 100)}%) · ~${fmt(r.estimated_missed_amount)} estimated missed</div>
       </div>
     `).join("");
   }
