@@ -319,17 +319,33 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
 
 @app.get("/api/links")
 async def my_links(admin: Admin = Depends(require_admin)):
+    """Per-link stats for the requesting Admin's own "My Links" list.
+
+    `view_count` / `confirmed_views` deliberately exclude any view the
+    Anti-Abuse System flagged `daily_capped` — a capped view earned
+    nothing, so it must never inflate what an Admin sees as their total
+    or confirmed view count. Capped views are Owner-only information
+    (see storage.admin_stats' `daily_capped_views` /
+    `missed_earnings_trend` / `missed_earnings_by_link`); an Admin simply
+    never sees them here, not even as a smaller number — they vanish
+    from this endpoint entirely rather than being labelled and shown.
+    """
     links = await storage.list_links_by_owner(admin.telegram_id)
     out = []
     for l in links:
         views = await storage.list_views_by_short_code(l.short_code)
+        genuine_views = [v for v in views if not v.daily_capped]
         out.append(
             {
                 **l.model_dump(),
                 "short_url": _short_url_for(l.short_code),
-                "view_count": len(views),
-                "confirmed_views": len([v for v in views if v.counted_status == CountedStatus.CONFIRMED]),
-                "pending_views": len([v for v in views if v.counted_status == CountedStatus.PENDING_PAYOUT]),
+                "view_count": len(genuine_views),
+                "confirmed_views": len(
+                    [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]
+                ),
+                "pending_views": len(
+                    [v for v in genuine_views if v.counted_status == CountedStatus.PENDING_PAYOUT]
+                ),
             }
         )
     out.sort(key=lambda x: x["created_at"], reverse=True)

@@ -460,18 +460,28 @@ class Storage:
     # ------------------------------------------------------------------
 
     async def platform_stats(self) -> dict:
+        """Platform-wide numbers for the Owner's Stats tab.
+
+        `total_views` deliberately excludes every `daily_capped` view — a
+        capped view earned nothing, so it must never inflate the headline
+        view count. Missed views are still fully visible to the Owner,
+        just via the separate `daily_capped_views` counter and the
+        `missed_earnings_*` breakdowns below, never folded into
+        `total_views` itself.
+        """
         from models import CountedStatus  # local import avoids a cycle at module load
 
+        genuine_views = [v for v in self.views.values() if not v.daily_capped]
         pending_payout_views = len(
-            [v for v in self.views.values() if v.counted_status == CountedStatus.PENDING_PAYOUT]
+            [v for v in genuine_views if v.counted_status == CountedStatus.PENDING_PAYOUT]
         )
-        daily_capped_views = len([v for v in self.views.values() if v.daily_capped])
+        daily_capped_views = len(self.views) - len(genuine_views)
         total_confirmed_liability = sum(a.balance_confirmed for a in self.admins.values())
         total_paid_out = sum(w.amount for w in self.withdrawals.values() if w.status == WithdrawStatus.PAID)
         return {
             "total_admins": len(self.admins),
             "total_links": len(self.links),
-            "total_views": len(self.views),
+            "total_views": len(genuine_views),
             "pending_payout_views": pending_payout_views,
             "daily_capped_views": daily_capped_views,
             "total_confirmed_liability": round(total_confirmed_liability, 4),
@@ -489,10 +499,15 @@ class Storage:
         totals, and link/view counts. This is the read side of the
         fraud-watching feature; `set_admin_balance` is the write side.
 
+        `total_views` / `confirmed_views` exclude every `daily_capped`
+        view, same as `platform_stats` — a capped view earned nothing, so
+        it never counts toward "views" here either, Owner-facing or not.
         `daily_capped_views` is the read side of the Anti-Abuse System
         (see CPMSetting.max_daily_views_per_admin / cpm_engine.py): how
         many of this Admin's views were watched but excluded from
-        earnings for crossing a viewer's daily cap.
+        earnings for crossing a viewer's daily cap — the Owner's
+        dedicated window onto missed views, kept separate from
+        `total_views` rather than folded into it.
         """
         from models import CountedStatus  # local import avoids a cycle at module load
 
@@ -501,8 +516,9 @@ class Storage:
             return None
 
         views = await self.list_views_by_owner(telegram_id)
-        confirmed_views = [v for v in views if v.counted_status == CountedStatus.CONFIRMED]
-        pending_views = [v for v in views if v.counted_status == CountedStatus.PENDING_PAYOUT]
+        genuine_views = [v for v in views if not v.daily_capped]
+        confirmed_views = [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]
+        pending_views = [v for v in genuine_views if v.counted_status == CountedStatus.PENDING_PAYOUT]
 
         today = datetime.now(timezone.utc).date()
         today_income = 0.0
@@ -521,7 +537,7 @@ class Storage:
                     today_income = round(today_income + amount, 6)
 
         links = await self.list_links_by_owner(telegram_id)
-        daily_capped_views = len([v for v in views if v.daily_capped])
+        daily_capped_views = len(views) - len(genuine_views)
 
         admin_withdrawals = [w for w in self.withdrawals.values() if w.admin_telegram_id == telegram_id]
         total_withdrawn = round(
@@ -537,7 +553,7 @@ class Storage:
             "pending_withdrawal_count": len(pending_withdrawals),
             "pending_withdrawal_amount": round(sum(w.amount for w in pending_withdrawals), 6),
             "total_links": len(links),
-            "total_views": len(views),
+            "total_views": len(genuine_views),
             "confirmed_views": len(confirmed_views),
             "pending_views": len(pending_views),
             "daily_capped_views": daily_capped_views,
@@ -552,9 +568,15 @@ class Storage:
         """Day-by-day view of the Anti-Abuse System's bite: how many views
         were watched but excluded from earnings (`daily_capped`) on each of
         the trailing `days` calendar days (UTC), alongside that day's total
-        view count for context. A single cumulative number hides whether
-        abuse is trending up, down, or was a one-off spike; this is the
-        read side that makes the shape visible.
+        *attempts* (capped + genuine) for context. A single cumulative
+        number hides whether abuse is trending up, down, or was a one-off
+        spike; this is the read side that makes the shape visible.
+
+        `total_attempts` is deliberately a different figure from
+        `total_views` elsewhere in this module: it's the denominator for
+        "how much of this day's traffic was capped", so it must include
+        capped views, whereas `total_views` on platform_stats/admin_stats
+        must never include them.
 
         `estimated_missed_amount` is necessarily an estimate: a capped view
         is routed straight to `credited_amount = 0` and never learns what
@@ -596,7 +618,7 @@ class Storage:
             {
                 "date": d.isoformat(),
                 "capped_views": buckets[d]["capped"],
-                "total_views": buckets[d]["total"],
+                "total_attempts": buckets[d]["total"],
                 "estimated_missed_amount": round(buckets[d]["capped"] * cpm_setting.current_cpm, 6),
             }
             for d in sorted(buckets.keys())
@@ -642,7 +664,7 @@ class Storage:
                     "destination_url": link.destination_url if link else None,
                     "owner_telegram_id": link.owner_telegram_id if link else None,
                     "owner_username": owner.username if owner else None,
-                    "total_views": row["total"],
+                    "total_attempts": row["total"],
                     "capped_views": row["capped"],
                     "capped_rate": round(row["capped"] / row["total"], 4) if row["total"] else 0.0,
                     "estimated_missed_amount": round(row["capped"] * cpm_setting.current_cpm, 6),
