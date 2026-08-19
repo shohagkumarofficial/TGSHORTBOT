@@ -1301,6 +1301,16 @@
         <input type="number" id="minWithdrawAmount" min="0" step="0.01" value="${cs.min_withdraw_amount}" />
         <div class="btn-row"><button class="btn btn-outline btn-block" id="minWithdrawSave">Save minimum</button></div>
       </div>
+      <div class="card">
+        <h3>${icon("alertTriangle", 15)} Anti-abuse: daily view limit</h3>
+        <div class="meta">The most views a single viewer can earn against one Admin's links per day.
+        Once a viewer crosses this on an Admin's links, they still see ads as normal and still reach the
+        destination — the extra views simply stop adding to that Admin's balance, so repeat viewing can't
+        drag that Admin's CPM down. Set to 0 to disable the limit.</div>
+        <label>Max daily view count per Admin</label>
+        <input type="number" id="maxDailyViews" min="0" step="1" value="${cs.max_daily_views_per_admin}" />
+        <div class="btn-row"><button class="btn btn-outline btn-block" id="maxDailyViewsSave">Save limit</button></div>
+      </div>
     `;
     el.querySelector("#cpmSave").addEventListener("click", async () => {
       const btn = el.querySelector("#cpmSave");
@@ -1350,6 +1360,22 @@
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Save minimum";
+      }
+    });
+    el.querySelector("#maxDailyViewsSave").addEventListener("click", async () => {
+      const btn = el.querySelector("#maxDailyViewsSave");
+      const max_daily_views_per_admin = parseInt(el.querySelector("#maxDailyViews").value, 10);
+      if (!(max_daily_views_per_admin >= 0)) { toast("Enter a valid limit (0 or more)", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ max_daily_views_per_admin }) });
+        state.cpm.max_daily_views_per_admin = max_daily_views_per_admin;
+        toast(max_daily_views_per_admin > 0 ? "Daily view limit updated" : "Daily view limit disabled", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save limit";
       }
     });
   }
@@ -1435,6 +1461,7 @@
         <div class="stat-box"><div class="n">${d.pending_withdrawal_count}${d.pending_withdrawal_count ? ` (${fmt(d.pending_withdrawal_amount)})` : ""}</div><div class="l">Pending withdrawals</div></div>
         <div class="stat-box"><div class="n">${d.total_links}</div><div class="l">Total links</div></div>
         <div class="stat-box"><div class="n">${d.total_views}</div><div class="l">Total views</div></div>
+        <div class="stat-box"><div class="n">${d.daily_capped_views}</div><div class="l">Daily-capped views</div></div>
       </div>
 
       <div class="card">
@@ -1532,6 +1559,7 @@
         <div class="stat-box"><div class="n">${s.total_links}</div><div class="l">Links</div></div>
         <div class="stat-box"><div class="n">${s.total_views}</div><div class="l">Total views</div></div>
         <div class="stat-box"><div class="n">${s.pending_payout_views}</div><div class="l">Pending views</div></div>
+        <div class="stat-box"><div class="n">${s.daily_capped_views}</div><div class="l">Daily-capped views</div></div>
         <div class="stat-box"><div class="n">${fmt(s.total_confirmed_liability)}</div><div class="l">Confirmed liability</div></div>
         <div class="stat-box"><div class="n">${fmt(s.total_paid_out)}</div><div class="l">Total paid out</div></div>
       </div>
