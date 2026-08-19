@@ -403,6 +403,7 @@
     radio: '<circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.25a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"></path>',
     banknote: '<rect x="2" y="6" width="20" height="12" rx="2"></rect><circle cx="12" cy="12" r="3"></circle><line x1="6" y1="12" x2="6.01" y2="12"></line><line x1="18" y1="12" x2="18.01" y2="12"></line>',
     trendingUp: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline>',
+    trendingDown: '<polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline><polyline points="17 18 23 18 23 12"></polyline>',
     clock: '<circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>',
     alertTriangle: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line>',
     checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>',
@@ -419,6 +420,74 @@
 
   function isOwner() {
     return !!(state.me && state.me.role === "owner");
+  }
+
+  // ---- Missed-earnings analytics (Anti-Abuse System read side) --------
+  // Shared by the platform-wide Stats tab and the per-Admin detail view,
+  // scoped by whichever `missed_earnings_trend` / `missed_earnings_by_link`
+  // payload is passed in (platform-wide vs one Admin's own links).
+
+  function missedTrendChartSVG(trend) {
+    if (!trend || !trend.length) return `<div class="empty">No view history yet.</div>`;
+    const W = 320, H = 110, padL = 3, padR = 3, padB = 16, padT = 6;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    const n = trend.length;
+    const gap = 2.5;
+    const barW = Math.max(2, (plotW - gap * (n - 1)) / n);
+    const maxVal = Math.max(1, ...trend.map((d) => d.capped_views));
+    const bars = trend.map((d, i) => {
+      const x = padL + i * (barW + gap);
+      const h = d.capped_views > 0 ? Math.max(2, (d.capped_views / maxVal) * plotH) : 1;
+      const y = padT + (plotH - h);
+      const shortLabel = (d.date || "").slice(5).replace("-", "/");
+      const showLabel = i === 0 || i === n - 1 || i === Math.floor(n / 2);
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"
+          fill="${d.capped_views > 0 ? "var(--red)" : "var(--hairline)"}" opacity="${d.capped_views > 0 ? "0.88" : "0.6"}">
+          <title>${esc(shortLabel)} — ${d.capped_views} missed view(s), ~${fmt(d.estimated_missed_amount)}</title>
+        </rect>${showLabel ? `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>` : ""}`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
+  }
+
+  function missedByLinkListHTML(rows, opts) {
+    opts = opts || {};
+    if (!rows || !rows.length) {
+      return `<div class="card"><div class="empty">No links currently flagged by the anti-abuse cap.</div></div>`;
+    }
+    return rows.map((r) => `
+      <div class="card">
+        <div class="meta" style="color:var(--text); font-weight:600;">/r/${esc(r.short_code)}${
+          opts.showOwner ? ` · ${r.owner_username ? "@" + esc(r.owner_username) : "id " + r.owner_telegram_id}` : ""
+        }</div>
+        <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(r.destination_url || "")}</div>
+        <div class="meta">${r.capped_views} of ${r.total_views} views missed (${Math.round(r.capped_rate * 100)}%) · ~${fmt(r.estimated_missed_amount)} estimated missed</div>
+      </div>
+    `).join("");
+  }
+
+  function suggestedLimitCardHTML(sug) {
+    if (!sug || !sug.sample_size) {
+      return `<div class="card">
+        <h3>${icon("trendingUp", 15)} Suggested daily view limit</h3>
+        <div class="meta">Not enough view history yet to suggest a limit.</div>
+      </div>`;
+    }
+    const alreadySet = sug.suggested_limit === sug.current_limit;
+    return `<div class="card">
+      <h3>${icon("trendingUp", 15)} Suggested daily view limit</h3>
+      <div class="meta">Over the last ${sug.window_days} days, a typical viewer visits one Admin's links about
+        <b style="color:var(--text)">${sug.median_views_per_viewer_per_day}×/day</b>; the heaviest 10% reach
+        <b style="color:var(--text)">${sug.p90_views_per_viewer_per_day}×/day</b> (99th percentile: ${sug.p99_views_per_viewer_per_day}×).
+        The suggestion targets that top 10% — a rough starting point to review, not a guarantee.</div>
+      <div class="stat-grid" style="margin-top:10px;">
+        <div class="stat-box"><div class="n">${sug.current_limit === 0 ? "Off" : sug.current_limit}</div><div class="l">Current limit</div></div>
+        <div class="stat-box"><div class="n">${sug.suggested_limit}</div><div class="l">Suggested limit</div></div>
+      </div>
+      ${alreadySet
+        ? `<div class="meta" style="margin-top:8px; color:var(--emerald);">${icon("checkCircle", 13)} Already set to the suggested value.</div>`
+        : `<div class="btn-row" style="margin-top:10px;"><button class="btn btn-outline btn-block" id="applySuggestedLimit">Apply suggested limit (${sug.suggested_limit})</button></div>`}
+    </div>`;
   }
 
   let toastTimer = null;
@@ -1464,6 +1533,17 @@
         <div class="stat-box"><div class="n">${d.daily_capped_views}</div><div class="l">Daily-capped views</div></div>
       </div>
 
+      <div class="section-title" style="margin-top:14px;">${icon("alertTriangle", 14)} Missed earnings trend (last 14 days)</div>
+      <div class="card">
+        <div class="meta" style="margin-bottom:6px;">This Admin's views excluded from earnings by the daily anti-abuse cap, day by day.</div>
+        ${missedTrendChartSVG(d.missed_earnings_trend)}
+      </div>
+
+      ${d.missed_earnings_by_link && d.missed_earnings_by_link.length ? `
+        <div class="section-title" style="margin-top:14px;">${icon("link", 14)} Links with missed views</div>
+        <div>${missedByLinkListHTML(d.missed_earnings_by_link, { showOwner: false })}</div>
+      ` : ""}
+
       <div class="card">
         <h3>Traffic Sources</h3>
         ${(a.traffic_sources && a.traffic_sources.length)
@@ -1563,7 +1643,36 @@
         <div class="stat-box"><div class="n">${fmt(s.total_confirmed_liability)}</div><div class="l">Confirmed liability</div></div>
         <div class="stat-box"><div class="n">${fmt(s.total_paid_out)}</div><div class="l">Total paid out</div></div>
       </div>
+
+      <div class="section-title" style="margin-top:14px;">${icon("alertTriangle", 14)} Missed earnings trend (last 14 days)</div>
+      <div class="card">
+        <div class="meta" style="margin-bottom:6px;">Views watched but excluded from earnings by the daily anti-abuse cap, day by day — a rising bar chain means abuse is trending up, not just a one-off spike.</div>
+        ${missedTrendChartSVG(s.missed_earnings_trend)}
+      </div>
+
+      ${suggestedLimitCardHTML(s.suggested_daily_limit)}
+
+      <div class="section-title" style="margin-top:14px;">${icon("link", 14)} Top links by missed views</div>
+      <div id="missedByLink">${missedByLinkListHTML(s.missed_earnings_by_link, { showOwner: true })}</div>
     `;
+    const applyBtn = el.querySelector("#applySuggestedLimit");
+    if (applyBtn) {
+      applyBtn.addEventListener("click", async () => {
+        const newLimit = s.suggested_daily_limit.suggested_limit;
+        applyBtn.disabled = true;
+        applyBtn.textContent = "Applying…";
+        try {
+          await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ max_daily_views_per_admin: newLimit }) });
+          if (state.cpm) state.cpm.max_daily_views_per_admin = newLimit;
+          toast(`Daily view limit set to ${newLimit}`, "ok");
+          renderStats(el);
+        } catch (e) {
+          toast(e.message, "err");
+          applyBtn.disabled = false;
+          applyBtn.textContent = `Apply suggested limit (${newLimit})`;
+        }
+      });
+    }
     renderTopCard();
   }
 
