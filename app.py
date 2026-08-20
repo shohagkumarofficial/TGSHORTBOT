@@ -176,7 +176,12 @@ async def redirect_entry(short_code: str):
 @app.get("/panel", response_class=HTMLResponse)
 async def panel_page():
     with open("webapp/panel.html", "r", encoding="utf-8") as f:
-        return HTMLResponse(f.read())
+        html = f.read()
+    # Powers the "Open in Telegram" button on the outside-Telegram landing
+    # page (shown when there's no initData) — always 200 OK with real HTML,
+    # never a redirect, so ad-network moderation bots see a working page.
+    html = html.replace("__BOT_USERNAME__", settings.BOT_USERNAME)
+    return HTMLResponse(html)
 
 
 # ---------------------------------------------------------------------------
