@@ -391,7 +391,40 @@
     try { tg.expand(); } catch (e) {}
     try { tg.setHeaderColor("#12141c"); tg.setBackgroundColor("#12141c"); } catch (e) {}
   }
-  const initData = window.Telegram?.WebApp?.initData || "";
+  // `let`, not `const` — waitForInitData() below may update this once
+  // the Telegram bridge actually delivers initData (see that function's
+  // comment for why a single synchronous read isn't always enough).
+  let initData = window.Telegram?.WebApp?.initData || "";
+
+  // Telegram sometimes prerenders/prefetches a Mini App in the
+  // background before the user actually opens it, or the bridge script
+  // is simply still connecting on a slow network — in both cases
+  // initData can read as empty for a brief moment even though this is a
+  // completely genuine in-Telegram session, not an outside visit. A
+  // single synchronous check at load time can't tell that apart from
+  // truly being outside Telegram, so instead of deciding instantly,
+  // poll for up to ~1.2s for initData to show up before concluding this
+  // really is an outside-Telegram visit. Real outside visits (where
+  // window.Telegram never appears at all) still resolve almost
+  // instantly since there's nothing to wait for.
+  function waitForInitData(maxWaitMs, intervalMs) {
+    return new Promise((resolve) => {
+      const deadline = Date.now() + maxWaitMs;
+      (function poll() {
+        const fresh = window.Telegram?.WebApp?.initData || "";
+        if (fresh) {
+          initData = fresh;
+          resolve(true);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+        setTimeout(poll, intervalMs);
+      })();
+    });
+  }
 
   const state = {
     me: null,
@@ -1796,6 +1829,12 @@
   async function loadStats() { state.stats = await api("/api/admin/stats"); }
 
   async function init() {
+    if (!initData) {
+      // Give the Telegram bridge a brief window to catch up before
+      // concluding this is genuinely outside Telegram (see
+      // waitForInitData's comment above for why this matters).
+      await waitForInitData(1200, 50);
+    }
     if (!initData) {
       renderOutsideTelegram();
       return;
