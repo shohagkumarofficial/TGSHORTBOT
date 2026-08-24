@@ -45,6 +45,8 @@ from supabase import AsyncClient, create_async_client
 from models import (
     Admin,
     AdminStatus,
+    AdNetwork,
+    AdNetworkSetting,
     CPMHistoryEntry,
     CPMSetting,
     Link,
@@ -72,6 +74,7 @@ class Storage:
         self.withdrawals: Dict[str, WithdrawRequest] = {}
         self.cpm_setting: CPMSetting = CPMSetting()
         self.policy_setting: PolicySetting = PolicySetting()
+        self.ad_network_setting: AdNetworkSetting = AdNetworkSetting()
         self.cpm_history: List[CPMHistoryEntry] = []
 
         self._view_index: Dict[Tuple[str, int], str] = {}
@@ -93,6 +96,7 @@ class Storage:
         withdrawals_res = await self.client.table("withdrawals").select("*").execute()
         cpm_setting_res = await self.client.table("cpm_settings").select("*").eq("id", 1).execute()
         policy_setting_res = await self.client.table("policy_settings").select("*").eq("id", 1).execute()
+        ad_network_setting_res = await self.client.table("ad_network_settings").select("*").eq("id", 1).execute()
         cpm_history_res = await self.client.table("cpm_history").select("*").execute()
 
         traffic_by_admin: Dict[int, List[TrafficSource]] = {}
@@ -127,6 +131,18 @@ class Storage:
         else:
             self.policy_setting = PolicySetting()
 
+        if ad_network_setting_res.data:
+            ans_row = dict(ad_network_setting_res.data[0])
+            ans_row.pop("id", None)
+            self.ad_network_setting = AdNetworkSetting(**ans_row)
+        else:
+            # Shouldn't happen once the `ad_network_settings` table is
+            # created (see README), but self-heal instead of
+            # crash-looping if it's ever missing — the platform falls
+            # back to the three-Adsgram-slots default until the Owner
+            # saves something from the panel's Ad Networks tab.
+            self.ad_network_setting = AdNetworkSetting()
+
         self.cpm_history = [CPMHistoryEntry(**row) for row in cpm_history_res.data]
 
         self._view_index = {
@@ -153,6 +169,7 @@ class Storage:
         withdrawal_rows = [w.model_dump(mode="json") for w in self.withdrawals.values()]
         cpm_setting_row = {"id": 1, **self.cpm_setting.model_dump(mode="json")}
         policy_setting_row = {"id": 1, **self.policy_setting.model_dump(mode="json")}
+        ad_network_setting_row = {"id": 1, **self.ad_network_setting.model_dump(mode="json")}
         cpm_history_rows = [e.model_dump(mode="json") for e in self.cpm_history]
 
         if admin_rows:
@@ -167,6 +184,7 @@ class Storage:
             await self.client.table("withdrawals").upsert(withdrawal_rows, on_conflict="request_id").execute()
         await self.client.table("cpm_settings").upsert(cpm_setting_row, on_conflict="id").execute()
         await self.client.table("policy_settings").upsert(policy_setting_row, on_conflict="id").execute()
+        await self.client.table("ad_network_settings").upsert(ad_network_setting_row, on_conflict="id").execute()
         if cpm_history_rows:
             await self.client.table("cpm_history").upsert(cpm_history_rows, on_conflict="entry_id").execute()
 
@@ -580,6 +598,59 @@ class Storage:
         if not admin:
             return False
         return admin.policy_accepted_version >= self.policy_setting.version
+
+    # ------------------------------------------------------------------
+    # Ad networks (Adsgram / Monetag / GigaPub credentials + slot order)
+    # ------------------------------------------------------------------
+    # Same single-row pattern as CPMSetting/PolicySetting above. Bounded
+    # by MIN_AD_COUNT/MAX_AD_COUNT below since a slot sequence longer
+    # than the max possible Link.ad_count could never be fully reached.
+
+    async def get_ad_network_setting(self) -> AdNetworkSetting:
+        return self.ad_network_setting
+
+    async def update_ad_network_setting(
+        self,
+        *,
+        adsgram_block_id: Optional[str] = None,
+        monetag_zone_id: Optional[str] = None,
+        monetag_sdk_url: Optional[str] = None,
+        gigapub_project_id: Optional[str] = None,
+        slot_sequence: Optional[List[AdNetwork]] = None,
+        updated_by: Optional[int] = None,
+    ) -> AdNetworkSetting:
+        async with self._lock:
+            ans = self.ad_network_setting
+            detail: dict = {}
+
+            if adsgram_block_id is not None and adsgram_block_id != ans.adsgram_block_id:
+                detail["adsgram_block_id"] = {"from": ans.adsgram_block_id, "to": adsgram_block_id}
+                ans.adsgram_block_id = adsgram_block_id
+            if monetag_zone_id is not None and monetag_zone_id != ans.monetag_zone_id:
+                detail["monetag_zone_id"] = {"from": ans.monetag_zone_id, "to": monetag_zone_id}
+                ans.monetag_zone_id = monetag_zone_id
+            if monetag_sdk_url is not None and monetag_sdk_url != ans.monetag_sdk_url:
+                detail["monetag_sdk_url"] = {"from": ans.monetag_sdk_url, "to": monetag_sdk_url}
+                ans.monetag_sdk_url = monetag_sdk_url
+            if gigapub_project_id is not None and gigapub_project_id != ans.gigapub_project_id:
+                detail["gigapub_project_id"] = {"from": ans.gigapub_project_id, "to": gigapub_project_id}
+                ans.gigapub_project_id = gigapub_project_id
+            if slot_sequence is not None:
+                old_values = [n.value for n in ans.slot_sequence]
+                new_values = [n.value for n in slot_sequence]
+                if new_values != old_values:
+                    detail["slot_sequence"] = {"from": old_values, "to": new_values}
+                    ans.slot_sequence = slot_sequence
+
+            ans.updated_at = now_iso()
+            ans.updated_by = updated_by
+
+            if detail:
+                detail["by"] = updated_by
+                self.cpm_history.append(CPMHistoryEntry(event="ad_network_change", detail=detail))
+
+            await self._save_locked()
+            return ans
 
     # ------------------------------------------------------------------
     # Stats

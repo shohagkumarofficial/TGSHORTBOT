@@ -10,6 +10,7 @@ Deployed on Render with:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import string
@@ -32,7 +33,17 @@ from bot import (
     set_bot_commands,
 )
 from config import get_settings
-from models import Admin, AdminStatus, CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
+from models import (
+    Admin,
+    AdminStatus,
+    AdNetwork,
+    AdNetworkSetting,
+    CountedStatus,
+    CPMMode,
+    Role,
+    WithdrawMethod,
+    WithdrawStatus,
+)
 from storage import Storage
 from telegram_auth import InitDataError, validate_init_data
 from validators import bd_mobile_validation_error, normalize_bd_mobile_number
@@ -192,19 +203,46 @@ async def telegram_webhook(
 # Short-link entrypoint — serves the ad-lock Mini App page (Section 4.2)
 # ---------------------------------------------------------------------------
 
+def _ad_slot_sequence(ans: AdNetworkSetting, count: int) -> list[str]:
+    """Expands the Owner's configured Ad1/Ad2/Ad3... pattern out to
+    exactly `count` entries (a Link's `ad_count`), cycling back to the
+    start once the configured sequence runs out — see
+    AdNetworkSetting.slot_sequence's docstring in models.py.
+    """
+    seq = ans.slot_sequence or [AdNetwork.ADSGRAM]
+    return [seq[i % len(seq)].value for i in range(count)]
+
+
+def _json_for_script(obj) -> str:
+    """Serializes `obj` for embedding as a bare (unquoted) JS expression
+    inside webapp/viewer.html's inline <script> tag — safe against a
+    stray "</script>" inside an Owner-entered value ever prematurely
+    closing the surrounding tag.
+    """
+    return json.dumps(obj).replace("</", "<\\/")
+
+
 @app.get("/r/{short_code}", response_class=HTMLResponse)
 async def redirect_entry(short_code: str):
     link = await storage.get_link(short_code)
     if not link:
         raise HTTPException(status_code=404, detail="link not found")
     cs = await storage.get_cpm_setting()
+    ans = await storage.get_ad_network_setting()
+    ad_config = {
+        "networks": {
+            "adsgram": {"block_id": ans.adsgram_block_id},
+            "monetag": {"zone_id": ans.monetag_zone_id, "sdk_url": ans.monetag_sdk_url},
+            "gigapub": {"project_id": ans.gigapub_project_id},
+        },
+        "sequence": _ad_slot_sequence(ans, link.ad_count),
+    }
     with open("webapp/viewer.html", "r", encoding="utf-8") as f:
         html = f.read()
     html = (
         html.replace("__SHORT_CODE__", short_code)
-        .replace("__ADSGRAM_BLOCK_ID__", settings.ADSGRAM_BLOCK_ID)
+        .replace("__AD_CONFIG_JSON__", _json_for_script(ad_config))
         .replace("__AD_VIEW_DELAY_SECONDS__", str(cs.ad_view_delay_seconds))
-        .replace("__TOTAL_ADS__", str(link.ad_count))
     )
     return HTMLResponse(html)
 
@@ -476,6 +514,64 @@ async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner))
         updated_by=owner.telegram_id,
     )
     return cs.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Ad networks — Adsgram / Monetag / GigaPub credentials + the Ad1/Ad2/Ad3...
+# network sequence, both Owner-only (see webapp/panel.html's Ad Networks tab
+# and _ad_slot_sequence() above, which app.py's /r/{short_code} route uses to
+# actually apply this at ad-serving time).
+# ---------------------------------------------------------------------------
+
+@app.get("/api/ad-networks")
+async def get_ad_networks(owner: Admin = Depends(require_owner)):
+    ans = await storage.get_ad_network_setting()
+    return ans.model_dump()
+
+
+@app.post("/api/admin/ad-networks")
+async def admin_update_ad_networks(payload: dict, owner: Admin = Depends(require_owner)):
+    adsgram_block_id = payload.get("adsgram_block_id")
+    if adsgram_block_id is not None:
+        adsgram_block_id = str(adsgram_block_id).strip()
+
+    monetag_zone_id = payload.get("monetag_zone_id")
+    if monetag_zone_id is not None:
+        monetag_zone_id = str(monetag_zone_id).strip()
+
+    monetag_sdk_url = payload.get("monetag_sdk_url")
+    if monetag_sdk_url is not None:
+        monetag_sdk_url = str(monetag_sdk_url).strip()
+
+    gigapub_project_id = payload.get("gigapub_project_id")
+    if gigapub_project_id is not None:
+        gigapub_project_id = str(gigapub_project_id).strip()
+
+    slot_sequence = None
+    if payload.get("slot_sequence") is not None:
+        raw_sequence = payload["slot_sequence"]
+        if not isinstance(raw_sequence, list) or not raw_sequence:
+            raise HTTPException(status_code=400, detail="slot_sequence must be a non-empty list")
+        if len(raw_sequence) > Storage.MAX_AD_COUNT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"slot_sequence can have at most {Storage.MAX_AD_COUNT} entries",
+            )
+        try:
+            slot_sequence = [AdNetwork(v) for v in raw_sequence]
+        except ValueError:
+            valid = ", ".join(n.value for n in AdNetwork)
+            raise HTTPException(status_code=400, detail=f"slot_sequence entries must be one of: {valid}")
+
+    ans = await storage.update_ad_network_setting(
+        adsgram_block_id=adsgram_block_id,
+        monetag_zone_id=monetag_zone_id,
+        monetag_sdk_url=monetag_sdk_url,
+        gigapub_project_id=gigapub_project_id,
+        slot_sequence=slot_sequence,
+        updated_by=owner.telegram_id,
+    )
+    return ans.model_dump()
 
 
 # ---------------------------------------------------------------------------

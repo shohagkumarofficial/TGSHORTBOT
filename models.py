@@ -56,6 +56,12 @@ class WithdrawStatus(str, Enum):
     REJECTED = "rejected"
 
 
+class AdNetwork(str, Enum):
+    ADSGRAM = "adsgram"
+    MONETAG = "monetag"
+    GIGAPUB = "gigapub"
+
+
 class TrafficSource(BaseModel):
     """One place this Admin brings viewers from (e.g. a Telegram channel
     or a YouTube channel link). An Admin can hold several of these at
@@ -183,6 +189,46 @@ class CPMSetting(BaseModel):
     ad_view_delay_seconds: float = 7
     min_withdraw_amount: float = 0
     max_daily_views_per_admin: int = 0
+    updated_at: str = Field(default_factory=now_iso)
+    updated_by: Optional[int] = None
+
+
+class AdNetworkSetting(BaseModel):
+    """Single active record (same one-row pattern as CPMSetting /
+    PolicySetting) holding every ad network's credentials plus the
+    per-slot network sequence `webapp/viewer.html` follows when playing
+    back a Link's `ad_count` ads.
+
+    Each network's credentials are independent and optional — the Owner
+    can fill in just Adsgram, just Monetag, just GigaPub, or any mix,
+    and only reference the ones actually configured in `slot_sequence`.
+    A slot pointed at a network with no ID filled in simply fails to
+    load for the viewer, surfacing as the same "ad didn't load, try
+    again" state the app already shows for any other ad-load failure —
+    there's no separate validation blocking that combination.
+
+    `monetag_sdk_url` is the full `<script src="...">` URL copied from
+    the Monetag dashboard's "Get SDK" tag for this zone, not just a
+    domain — Monetag personalizes this domain per publisher/zone for
+    anti-adblock reasons, so there's no single fixed URL this platform
+    could default to (see README's "Ad networks" section).
+
+    `slot_sequence` is an ordered list of AdNetwork values, one per ad
+    position (Ad 1, Ad 2, Ad 3, ...). It doesn't need to be as long as
+    any given Link.ad_count — app.py's redirect_entry cycles back to
+    the start of the sequence once it runs out, so e.g. a 3-entry
+    sequence naturally repeats for a Link with ad_count=7 as
+    Ad1,Ad2,Ad3,Ad1,Ad2,Ad3,Ad1. Defaults to three Adsgram slots,
+    matching the platform's original fixed single-network behavior.
+    """
+
+    adsgram_block_id: str = ""
+    monetag_zone_id: str = ""
+    monetag_sdk_url: str = ""
+    gigapub_project_id: str = ""
+    slot_sequence: list[AdNetwork] = Field(
+        default_factory=lambda: [AdNetwork.ADSGRAM, AdNetwork.ADSGRAM, AdNetwork.ADSGRAM]
+    )
     updated_at: str = Field(default_factory=now_iso)
     updated_by: Optional[int] = None
 

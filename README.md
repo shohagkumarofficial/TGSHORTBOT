@@ -67,11 +67,14 @@ committed, so there's nothing to conflict with in version control.
   own "My Links" list (`GET /api/links`) but has no endpoint that can
   change it. `webapp/viewer.html`'s dial, step dots, and copy are all
   built dynamically from `Link.ad_count` at render time (`/r/{code}`
-  injects it as `__TOTAL_ADS__`) rather than assuming a fixed 3.
+  derives it from the length of the per-slot ad network sequence it
+  injects as `__AD_CONFIG_JSON__` — see **Ad networks**) rather than
+  assuming a fixed 3.
 - **Viewer flow** (4.2): the deep link opens the bot, which replies with
   a WebApp button pointing at `/r/{code}` — a Telegram Mini App
   (`webapp/viewer.html`) that runs that link's `ad_count` sequential
-  Adsgram ads, then calls
+  ads (Adsgram, Monetag, and/or GigaPub, per the Owner's configured
+  order — see **Ad networks**), then calls
   `POST /api/log-view`, then `GET /api/link/{code}`, then redirects.
 - **Fraud/dedupe** (4.3): one countable view per `(short_code, viewer)`
   pair, enforced atomically in `storage.create_view`. On top of that, an
@@ -154,8 +157,9 @@ re-skinned:
   listed right on the Overview tab as a simple stacked list, since the
   Owner uses these just like any Admin would. Only genuine platform-level
   configuration —
-  CPM Settings and Platform Stats — lives behind the ⚙️ menu at the top
-  right, as a bottom-sheet drawer, instead of cluttering the main tab bar.
+  CPM Settings, Ad Networks, User Policy, and Platform Stats — lives
+  behind the ⚙️ menu at the top right, as a bottom-sheet drawer, instead
+  of cluttering the main tab bar.
 
 ## Owner balance corrections
 
@@ -189,9 +193,11 @@ is the whole point of having them for fraud-watching in the first place.
    the token and the bot's `@username`.
 2. Get your numeric Telegram ID from [@userinfobot](https://t.me/userinfobot)
    — this is your `OWNER_TELEGRAM_ID`.
-3. Get an Adsgram block ID from your Adsgram dashboard — create it as a
-   **Reward** (or Interstitial) block, not a Task block; see "Adsgram
-   integration notes" below for why.
+3. You don't need an ad network ID before your first run anymore — Adsgram,
+   Monetag, and GigaPub block/zone/project IDs are all set from the admin
+   panel's **Ad Networks** tab after the bot is up (see "Ad networks"
+   below), not from an env var. Sign up with whichever of the three you
+   plan to use and grab their dashboard's ID whenever it's convenient.
 4. Copy `.env.example` to `.env` and fill in the values. For local dev,
    `WEBHOOK_URL`/`WEBAPP_BASE_URL` need to be a publicly reachable HTTPS
    URL (e.g. via `ngrok http 8000`), since Telegram can't call `localhost`
@@ -214,21 +220,76 @@ is the whole point of having them for fraud-watching in the first place.
 6. Message your bot `/start` from your Owner account, then `/newlink` to
    try the full loop.
 
-## Adsgram integration notes
+## Ad networks
 
-`webapp/viewer.html` calls `window.Adsgram.init({ blockId }).show()` —
-per Adsgram's own docs, this exact call is shared by both **Reward** and
-**Interstitial** block types, so no code changes are needed for either.
-The two differ in one important way for this app's payout model: an
-Interstitial block can resolve `.show()` successfully even if the viewer
-closes the ad early, while a Reward block only resolves once the ad is
-watched in full. Since a resolved `.show()` here directly triggers a
-credited view (and therefore money owed to the Admin), **create the
-Adsgram block as Reward, not Interstitial** — otherwise a viewer who
-skips the ad can still trigger a payout that Adsgram itself may not
-compensate for. Avoid Task-type blocks entirely for this flow; they use
-a completely different `<adsgram-task>` embed, not `.show()`, and are
-meant for one-off actions rather than a repeated ad-watching loop.
+Adsgram, Monetag, and GigaPub block/zone/project IDs, and the order in
+which each ad slot pulls from them, all live in the `ad_network_settings`
+Supabase table (`models.AdNetworkSetting`, mirroring the single-row
+pattern `cpm_settings`/`policy_settings` already use) and are managed
+entirely from the Owner-only **Ad Networks** tab in `/panel` — there's no
+env var for any of this anymore. `app.py`'s `/r/{code}` route reads that
+row on every view and injects the resolved config straight into
+`webapp/viewer.html`.
+
+Run this once in Supabase's SQL editor before using the feature (the app
+self-heals to an empty/default config if the table doesn't exist yet, but
+saving from the panel needs it to be there):
+
+```sql
+create table if not exists ad_network_settings (
+  id integer primary key default 1,
+  adsgram_block_id text not null default '',
+  monetag_zone_id text not null default '',
+  monetag_sdk_url text not null default '',
+  gigapub_project_id text not null default '',
+  slot_sequence jsonb not null default '["adsgram","adsgram","adsgram"]',
+  updated_at text not null default now()::text,
+  updated_by bigint
+);
+```
+
+**Ad display order.** The panel's "Ad display order" card is an ordered
+list — Ad 1, Ad 2, Ad 3, ... — where each position picks a network, e.g.:
+
+```
+Ad 1 — Adsgram
+Ad 2 — Monetag
+Ad 3 — GigaPub
+```
+
+or any repeating mix, like `Adsgram, Monetag, Adsgram`. This doesn't need
+to be as long as a given link's `ad_count` — the sequence just repeats
+from the top once it runs out, so a 3-entry sequence covers a 7-ad link as
+`Ad1, Ad2, Ad3, Ad1, Ad2, Ad3, Ad1`. A slot pointed at a network with no
+ID filled in simply fails to load for that viewer, surfacing the same
+"ad didn't load, try again" state as any other ad error — nothing blocks
+saving an incomplete combination.
+
+**Per-network integration details**, for reference:
+
+- **Adsgram** — `webapp/viewer.html` calls
+  `window.Adsgram.init({ blockId }).show()`. Per Adsgram's own docs, this
+  exact call is shared by both **Reward** and **Interstitial** block
+  types. The two differ in one important way for this app's payout model:
+  an Interstitial block can resolve `.show()` successfully even if the
+  viewer closes the ad early, while a Reward block only resolves once the
+  ad is watched in full. Since a resolved `.show()` here directly triggers
+  a credited view (and therefore money owed to the Admin), **create the
+  Adsgram block as Reward, not Interstitial** — otherwise a viewer who
+  skips the ad can still trigger a payout Adsgram itself may not
+  compensate for. Avoid Task-type blocks entirely; they use a completely
+  different `<adsgram-task>` embed, not `.show()`.
+- **Monetag** — needs two values, not one: the **Zone ID**, and the full
+  `<script src="...">` URL from Monetag's own "Get SDK" → Rewarded
+  Interstitial tag for that zone. Monetag personalizes that script's
+  domain per publisher/zone for anti-adblock reasons, so copy the exact
+  URL shown in your dashboard rather than guessing at one — there's no
+  single fixed domain this app could default to. The viewer loads that
+  script with `data-zone`/`data-sdk="show_<zone>"` attributes, then calls
+  `window.show_<zone>()`, matching Monetag's documented integration.
+- **GigaPub** — needs only a Project ID. The viewer loads
+  `https://ad.gigapub.tech/script?id=<project_id>` and calls
+  `window.showGiga()`.
 
 The bare root domain (`https://tgshortbot.onrender.com`, no path) is the
 one registered with both BotFather (as the bot's Mini App / menu button
@@ -247,12 +308,15 @@ can access what, since role is still decided server-side by Telegram ID.
    `render.yaml` and provision the web service.
 3. Fill in the marked-`sync: false` environment variables in Render's
    dashboard (`BOT_TOKEN`, `BOT_USERNAME`, `WEBHOOK_URL`, `WEBHOOK_SECRET`,
-   `ADSGRAM_BLOCK_ID`, `OWNER_TELEGRAM_ID`, `WEBAPP_BASE_URL`) — for
+   `OWNER_TELEGRAM_ID`, `WEBAPP_BASE_URL`) — for
    `WEBHOOK_URL`/`WEBAPP_BASE_URL`, use the `https://<service>.onrender.com`
    URL Render assigns you.
 4. Deploy. `GET /health` is wired as the health check, which is what
    keeps a free-tier service from sleeping.
-5. Test the full loop: `/start` the bot, `/trafficsource` to set where
+5. Create the `ad_network_settings` table (see "Ad networks" above), then
+   from `/panel`'s Ad Networks tab fill in whichever of Adsgram / Monetag /
+   GigaPub you're using and set the display order.
+6. Test the full loop: `/start` the bot, `/trafficsource` to set where
    you'll share links, `/newlink`, open the resulting `t.me/...` link,
    watch the ads (3 by default — see **Ad count per link**), confirm the
    redirect, then request a withdrawal and

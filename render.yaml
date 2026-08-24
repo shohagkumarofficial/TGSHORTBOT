@@ -15,8 +15,6 @@ services:
         sync: false
       - key: WEBHOOK_SECRET
         sync: false
-      - key: ADSGRAM_BLOCK_ID
-        sync: false
       - key: OWNER_TELEGRAM_ID
         sync: false
       - key: WEBAPP_BASE_URL
