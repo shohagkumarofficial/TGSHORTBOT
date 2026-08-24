@@ -251,27 +251,46 @@
     });
   }
 
-  function ensureNetworkLoaded(network) {
-    if (sdkLoadPromises[network]) return sdkLoadPromises[network];
-
+  function startNetworkLoad(network) {
     if (network === "adsgram") {
-      sdkLoadPromises[network] = loadScript("https://sad.adsgram.ai/js/sad.min.js");
-    } else if (network === "monetag") {
+      return loadScript("https://sad.adsgram.ai/js/sad.min.js");
+    }
+    if (network === "monetag") {
       const cfg = AD_CONFIG.networks.monetag || {};
       const zoneId = cfg.zone_id || "";
-      sdkLoadPromises[network] = loadScript(cfg.sdk_url, {
+      if (!cfg.sdk_url) {
+        return Promise.reject(new Error("Monetag SDK script URL is not configured"));
+      }
+      return loadScript(cfg.sdk_url, {
         "data-zone": zoneId,
         "data-sdk": "show_" + zoneId,
       });
-    } else if (network === "gigapub") {
-      const cfg = AD_CONFIG.networks.gigapub || {};
-      sdkLoadPromises[network] = loadScript(
-        "https://ad.gigapub.tech/script?id=" + encodeURIComponent(cfg.project_id || "")
-      );
-    } else {
-      sdkLoadPromises[network] = Promise.reject(new Error("unknown ad network: " + network));
     }
-    return sdkLoadPromises[network];
+    if (network === "gigapub") {
+      const cfg = AD_CONFIG.networks.gigapub || {};
+      if (!cfg.project_id) {
+        return Promise.reject(new Error("GigaPub Project ID is not configured"));
+      }
+      return loadScript(
+        "https://ad.gigapub.tech/script?id=" + encodeURIComponent(cfg.project_id)
+      );
+    }
+    return Promise.reject(new Error("unknown ad network: " + network));
+  }
+
+  function ensureNetworkLoaded(network) {
+    if (sdkLoadPromises[network]) return sdkLoadPromises[network];
+
+    // Only a *successful* load is memoized. Caching a rejection here would
+    // brick the "Try that ad again" button permanently: every retry would
+    // re-await the same settled-rejected promise and fail instantly without
+    // ever re-requesting the script.
+    const p = startNetworkLoad(network);
+    sdkLoadPromises[network] = p;
+    p.catch(() => {
+      if (sdkLoadPromises[network] === p) delete sdkLoadPromises[network];
+    });
+    return p;
   }
 
   // Resolves once the reward for this ad is confirmed by that network's
@@ -292,6 +311,21 @@
       await showFn();
     } else if (network === "gigapub") {
       if (typeof window.showGiga !== "function") throw new Error("GigaPub SDK failed to load");
+      // The GigaPub script assigns window.showGiga synchronously during its
+      // IIFE, but its internal ad-network init() runs asynchronously after
+      // the script tag fires onload. The SDK's own readiness guard (which
+      // waits for >50 % of networks to be ready) only activates once
+      // _initTimestamp is set — a field that doesn't exist until init()
+      // has progressed. Calling showGiga() before that sets _initTimestamp
+      // silently skips the guard and throws "failed to show ad" immediately.
+      // Polling gigaLoadingProgress() here lets init() reach that threshold
+      // before we call show, matching what the SDK's own guard would do.
+      if (typeof window.gigaLoadingProgress === "function") {
+        const _gpDeadline = Date.now() + 5000;
+        while (window.gigaLoadingProgress() < 0.5 && Date.now() < _gpDeadline) {
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
       await window.showGiga();
     } else {
       throw new Error("unknown ad network: " + network);
@@ -464,6 +498,10 @@
         await waitBeforeNextAd(adsWatched + 1);
       }
     } catch (err) {
+      // Keep the viewer-facing copy generic, but leave the network's real
+      // message ("failed to show ad", "No bid available", "…not configured")
+      // in the console — without it an ad failure is undiagnosable.
+      console.error("[ad] " + network + " failed:", err);
       inFlight = false;
       mainBtn.disabled = false;
       showAdError();
