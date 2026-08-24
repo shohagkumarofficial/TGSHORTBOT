@@ -235,6 +235,11 @@
   .landing p{
     font-size:13.5px; color: var(--text-dim); line-height:1.55; margin:0 0 26px;
   }
+  .landing .landing-privacy{
+    display:block; margin-top:22px; font-size:12px;
+    color: var(--text-dim); text-decoration:underline; text-underline-offset:2px;
+  }
+  .landing .landing-privacy:hover{ color: var(--text); }
   .landing .btn-primary{
     display:inline-flex; align-items:center; justify-content:center; gap:8px;
     text-decoration:none; padding:13px 22px; font-size:14px;
@@ -2005,6 +2010,7 @@
         <h1>TGSHORTBOT</h1>
         <p>A Telegram-based ad-locked URL shortener and earning platform — share links, viewers watch a few ads, everyone earns.</p>
         <a class="btn btn-primary" href="https://t.me/__BOT_USERNAME__">Open in Telegram</a>
+        <a class="landing-privacy" href="/privacy" target="_blank" rel="noopener">Privacy Policy &amp; Terms</a>
       </div>`;
   }
 

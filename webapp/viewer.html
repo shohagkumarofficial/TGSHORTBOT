@@ -150,6 +150,12 @@
     font-size: 11px;
     color: #565c72;
   }
+  .footer-note a{
+    color: #565c72;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .footer-note a:hover{ color: var(--text-dim); }
 
   @keyframes spin{ to{ transform: rotate(360deg); } }
   .spinner{
@@ -194,7 +200,7 @@
     <div class="status-line" id="statusLine"></div>
   </div>
 
-  <div class="footer-note">Ads served by our ad partners</div>
+  <div class="footer-note">Ads served by our ad partners · <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a></div>
 
 <script>
 (function () {
