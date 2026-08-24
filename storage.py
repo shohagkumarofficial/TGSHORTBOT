@@ -48,6 +48,7 @@ from models import (
     CPMHistoryEntry,
     CPMSetting,
     Link,
+    PolicySetting,
     Role,
     TrafficSource,
     View,
@@ -70,6 +71,7 @@ class Storage:
         self.views: Dict[str, View] = {}
         self.withdrawals: Dict[str, WithdrawRequest] = {}
         self.cpm_setting: CPMSetting = CPMSetting()
+        self.policy_setting: PolicySetting = PolicySetting()
         self.cpm_history: List[CPMHistoryEntry] = []
 
         self._view_index: Dict[Tuple[str, int], str] = {}
@@ -90,6 +92,7 @@ class Storage:
         views_res = await self.client.table("views").select("*").execute()
         withdrawals_res = await self.client.table("withdrawals").select("*").execute()
         cpm_setting_res = await self.client.table("cpm_settings").select("*").eq("id", 1).execute()
+        policy_setting_res = await self.client.table("policy_settings").select("*").eq("id", 1).execute()
         cpm_history_res = await self.client.table("cpm_history").select("*").execute()
 
         traffic_by_admin: Dict[int, List[TrafficSource]] = {}
@@ -117,6 +120,13 @@ class Storage:
             # self-heal instead of crash-looping if it's ever missing.
             self.cpm_setting = CPMSetting()
 
+        if policy_setting_res.data:
+            ps_row = dict(policy_setting_res.data[0])
+            ps_row.pop("id", None)
+            self.policy_setting = PolicySetting(**ps_row)
+        else:
+            self.policy_setting = PolicySetting()
+
         self.cpm_history = [CPMHistoryEntry(**row) for row in cpm_history_res.data]
 
         self._view_index = {
@@ -142,6 +152,7 @@ class Storage:
         view_rows = [v.model_dump(mode="json") for v in self.views.values()]
         withdrawal_rows = [w.model_dump(mode="json") for w in self.withdrawals.values()]
         cpm_setting_row = {"id": 1, **self.cpm_setting.model_dump(mode="json")}
+        policy_setting_row = {"id": 1, **self.policy_setting.model_dump(mode="json")}
         cpm_history_rows = [e.model_dump(mode="json") for e in self.cpm_history]
 
         if admin_rows:
@@ -155,6 +166,7 @@ class Storage:
         if withdrawal_rows:
             await self.client.table("withdrawals").upsert(withdrawal_rows, on_conflict="request_id").execute()
         await self.client.table("cpm_settings").upsert(cpm_setting_row, on_conflict="id").execute()
+        await self.client.table("policy_settings").upsert(policy_setting_row, on_conflict="id").execute()
         if cpm_history_rows:
             await self.client.table("cpm_history").upsert(cpm_history_rows, on_conflict="entry_id").execute()
 
@@ -520,6 +532,54 @@ class Storage:
         async with self._lock:
             self.cpm_history.append(CPMHistoryEntry(event=event, detail=detail))
             await self._save_locked()
+
+    # ------------------------------------------------------------------
+    # Policy (privacy policy / terms every user must accept)
+    # ------------------------------------------------------------------
+
+    async def get_policy_setting(self) -> PolicySetting:
+        return self.policy_setting
+
+    async def update_policy_text(self, text: str, updated_by: int) -> PolicySetting:
+        """Owner-only edit (see app.py's POST /api/admin/policy and
+        bot.py's /policy command). Bumping `version` is what makes every
+        Admin's stored `policy_accepted_version` stale, so everyone is
+        transparently re-prompted with the new text on their next
+        interaction with the bot — see bot.py's PolicyGateMiddleware.
+        """
+        async with self._lock:
+            ps = self.policy_setting
+            ps.text = text
+            ps.version += 1
+            ps.updated_at = now_iso()
+            ps.updated_by = updated_by
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="policy_change",
+                    detail={"new_version": ps.version, "by": updated_by},
+                )
+            )
+            await self._save_locked()
+            return ps
+
+    async def accept_policy(self, telegram_id: int) -> Optional[Admin]:
+        """Records that this Admin tapped "Accept" on the currently
+        active policy version — called from bot.py's Accept callback.
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            admin.policy_accepted_version = self.policy_setting.version
+            admin.policy_accepted_at = now_iso()
+            await self._save_locked()
+            return admin
+
+    async def has_accepted_current_policy(self, telegram_id: int) -> bool:
+        admin = self.admins.get(telegram_id)
+        if not admin:
+            return False
+        return admin.policy_accepted_version >= self.policy_setting.version
 
     # ------------------------------------------------------------------
     # Stats

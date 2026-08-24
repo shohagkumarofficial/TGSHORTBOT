@@ -13,7 +13,7 @@ import string
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -28,6 +28,7 @@ from aiogram.types import (
     Message,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
+    TelegramObject,
     WebAppInfo,
 )
 
@@ -103,6 +104,88 @@ async def set_bot_commands(bot: Bot) -> None:
 def _gen_short_code(length: int = 7) -> str:
     alphabet = string.ascii_letters + string.digits
     return "".join(random.choices(alphabet, k=length))
+
+
+# ---------------------------------------------------------------------------
+# Policy gate — every user must Accept the Owner-editable policy text
+# (models.PolicySetting) before doing anything else with the bot. New users
+# hit this on their very first /start (either entry point below); existing
+# users hit it again the moment the Owner edits the text and bumps its
+# version (see storage.update_policy_text), via PolicyGateMiddleware.
+# ---------------------------------------------------------------------------
+
+POLICY_ACCEPT_PREFIX = "policy:accept:"
+POLICY_REJECT_PREFIX = "policy:reject:"
+_NO_RESUME = "none"  # sentinel meaning "no deep-linked view to resume after Accept"
+
+
+def _policy_keyboard(resume_code: str | None) -> InlineKeyboardMarkup:
+    token = resume_code or _NO_RESUME
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Accept", callback_data=f"{POLICY_ACCEPT_PREFIX}{token}"),
+                InlineKeyboardButton(text="❌ Reject", callback_data=f"{POLICY_REJECT_PREFIX}{token}"),
+            ]
+        ]
+    )
+
+
+async def _prompt_policy(event: Message | CallbackQuery, policy, resume_code: str | None = None) -> None:
+    """Sends the Accept/Reject popup. `resume_code` — the short_code from
+    a deep-linked /start — is carried inside the button's own callback_data
+    so a first-time viewer who clicked someone's shared link still lands
+    on that link's ad-unlock button after tapping Accept, instead of losing
+    that context and landing on the generic main menu.
+    """
+    text = f"📜 <b>নিয়মাবলী ও শর্তাবলী</b>\n\n{policy.text}"
+    kb = _policy_keyboard(resume_code)
+    if isinstance(event, CallbackQuery):
+        await event.answer("অনুগ্রহ করে আগে নিয়মাবলী গ্রহণ করুন।", show_alert=True)
+        if event.message:
+            await event.message.answer(text, reply_markup=kb)
+    else:
+        await event.answer(text, reply_markup=kb)
+
+
+class PolicyGateMiddleware(BaseMiddleware):
+    """Intercepts every Message/CallbackQuery for an *existing* Admin whose
+    `policy_accepted_version` is behind the currently active PolicySetting
+    (i.e. the Owner edited the policy after this Admin already accepted an
+    older version) and re-prompts instead of running the real handler.
+
+    Brand-new users (no Admin row yet) are deliberately let through here —
+    they're gated inside the /start handlers themselves once `_ensure_admin`
+    has created their row, since only those handlers know whether a
+    deep-linked short_code needs to be preserved through the prompt.
+
+    The Accept/Reject callback itself is always let through (matched by
+    its callback_data prefix), or the popup could never be dismissed.
+    """
+
+    def __init__(self, storage) -> None:
+        self.storage = storage
+        super().__init__()
+
+    async def __call__(self, handler, event: TelegramObject, data: dict):
+        user = data.get("event_from_user")
+        if user is None:
+            return await handler(event, data)
+
+        if isinstance(event, CallbackQuery) and (
+            event.data or ""
+        ).startswith((POLICY_ACCEPT_PREFIX, POLICY_REJECT_PREFIX)):
+            return await handler(event, data)
+
+        admin = await self.storage.get_admin(user.id)
+        if admin is None:
+            return await handler(event, data)  # /start will create + gate it
+
+        if not await self.storage.has_accepted_current_policy(user.id):
+            await _prompt_policy(event, await self.storage.get_policy_setting())
+            return None  # swallow — don't run the real handler
+
+        return await handler(event, data)
 
 
 # Labels for the persistent bottom keyboard — every command is a tap away
@@ -228,6 +311,12 @@ async def notify_admin_of_withdrawal_resolution(bot: Bot, settings, admin, req) 
 
 
 def register_handlers(dp: Dispatcher, storage, settings) -> None:
+    # Runs before every other handler below — see PolicyGateMiddleware's
+    # own docstring for exactly what it does and doesn't intercept.
+    policy_gate = PolicyGateMiddleware(storage)
+    dp.message.middleware(policy_gate)
+    dp.callback_query.middleware(policy_gate)
+
     async def _ensure_admin(telegram_id: int, username: str | None):
         return await storage.get_or_create_admin(telegram_id, username, settings.OWNER_TELEGRAM_ID)
 
@@ -286,6 +375,9 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     async def start_with_code(message: Message, command) -> None:
         code = command.args
         await _ensure_admin(message.from_user.id, message.from_user.username)
+        if not await storage.has_accepted_current_policy(message.from_user.id):
+            await _prompt_policy(message, await storage.get_policy_setting(), resume_code=code)
+            return
         link = await storage.get_link(code) if code else None
         if not link:
             await message.answer("এই শর্ট লিংকটি খুঁজে পাওয়া যায়নি বা মেয়াদোত্তীর্ণ।")
@@ -306,6 +398,9 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     @dp.message(CommandStart())
     async def start_plain(message: Message) -> None:
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        if not await storage.has_accepted_current_policy(message.from_user.id):
+            await _prompt_policy(message, await storage.get_policy_setting())
+            return
         role_label = "Owner" if admin.role == Role.OWNER else "Admin"
         panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
         await message.answer(
@@ -314,6 +409,59 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             "নিচের বাটন থেকে যেকোনো অপশনে ট্যাপ করুন:",
             reply_markup=_main_menu_keyboard(panel_url),
         )
+
+    @dp.callback_query(F.data.startswith(POLICY_ACCEPT_PREFIX))
+    async def policy_accept_cb(callback: CallbackQuery) -> None:
+        admin = await _ensure_admin(callback.from_user.id, callback.from_user.username)
+        admin = await storage.accept_policy(callback.from_user.id) or admin
+        await callback.answer("ধন্যবাদ! ✅")
+        if callback.message:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+
+        resume_code = callback.data[len(POLICY_ACCEPT_PREFIX):]
+        if resume_code and resume_code != _NO_RESUME:
+            link = await storage.get_link(resume_code)
+            if link:
+                view_url = f"{settings.WEBAPP_BASE_URL}/r/{resume_code}"
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text=f"👉 চালিয়ে যান ({link.ad_count}টি বিজ্ঞাপন দেখুন)",
+                            web_app=WebAppInfo(url=view_url),
+                        )]
+                    ]
+                )
+                await callback.message.answer(
+                    f"লিংকটি খুলতে নিচের বাটনে চাপ দিন। {link.ad_count}টি বিজ্ঞাপন দেখা শেষ হলে আপনি "
+                    "স্বয়ংক্রিয়ভাবে গন্তব্য পেজে পৌঁছে যাবেন।",
+                    reply_markup=kb,
+                )
+                return
+
+        role_label = "Owner" if admin.role == Role.OWNER else "Admin"
+        panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
+        await callback.message.answer(
+            f"স্বাগতম, {role_label}! 👋\n\n"
+            "<b>TGSHORTBOT</b> দিয়ে লিংক শর্ট করুন, শেয়ার করুন, আর প্রতিটি ভিউ থেকে আয় করুন।\n\n"
+            "নিচের বাটন থেকে যেকোনো অপশনে ট্যাপ করুন:",
+            reply_markup=_main_menu_keyboard(panel_url),
+        )
+
+    @dp.callback_query(F.data.startswith(POLICY_REJECT_PREFIX))
+    async def policy_reject_cb(callback: CallbackQuery) -> None:
+        await callback.answer()
+        if callback.message:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            await callback.message.answer(
+                "আপনি শর্তাবলী গ্রহণ করেননি, তাই বটটি এখন ব্যবহার করা যাচ্ছে না।\n"
+                "মত পরিবর্তন করলে /start লিখে আবার চেষ্টা করুন।"
+            )
 
     # ------------------------------------------------------------------
     # /trafficsource

@@ -85,6 +85,15 @@ class Admin(BaseModel):
 
     traffic_sources: list[TrafficSource] = Field(default_factory=list)
 
+    # Which PolicySetting.version this Admin last tapped "Accept" on (see
+    # PolicySetting below). 0 means "never accepted anything" — a brand
+    # new Admin. Whenever the Owner edits the policy text, its version
+    # increments, which makes every existing Admin's stored value stale
+    # again until they accept the new text too (bot.py's PolicyGate
+    # re-prompts on their next interaction).
+    policy_accepted_version: int = 0
+    policy_accepted_at: Optional[str] = None
+
 
 class Link(BaseModel):
     """`ad_count` is how many sequential Adsgram ads a viewer must watch
@@ -174,6 +183,37 @@ class CPMSetting(BaseModel):
     ad_view_delay_seconds: float = 7
     min_withdraw_amount: float = 0
     max_daily_views_per_admin: int = 0
+    updated_at: str = Field(default_factory=now_iso)
+    updated_by: Optional[int] = None
+
+
+DEFAULT_POLICY_TEXT = (
+    "১. ফেক/বট ট্রাফিক ব্যবহার করলে সাথে সাথে অ্যাকাউন্ট ব্যান করা হবে।\n\n"
+    "২. আপনার ট্রাফিক সোর্স অবশ্যই ১০০% নিজের ও অরিজিনাল হতে হবে। কোনো পেমেন্ট "
+    "দেওয়ার আগে অ্যাডমিন নিজে যাচাই-বাছাই করে তবেই পেমেন্ট করবে।\n\n"
+    "৩. অন্য কারো প্রাইভেট/কপিরাইটেড মুভি বা এমন কোনো কনটেন্ট যা পাবলিকলি শেয়ার "
+    "করা বৈধ নয়, এবং যেকোনো ধরনের মড (Mod) APK শেয়ার করা সম্পূর্ণভাবে ব্যবহারকারীর "
+    "নিজস্ব দায়িত্ব — এর জন্য বটের মালিক বা কোম্পানি কোনোভাবেই দায়ী থাকবে না।\n\n"
+    "৪. Adult/প্রাপ্তবয়স্ক কনটেন্ট এই প্ল্যাটফর্মে সম্পূর্ণভাবে নিষিদ্ধ।\n\n"
+    "চালিয়ে যেতে হলে এই শর্তাবলীতে সম্মতি জানাতে হবে।"
+)
+
+
+class PolicySetting(BaseModel):
+    """Single active record (same one-row pattern as CPMSetting) holding
+    the Owner-editable policy text every user must accept before using
+    the bot (see bot.py's PolicyGateMiddleware + the /api/admin/policy
+    endpoints in app.py, and the panel's Policy settings card).
+
+    `version` starts at 1 and is incremented by storage.update_policy_text
+    every time the Owner changes `text` — bumping it is what makes every
+    Admin's previously-stored `policy_accepted_version` stale again, so
+    they're re-prompted with the new text on their next interaction
+    rather than being silently grandfathered in under the old one.
+    """
+
+    version: int = 1
+    text: str = DEFAULT_POLICY_TEXT
     updated_at: str = Field(default_factory=now_iso)
     updated_by: Optional[int] = None
 

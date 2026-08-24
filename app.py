@@ -479,6 +479,27 @@ async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner))
 
 
 # ---------------------------------------------------------------------------
+# Policy — the Accept/Reject text every user must agree to in the bot
+# (see bot.py's PolicyGateMiddleware). Any Admin can read it (so the panel
+# can show it to anyone, e.g. on a Terms page); only the Owner can edit it.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/policy")
+async def get_policy(admin: Admin = Depends(require_admin)):
+    ps = await storage.get_policy_setting()
+    return ps.model_dump()
+
+
+@app.post("/api/admin/policy")
+async def admin_update_policy(payload: dict, owner: Admin = Depends(require_owner)):
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise HTTPException(status_code=400, detail="text must be a non-empty string")
+    ps = await storage.update_policy_text(text.strip(), updated_by=owner.telegram_id)
+    return ps.model_dump()
+
+
+# ---------------------------------------------------------------------------
 # Withdrawals
 # ---------------------------------------------------------------------------
 
