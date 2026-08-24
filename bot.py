@@ -88,6 +88,7 @@ def _default_bot_commands() -> list[BotCommand]:
         BotCommand(command="mybalance", description="ব্যালেন্স ও পেআউট তথ্য দেখুন"),
         BotCommand(command="withdraw", description="টাকা তোলার আবেদন করুন"),
         BotCommand(command="panel", description="পূর্ণাঙ্গ ড্যাশবোর্ড খুলুন"),
+        BotCommand(command="privacy", description="প্রাইভেসি পলিসি ও শর্তাবলী দেখুন"),
         BotCommand(command="help", description="সাহায্য ও কমান্ড তালিকা"),
     ]
 
@@ -195,6 +196,7 @@ MAIN_MENU_LABELS = {
     "trafficsource": "📡 ট্রাফিক সোর্স",
     "mybalance": "💰 ব্যালেন্স",
     "withdraw": "💸 উইথড্র",
+    "privacy": "🔒 প্রাইভেসি পলিসি",
     "help": "❓ সাহায্য",
 }
 
@@ -226,7 +228,10 @@ def _main_menu_keyboard(panel_url: str) -> ReplyKeyboardMarkup:
                 KeyboardButton(text=MAIN_MENU_LABELS["mybalance"]),
                 KeyboardButton(text=MAIN_MENU_LABELS["withdraw"]),
             ],
-            [KeyboardButton(text=MAIN_MENU_LABELS["help"])],
+            [
+                KeyboardButton(text=MAIN_MENU_LABELS["help"]),
+                KeyboardButton(text=MAIN_MENU_LABELS["privacy"]),
+            ],
         ],
         resize_keyboard=True,
     )
@@ -375,6 +380,11 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     async def menu_help(message: Message, state: FSMContext) -> None:
         await state.clear()
         await help_cmd(message)
+
+    @dp.message(F.text == MAIN_MENU_LABELS["privacy"])
+    async def menu_privacy(message: Message, state: FSMContext) -> None:
+        await state.clear()
+        await privacy_cmd(message)
 
     # ------------------------------------------------------------------
     # /start
@@ -780,7 +790,20 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             "🔗 নতুন লিংক — নতুন শর্ট লিংক তৈরি\n"
             "📡 ট্রাফিক সোর্স — সোর্স যোগ/এডিট/মুছুন\n"
             "💰 ব্যালেন্স — ব্যালেন্স ও পেআউট তথ্য\n"
-            "💸 উইথড্র — টাকা তোলার আবেদন\n\n"
+            "💸 উইথড্র — টাকা তোলার আবেদন\n"
+            "🔒 প্রাইভেসি পলিসি — নিয়মাবলী ও শর্তাবলী দেখুন\n\n"
             "📊 পূর্ণাঙ্গ ড্যাশবোর্ড খুলতে /panel লিখুন, অথবা চ্যাট বক্সের বাম পাশের মেনু বাটন ব্যবহার করুন।",
             reply_markup=_main_menu_keyboard(panel_url),
+        )
+
+    @dp.message(Command("privacy"))
+    async def privacy_cmd(message: Message) -> None:
+        policy = await storage.get_policy_setting()
+        privacy_url = f"{settings.WEBAPP_BASE_URL}/privacy"
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🌐 ব্রাউজারে খুলুন", url=privacy_url)]]
+        )
+        await message.answer(
+            f"🔒 <b>প্রাইভেসি পলিসি ও শর্তাবলী</b>\n\n{policy.text}",
+            reply_markup=kb,
         )

@@ -10,6 +10,7 @@ Deployed on Render with:
 from __future__ import annotations
 
 import asyncio
+import html
 import json
 import logging
 import random
@@ -184,6 +185,61 @@ async def root():
     by which URL was opened).
     """
     return RedirectResponse(url="/panel")
+
+
+_PRIVACY_PAGE_TEMPLATE = """<!doctype html>
+<html lang="bn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Privacy Policy & Terms — TGSHORTBOT</title>
+<style>
+  :root{{
+    --bg:#12141c; --panel:#1e2230; --hairline:#2b3040;
+    --brass:#d9a441; --text:#f1ede4; --text-dim:#9aa0b4;
+  }}
+  *{{box-sizing:border-box;}}
+  html,body{{margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:Inter,system-ui,sans-serif;}}
+  .wrap{{max-width:640px;margin:0 auto;padding:40px 20px 60px;}}
+  .eyebrow{{font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--text-dim);margin-bottom:8px;}}
+  h1{{font-size:22px;margin:0 0 24px;}}
+  .card{{background:var(--panel);border:1px solid var(--hairline);
+    border-radius:14px;padding:22px 20px;white-space:pre-wrap;
+    word-wrap:break-word;line-height:1.7;font-size:15px;}}
+  .back{{display:inline-block;margin-top:24px;color:var(--brass);
+    text-decoration:none;font-size:14px;}}
+  .back:hover{{text-decoration:underline;}}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="eyebrow">TGSHORTBOT</div>
+    <h1>Privacy Policy &amp; Terms</h1>
+    <div class="card">{policy_text}</div>
+    <a class="back" href="https://t.me/{bot_username}">← Open in Telegram</a>
+  </div>
+</body>
+</html>
+"""
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy_page():
+    """Publicly viewable Privacy Policy & Terms page — no Telegram auth
+    required, so ad-network moderators, prospective users, or anyone else
+    can read it straight from a plain browser visit. Reuses the same
+    Owner-editable PolicySetting text shown inside the bot's /privacy
+    command and Accept/Reject gate, so there's exactly one policy text
+    across the bot, the dashboard, and this page.
+    """
+    ps = await storage.get_policy_setting()
+    body = _PRIVACY_PAGE_TEMPLATE.format(
+        policy_text=html.escape(ps.text),
+        bot_username=html.escape(settings.BOT_USERNAME),
+    )
+    return HTMLResponse(body)
 
 
 @app.post("/webhook")
