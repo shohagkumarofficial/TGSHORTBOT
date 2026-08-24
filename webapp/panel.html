@@ -1,2188 +1,1861 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="bn">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AdReward Bot</title>
-
-  <style>
-    :root {
-      --bg: #f4f7f2;
-      --card: #ffffff;
-      --primary: #247a4d;
-      --primary-dark: #185c39;
-      --accent: #e6b84d;
-      --text: #183126;
-      --muted: #708078;
-      --border: #e4ebe5;
-      --danger: #b54343;
-      --danger-bg: #fdecec;
-      --success: #1d8851;
-      --success-bg: #e8f7ed;
-      --shadow: 0 12px 35px rgba(34, 70, 49, 0.08);
-      --radius: 20px;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-    body {
-      min-height: 100vh;
-      background:
-        radial-gradient(circle at top left, #dcefdc 0, transparent 32%),
-        var(--bg);
-      color: var(--text);
-      font-family:
-        Inter,
-        ui-sans-serif,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        Roboto,
-        Arial,
-        sans-serif;
-    }
-
-    button,
-    input,
-    select,
-    textarea {
-      font: inherit;
-    }
-
-    button {
-      border: 0;
-      cursor: pointer;
-    }
-
-    .app-shell {
-      width: 100%;
-      max-width: 1180px;
-      min-height: 100vh;
-      margin: 0 auto;
-      display: grid;
-      grid-template-columns: 245px 1fr;
-    }
-
-    .sidebar {
-      min-height: 100vh;
-      padding: 28px 18px;
-      background: rgba(255, 255, 255, 0.7);
-      border-right: 1px solid rgba(213, 225, 215, 0.8);
-      backdrop-filter: blur(15px);
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 11px;
-      padding: 0 12px 28px;
-    }
-
-    .brand-icon {
-      width: 42px;
-      height: 42px;
-      display: grid;
-      place-items: center;
-      border-radius: 14px;
-      color: white;
-      font-size: 22px;
-      background: linear-gradient(145deg, var(--primary), #56ad78);
-      box-shadow: 0 7px 20px rgba(36, 122, 77, 0.24);
-    }
-
-    .brand h1 {
-      font-size: 18px;
-      letter-spacing: -0.4px;
-    }
-
-    .brand small {
-      display: block;
-      color: var(--muted);
-      font-size: 11px;
-      margin-top: 3px;
-    }
-
-    .nav {
-      display: flex;
-      flex-direction: column;
-      gap: 7px;
-    }
-
-    .nav button {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 13px 14px;
-      text-align: left;
-      color: #637269;
-      background: transparent;
-      border-radius: 13px;
-      transition: 0.2s;
-    }
-
-    .nav button:hover,
-    .nav button.active {
-      color: var(--primary-dark);
-      background: #e3f2e6;
-      font-weight: 700;
-    }
-
-    .nav-icon {
-      width: 23px;
-      text-align: center;
-      font-size: 18px;
-    }
-
-    .sidebar-footer {
-      margin-top: 45px;
-      padding: 14px;
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.6;
-      background: #eef5ed;
-      border: 1px solid #deeadf;
-      border-radius: 15px;
-    }
-
-    .main {
-      min-width: 0;
-      padding: 25px;
-    }
-
-    .topbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 15px;
-      margin-bottom: 25px;
-    }
-
-    .page-title h2 {
-      font-size: 28px;
-      letter-spacing: -0.8px;
-    }
-
-    .page-title p {
-      color: var(--muted);
-      margin-top: 5px;
-      font-size: 14px;
-    }
-
-    .user-pill {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 7px 12px 7px 7px;
-      border: 1px solid var(--border);
-      border-radius: 30px;
-      background: white;
-      box-shadow: var(--shadow);
-    }
-
-    .avatar {
-      width: 34px;
-      height: 34px;
-      display: grid;
-      place-items: center;
-      color: white;
-      font-weight: 800;
-      border-radius: 50%;
-      background: linear-gradient(145deg, #316dca, #69a4ef);
-    }
-
-    .user-pill strong {
-      display: block;
-      font-size: 13px;
-    }
-
-    .user-pill span {
-      display: block;
-      color: var(--muted);
-      font-size: 11px;
-      margin-top: 2px;
-    }
-
-    .page {
-      display: none;
-      animation: fadeIn 0.25s ease;
-    }
-
-    .page.active {
-      display: block;
-    }
-
-    @keyframes fadeIn {
-      from {
-        opacity: 0;
-        transform: translateY(5px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .hero {
-      display: grid;
-      grid-template-columns: 1.5fr 1fr;
-      gap: 18px;
-      margin-bottom: 18px;
-    }
-
-    .balance-card {
-      position: relative;
-      min-height: 200px;
-      overflow: hidden;
-      padding: 25px;
-      color: white;
-      background:
-        radial-gradient(circle at 90% 15%, rgba(255,255,255,0.18), transparent 23%),
-        linear-gradient(135deg, #1d6d45, #2d9760);
-      border-radius: var(--radius);
-      box-shadow: 0 15px 35px rgba(30, 108, 69, 0.24);
-    }
-
-    .balance-card::after {
-      content: "৳";
-      position: absolute;
-      right: 22px;
-      bottom: -30px;
-      color: rgba(255,255,255,0.1);
-      font-size: 190px;
-      font-weight: 900;
-      line-height: 1;
-    }
-
-    .balance-label {
-      position: relative;
-      z-index: 1;
-      color: rgba(255,255,255,0.8);
-      font-size: 13px;
-    }
-
-    .balance-amount {
-      position: relative;
-      z-index: 1;
-      margin-top: 8px;
-      font-size: 42px;
-      letter-spacing: -1.5px;
-      font-weight: 850;
-    }
-
-    .balance-meta {
-      position: relative;
-      z-index: 1;
-      display: flex;
-      gap: 22px;
-      margin-top: 24px;
-    }
-
-    .balance-meta span {
-      display: block;
-      color: rgba(255,255,255,0.7);
-      font-size: 11px;
-    }
-
-    .balance-meta strong {
-      display: block;
-      margin-top: 3px;
-      font-size: 14px;
-    }
-
-    .quick-card {
-      padding: 22px;
-      background: white;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-    }
-
-    .quick-card h3 {
-      font-size: 18px;
-    }
-
-    .quick-card p {
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.55;
-      margin: 8px 0 20px;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      min-height: 43px;
-      padding: 0 17px;
-      color: white;
-      background: var(--primary);
-      border-radius: 12px;
-      font-weight: 750;
-      transition: 0.2s;
-    }
-
-    .btn:hover {
-      background: var(--primary-dark);
-      transform: translateY(-1px);
-    }
-
-    .btn:disabled {
-      opacity: 0.55;
-      cursor: not-allowed;
-      transform: none;
-    }
-
-    .btn.secondary {
-      color: var(--primary-dark);
-      background: #e5f3e7;
-    }
-
-    .btn.secondary:hover {
-      background: #d5ebda;
-    }
-
-    .btn.outline {
-      color: var(--primary);
-      background: white;
-      border: 1px solid #abd4b6;
-    }
-
-    .btn.danger {
-      background: var(--danger);
-    }
-
-    .btn.full {
-      width: 100%;
-    }
-
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 14px;
-      margin-bottom: 18px;
-    }
-
-    .stat-card {
-      padding: 18px;
-      background: white;
-      border: 1px solid var(--border);
-      border-radius: 17px;
-      box-shadow: var(--shadow);
-    }
-
-    .stat-card .stat-icon {
-      width: 36px;
-      height: 36px;
-      display: grid;
-      place-items: center;
-      margin-bottom: 13px;
-      border-radius: 11px;
-      background: #e9f5ea;
-      font-size: 18px;
-    }
-
-    .stat-card p {
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .stat-card strong {
-      display: block;
-      margin-top: 5px;
-      font-size: 22px;
-    }
-
-    .content-grid {
-      display: grid;
-      grid-template-columns: 1.25fr 1fr;
-      gap: 18px;
-    }
-
-    .card {
-      padding: 21px;
-      background: white;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-    }
-
-    .card-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 17px;
-    }
-
-    .card-header h3 {
-      font-size: 17px;
-    }
-
-    .card-header a {
-      color: var(--primary);
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 700;
-    }
-
-    .transaction-list {
-      display: flex;
-      flex-direction: column;
-      gap: 13px;
-    }
-
-    .transaction {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .transaction-icon {
-      width: 37px;
-      height: 37px;
-      display: grid;
-      flex: 0 0 auto;
-      place-items: center;
-      border-radius: 12px;
-      background: #eaf7ec;
-    }
-
-    .transaction-icon.withdraw {
-      background: #fff4df;
-    }
-
-    .transaction-info {
-      min-width: 0;
-      flex: 1;
-    }
-
-    .transaction-info strong {
-      display: block;
-      font-size: 13px;
-    }
-
-    .transaction-info span {
-      display: block;
-      overflow: hidden;
-      color: var(--muted);
-      font-size: 11px;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      margin-top: 3px;
-    }
-
-    .transaction-amount {
-      color: var(--success);
-      font-size: 13px;
-      font-weight: 800;
-    }
-
-    .transaction-amount.negative {
-      color: #bf7c21;
-    }
-
-    .empty-state {
-      padding: 28px 8px;
-      color: var(--muted);
-      text-align: center;
-      font-size: 13px;
-    }
-
-    .how-list {
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-
-    .how-item {
-      display: flex;
-      gap: 12px;
-    }
-
-    .how-number {
-      width: 29px;
-      height: 29px;
-      display: grid;
-      flex: 0 0 auto;
-      place-items: center;
-      color: var(--primary-dark);
-      background: #e3f2e6;
-      border-radius: 50%;
-      font-size: 12px;
-      font-weight: 800;
-    }
-
-    .how-item strong {
-      display: block;
-      font-size: 13px;
-    }
-
-    .how-item p {
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.5;
-      margin-top: 3px;
-    }
-
-    .section-card {
-      margin-bottom: 18px;
-    }
-
-    .section-card > h3 {
-      margin-bottom: 6px;
-      font-size: 21px;
-    }
-
-    .section-card > p {
-      color: var(--muted);
-      font-size: 13px;
-      margin-bottom: 20px;
-    }
-
-    .ad-box {
-      min-height: 270px;
-      display: grid;
-      place-items: center;
-      padding: 25px;
-      text-align: center;
-      background:
-        linear-gradient(135deg, #edf8ee, #e1f0e4);
-      border: 1px dashed #a8cdae;
-      border-radius: 17px;
-    }
-
-    .ad-icon {
-      width: 74px;
-      height: 74px;
-      display: grid;
-      place-items: center;
-      margin: 0 auto 13px;
-      color: white;
-      background: linear-gradient(145deg, #257d4f, #54aa75);
-      border-radius: 24px;
-      font-size: 34px;
-      box-shadow: 0 10px 20px rgba(36, 122, 77, 0.18);
-    }
-
-    .ad-box h3 {
-      font-size: 20px;
-    }
-
-    .ad-box p {
-      max-width: 420px;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.6;
-      margin: 8px auto 18px;
-    }
-
-    .ad-progress {
-      width: 100%;
-      max-width: 330px;
-      height: 9px;
-      overflow: hidden;
-      display: none;
-      margin: 16px auto 0;
-      background: #d3e5d6;
-      border-radius: 20px;
-    }
-
-    .ad-progress span {
-      display: block;
-      width: 0;
-      height: 100%;
-      background: var(--primary);
-      border-radius: inherit;
-      transition: width 1s linear;
-    }
-
-    .ad-note {
-      color: var(--muted);
-      font-size: 11px;
-      margin-top: 14px;
-    }
-
-    .form-card {
-      max-width: 680px;
-    }
-
-    .form-group {
-      margin-bottom: 16px;
-    }
-
-    .form-group label {
-      display: block;
-      margin-bottom: 7px;
-      color: #43594b;
-      font-size: 13px;
-      font-weight: 700;
-    }
-
-    .form-control {
-      width: 100%;
-      min-height: 46px;
-      padding: 0 13px;
-      color: var(--text);
-      outline: none;
-      background: #fbfdfb;
-      border: 1px solid #d9e5db;
-      border-radius: 11px;
-      transition: 0.2s;
-    }
-
-    textarea.form-control {
-      min-height: 90px;
-      padding: 12px 13px;
-      resize: vertical;
-    }
-
-    .form-control:focus {
-      border-color: #64aa78;
-      box-shadow: 0 0 0 3px #e4f3e7;
-    }
-
-    .withdraw-summary {
-      display: flex;
-      justify-content: space-between;
-      gap: 15px;
-      padding: 15px;
-      margin-bottom: 18px;
-      background: #edf7ed;
-      border-radius: 13px;
-    }
-
-    .withdraw-summary span {
-      color: var(--muted);
-      font-size: 12px;
-    }
-
-    .withdraw-summary strong {
-      display: block;
-      margin-top: 4px;
-      font-size: 17px;
-    }
-
-    .notice {
-      padding: 13px 14px;
-      color: #84662d;
-      background: #fff8e7;
-      border: 1px solid #f0dfb3;
-      border-radius: 11px;
-      font-size: 12px;
-      line-height: 1.55;
-      margin-bottom: 17px;
-    }
-
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      min-height: 24px;
-      padding: 0 9px;
-      border-radius: 20px;
-      font-size: 11px;
-      font-weight: 750;
-    }
-
-    .status-badge.pending {
-      color: #976b13;
-      background: #fff2cc;
-    }
-
-    .status-badge.completed,
-    .status-badge.approved {
-      color: #167445;
-      background: #daf4e2;
-    }
-
-    .status-badge.rejected {
-      color: #9b3f3f;
-      background: #f9dddd;
-    }
-
-    .table-wrap {
-      overflow-x: auto;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 650px;
-    }
-
-    th,
-    td {
-      padding: 13px 10px;
-      border-bottom: 1px solid #edf1ed;
-      text-align: left;
-      font-size: 12px;
-      vertical-align: middle;
-    }
-
-    th {
-      color: var(--muted);
-      font-size: 11px;
-      font-weight: 700;
-    }
-
-    td strong {
-      font-size: 13px;
-    }
-
-    .admin-tabs {
-      display: flex;
-      gap: 8px;
-      margin-bottom: 18px;
-    }
-
-    .admin-tabs button {
-      padding: 9px 13px;
-      color: var(--muted);
-      background: #edf3ed;
-      border-radius: 10px;
-      font-size: 12px;
-      font-weight: 700;
-    }
-
-    .admin-tabs button.active {
-      color: white;
-      background: var(--primary);
-    }
-
-    .admin-only {
-      display: none;
-    }
-
-    body.admin-mode .admin-only {
-      display: block;
-    }
-
-    .mode-toggle {
-      padding: 8px 11px;
-      color: #5e6d63;
-      background: #eef3ee;
-      border-radius: 9px;
-      font-size: 11px;
-      font-weight: 700;
-    }
-
-    .mode-toggle:hover {
-      color: var(--primary-dark);
-      background: #e0eee2;
-    }
-
-    .toast-container {
-      position: fixed;
-      z-index: 100;
-      right: 20px;
-      bottom: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      max-width: min(360px, calc(100vw - 40px));
-    }
-
-    .toast {
-      padding: 13px 15px;
-      color: white;
-      background: #1d3c2a;
-      border-radius: 12px;
-      box-shadow: 0 10px 28px rgba(0,0,0,0.2);
-      font-size: 13px;
-      animation: toastIn 0.25s ease;
-    }
-
-    .toast.error {
-      background: #9d3f3f;
-    }
-
-    .toast.success {
-      background: #197648;
-    }
-
-    @keyframes toastIn {
-      from {
-        opacity: 0;
-        transform: translateY(8px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
-    }
-
-    .modal-backdrop {
-      position: fixed;
-      z-index: 50;
-      inset: 0;
-      display: none;
-      place-items: center;
-      padding: 20px;
-      background: rgba(12, 32, 21, 0.45);
-    }
-
-    .modal-backdrop.show {
-      display: grid;
-    }
-
-    .modal {
-      width: min(440px, 100%);
-      padding: 23px;
-      background: white;
-      border-radius: 19px;
-      box-shadow: 0 20px 55px rgba(0,0,0,0.22);
-      animation: modalIn 0.22s ease;
-    }
-
-    @keyframes modalIn {
-      from {
-        opacity: 0;
-        transform: scale(0.96);
-      }
-
-      to {
-        opacity: 1;
-        transform: scale(1);
-      }
-    }
-
-    .modal-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 17px;
-    }
-
-    .modal-head h3 {
-      font-size: 18px;
-    }
-
-    .close-modal {
-      width: 30px;
-      height: 30px;
-      color: var(--muted);
-      background: #f1f5f1;
-      border-radius: 50%;
-      font-size: 18px;
-    }
-
-    .mobile-menu {
-      display: none;
-    }
-
-    @media (max-width: 900px) {
-      .app-shell {
-        grid-template-columns: 205px 1fr;
-      }
-
-      .hero,
-      .content-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .stats-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
-    }
-
-    @media (max-width: 680px) {
-      .app-shell {
-        display: block;
-      }
-
-      .sidebar {
-        position: fixed;
-        z-index: 20;
-        top: 0;
-        bottom: 0;
-        left: 0;
-        width: 270px;
-        display: none;
-        box-shadow: 10px 0 35px rgba(0,0,0,0.1);
-      }
-
-      .sidebar.open {
-        display: block;
-      }
-
-      .mobile-menu {
-        width: 40px;
-        height: 40px;
-        display: grid;
-        place-items: center;
-        color: var(--primary-dark);
-        background: #e5f2e6;
-        border-radius: 11px;
-        font-size: 20px;
-      }
-
-      .main {
-        padding: 17px;
-      }
-
-      .topbar {
-        align-items: flex-start;
-      }
-
-      .page-title {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-      }
-
-      .page-title h2 {
-        font-size: 22px;
-      }
-
-      .user-pill {
-        padding: 5px;
-      }
-
-      .user-pill > div:last-child {
-        display: none;
-      }
-
-      .balance-card {
-        min-height: 185px;
-        padding: 21px;
-      }
-
-      .balance-amount {
-        font-size: 35px;
-      }
-
-      .stats-grid {
-        gap: 10px;
-      }
-
-      .stat-card {
-        padding: 14px;
-      }
-
-      .stat-card strong {
-        font-size: 18px;
-      }
-
-      .card {
-        padding: 17px;
-      }
-    }
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>TGSHORTBOT Dashboard</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #12141c;
+    --panel: #1a1e2a;
+    --panel-raised: #212637;
+    --hairline: #2b3040;
+    --brass: #d9a441;
+    --brass-soft: rgba(217,164,65,.14);
+    --emerald: #3fbf7f;
+    --emerald-soft: rgba(63,191,127,.14);
+    --red: #e2685c;
+    --red-soft: rgba(226,104,92,.14);
+    --violet: #9c8cf2;
+    --violet-soft: rgba(156,140,242,.14);
+    --text: #f1ede4;
+    --text-dim: #9aa0b4;
+    --text-faint: #5c6278;
+    --display: 'Space Grotesk', system-ui, sans-serif;
+    --body: 'Inter', system-ui, sans-serif;
+  }
+  *{ box-sizing:border-box; }
+  html,body{
+    margin:0; padding:0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    -webkit-tap-highlight-color: transparent;
+  }
+  #app{ padding: 16px 16px 24px; max-width: 640px; margin: 0 auto; }
+  #app.has-bottom-nav{ padding-bottom: 94px; }
+
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-bottom: 18px;
+  }
+  .brand{
+    font-family: var(--display); font-weight:700; font-size:17px; letter-spacing:-.01em;
+    display:flex; align-items:center; gap:8px;
+  }
+  .brand .mark{
+    width:26px; height:26px; border-radius:8px;
+    background: linear-gradient(145deg, #e7bb63, var(--brass));
+    display:flex; align-items:center; justify-content:center;
+    font-size:13px; font-weight:700; color:#12141c;
+  }
+  .topbar-right{ display:flex; align-items:center; gap:8px; }
+  .role-badge{
+    font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+    padding: 5px 10px; border-radius: 999px;
+    background: var(--panel-raised); color: var(--text-dim);
+    border: 1px solid var(--hairline);
+  }
+  .role-badge.owner{ color: var(--violet); border-color: rgba(156,140,242,.35); background: var(--violet-soft); }
+
+  .menu-btn{
+    width:34px; height:34px; border-radius:10px; border:1px solid var(--hairline);
+    background: var(--panel-raised); color: var(--text); font-size:18px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; line-height:1;
+    position:relative;
+  }
+  .balance-card{
+    background: linear-gradient(160deg, var(--panel-raised), var(--panel));
+    border: 1px solid var(--hairline);
+    border-radius: 18px;
+    padding: 20px;
+    margin-bottom: 18px;
+  }
+  .balance-card.owner-card{
+    background: linear-gradient(160deg, rgba(156,140,242,.10), var(--panel));
+    border-color: rgba(156,140,242,.25);
+  }
+  .balance-row{ display:flex; gap: 22px; }
+  .balance-item .label{ font-size:11px; color: var(--text-dim); text-transform:uppercase; letter-spacing:.08em; margin-bottom:6px;}
+  .balance-item .value{ font-family: var(--display); font-weight:700; font-size:24px; }
+  .balance-item.confirmed .value{ color: var(--emerald); }
+  .balance-item.pending .value{ color: var(--brass); }
+  .balance-item.violet .value{ color: var(--violet); }
+  .cycle-note{ margin-top:14px; font-size:12px; color: var(--text-dim); border-top:1px solid var(--hairline); padding-top:12px; }
+  .cycle-note b{ color: var(--text); }
+  .owner-eyebrow{
+    font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color: var(--violet);
+    margin-bottom: 12px; font-weight:700;
+  }
+
+  .tabs{
+    display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; margin-bottom: 16px;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar{ display:none; }
+  .tab-btn{
+    flex: 0 0 auto;
+    display:flex; align-items:center; gap:6px;
+    font-family: var(--body); font-weight:600; font-size:13px;
+    color: var(--text-dim);
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    padding: 9px 16px; border-radius: 999px; cursor:pointer;
+    white-space: nowrap;
+  }
+  .tab-btn.active{
+    color:#12141c; background: var(--brass); border-color: var(--brass);
+  }
+  .tab-badge{
+    background: var(--red); color:#fff; font-size:10.5px; font-weight:700;
+    min-width:16px; height:16px; border-radius:999px; display:flex; align-items:center; justify-content:center;
+    padding: 0 4px;
+  }
+  .tab-btn.active .tab-badge{ background:#12141c; color:var(--brass); }
+
+  /* --- Bottom nav (Admin: Home / Short Link / My Links / Profile) --- */
+  .bottom-nav{
+    position:fixed; left:0; right:0; bottom:0;
+    display:flex;
+    background: var(--panel);
+    border-top: 1px solid var(--hairline);
+    padding: 6px 6px calc(env(safe-area-inset-bottom, 0px) + 6px);
+    max-width: 640px; margin: 0 auto;
+    z-index: 30;
+  }
+  .nav-item{
+    flex:1; min-width:0;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
+    padding: 7px 2px 6px;
+    border-radius: 12px;
+    background:none; border:none; cursor:pointer;
+    font-family: var(--body);
+    color: var(--text-dim);
+  }
+  .nav-item:active{ background: var(--panel-raised); }
+  .nav-item .nav-ic{ font-size:19px; line-height:1; }
+  .nav-item .nav-label{ font-size:10.5px; font-weight:600; white-space:nowrap; }
+  .nav-item.active{ color: var(--brass); }
+
+  .card{
+    background: var(--panel);
+    border: 1px solid var(--hairline);
+    border-radius: 16px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .card h3{
+    font-family: var(--display); font-size:14px; margin: 0 0 4px; letter-spacing:-.01em;
+  }
+  .card .meta{ font-size:12px; color: var(--text-dim); margin-bottom:10px; }
+  .row-between{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+
+  .pill{
+    display:inline-flex; align-items:center; font-size:11px; font-weight:600;
+    padding: 3px 9px; border-radius:999px; text-transform:uppercase; letter-spacing:.04em;
+  }
+  .pill.pending{ background: var(--brass-soft); color: var(--brass); }
+  .pill.paid{ background: var(--emerald-soft); color: var(--emerald); }
+  .pill.rejected{ background: var(--red-soft); color: var(--red); }
+  .pill.active{ background: var(--emerald-soft); color: var(--emerald); }
+  .pill.banned{ background: var(--red-soft); color: var(--red); }
+  .pill.owner{ background: var(--violet-soft); color: var(--violet); }
+
+  code.short-url{
+    display:block; font-size: 12.5px; color: var(--text); background: var(--panel-raised);
+    padding: 8px 10px; border-radius: 10px; margin: 8px 0; word-break: break-all;
+    border: 1px solid var(--hairline);
+  }
+
+  label{ display:block; font-size:12px; color: var(--text-dim); margin: 12px 0 6px; }
+  input[type=text], input[type=number], input[type=url], select{
+    width:100%; background: var(--panel-raised); border: 1px solid var(--hairline);
+    color: var(--text); font-family: var(--body); font-size:14px;
+    padding: 11px 12px; border-radius: 10px; outline:none;
+  }
+  input:focus, select:focus{ border-color: var(--brass); }
+  input.input-error, input.input-error:focus{ border-color: var(--red); }
+  .field-error{
+    display:none; font-size:12px; color: var(--red); margin-top:6px;
+  }
+  .field-error.show{ display:block; }
+
+  .ts-item{
+    display:flex; align-items:flex-start; justify-content:space-between; gap:10px;
+    padding: 10px 0; border-bottom: 1px solid var(--hairline);
+  }
+  .ts-item:last-child{ border-bottom:none; }
+  .ts-item .ts-info .ts-platform{ font-size:13px; font-weight:600; color: var(--text); }
+  .ts-item .ts-info .ts-url{ font-size:12px; color: var(--brass); word-break: break-all; }
+  .ts-item .ts-actions{ display:flex; gap:6px; flex:0 0 auto; }
+  .ts-icon-btn{
+    width:30px; height:30px; border-radius:8px; border:1px solid var(--hairline);
+    background: var(--panel-raised); color: var(--text-dim); font-size:13px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .ts-icon-btn.danger{ color: var(--red); border-color: rgba(226,104,92,.3); }
+
+  .btn{
+    font-family: var(--body); font-weight:600; font-size:13.5px;
+    border-radius: 10px; padding: 10px 16px; cursor:pointer; border: none;
+  }
+  .btn-primary{ background: var(--brass); color:#12141c; }
+  .btn-primary:disabled{ opacity:.5; cursor:default; }
+  .btn-outline{ background:none; border:1px solid var(--hairline); color: var(--text); }
+  .btn-danger{ background: var(--red-soft); color: var(--red); border:1px solid rgba(226,104,92,.3); }
+  .btn-success{ background: var(--emerald-soft); color: var(--emerald); border:1px solid rgba(63,191,127,.3); }
+  .btn-sm{ padding: 7px 12px; font-size:12.5px; }
+  .btn-block{ width:100%; }
+  .btn-row{ display:flex; gap:8px; margin-top:10px; }
+
+  .empty{
+    text-align:center; padding: 34px 12px; color: var(--text-faint); font-size:13px;
+  }
+
+  /* ---- outside-Telegram branded landing ------------------------------
+     Shown whenever there's no Telegram initData: a real browser visit, a
+     link preview, or an ad-network moderator opening the raw URL. Must
+     look intentional and alive (not an error state) so a moderation
+     reviewer can visually confirm the app is working. ------------------ */
+  .landing{
+    text-align:center; padding: 56px 20px 40px; max-width:340px; margin:0 auto;
+  }
+  .landing .landing-mark{
+    width:64px; height:64px; border-radius:18px; margin:0 auto 18px;
+    background: linear-gradient(145deg, #e7bb63, var(--brass));
+    display:flex; align-items:center; justify-content:center;
+    font-family: var(--display); font-weight:700; font-size:28px; color:#12141c;
+  }
+  .landing h1{
+    font-family: var(--display); font-size:20px; font-weight:700; margin:0 0 10px; letter-spacing:-.01em;
+  }
+  .landing p{
+    font-size:13.5px; color: var(--text-dim); line-height:1.55; margin:0 0 26px;
+  }
+  .landing .btn-primary{
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    text-decoration:none; padding:13px 22px; font-size:14px;
+  }
+
+  .toast{
+    position:fixed; left:50%; bottom:20px; transform: translateX(-50%) translateY(20px);
+    background: var(--panel-raised); border:1px solid var(--hairline); color: var(--text);
+    padding: 11px 18px; border-radius: 999px; font-size: 13px;
+    opacity:0; transition: opacity .25s ease, transform .25s ease;
+    pointer-events:none; z-index: 60; max-width: 90%; text-align:center;
+  }
+  .toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+  .toast.err{ border-color: rgba(226,104,92,.4); color: var(--red); }
+  .toast.ok{ border-color: rgba(63,191,127,.4); color: var(--emerald); }
+
+  .skel{ background: linear-gradient(90deg, var(--panel-raised) 25%, var(--hairline) 37%, var(--panel-raised) 63%); background-size: 400% 100%; animation: shimmer 1.3s ease infinite; border-radius: 8px; }
+  @keyframes shimmer{ 0%{background-position:100% 0} 100%{background-position:0 0} }
+
+  .stat-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; }
+  .stat-grid-3{ grid-template-columns: repeat(3, 1fr); }
+  .stat-grid-3 .stat-box{ padding: 12px 6px; text-align:center; }
+  .stat-grid-3 .stat-box .n{ font-size:16px; }
+  .stat-box{ background: var(--panel-raised); border:1px solid var(--hairline); border-radius:12px; padding:14px; }
+  .stat-box .n{ font-family: var(--display); font-weight:700; font-size:22px; }
+  .stat-box .l{ font-size:11px; color: var(--text-dim); text-transform:uppercase; letter-spacing:.06em; margin-top:2px; }
+
+  .profile-header{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+  .profile-avatar{
+    width:48px; height:48px; border-radius:50%; flex:0 0 auto;
+    background: linear-gradient(145deg, #e7bb63, var(--brass));
+    color:#12141c; font-family: var(--display); font-weight:700; font-size:19px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .profile-name{ font-family: var(--display); font-weight:600; font-size:16px; }
+  .profile-sub{ font-size:12px; color: var(--text-dim); margin-top:2px; }
+
+  .section-title{
+    font-size:11px; text-transform:uppercase; letter-spacing:.1em; color: var(--text-faint);
+    margin: 4px 0 10px;
+  }
+
+  /* --- Owner drawer / bottom sheet --- */
+  .drawer-backdrop{
+    position:fixed; inset:0; background:rgba(6,7,11,.6);
+    opacity:0; pointer-events:none; transition:opacity .2s ease; z-index:40;
+  }
+  .drawer-backdrop.open{ opacity:1; pointer-events:auto; }
+  .drawer{
+    position:fixed; left:0; right:0; bottom:0;
+    background: var(--panel);
+    border-top: 1px solid var(--hairline);
+    border-radius: 20px 20px 0 0;
+    padding: 10px 10px calc(env(safe-area-inset-bottom, 0px) + 14px);
+    transform: translateY(105%);
+    transition: transform .28s cubic-bezier(.4,0,.2,1);
+    z-index: 41;
+    max-width: 640px; margin: 0 auto;
+    box-shadow: 0 -20px 50px -20px rgba(0,0,0,.6);
+  }
+  .drawer.open{ transform: translateY(0); }
+  .drawer-handle{ width:36px; height:4px; border-radius:2px; background:var(--hairline); margin: 6px auto 10px; }
+  .drawer-title{
+    font-size:11px; text-transform:uppercase; letter-spacing:.1em; color: var(--text-faint);
+    padding: 4px 10px 8px;
+  }
+  .drawer-item{
+    display:flex; align-items:center; gap:12px;
+    padding: 12px 10px; border-radius: 12px; cursor:pointer;
+  }
+  .drawer-item:active{ background: var(--panel-raised); }
+  .drawer-item .ic{
+    width:36px; height:36px; border-radius:10px; background: var(--panel-raised);
+    display:flex; align-items:center; justify-content:center; font-size:17px; flex:0 0 auto;
+  }
+  .drawer-item .label-col{ flex:1; }
+  .drawer-item .t{ font-size:14px; font-weight:600; color: var(--text); }
+  .drawer-item .s{ font-size:11.5px; color: var(--text-dim); margin-top:1px; }
+  .drawer-item .badge-count{
+    background: var(--red-soft); color: var(--red); font-size:11px; font-weight:700;
+    padding: 2px 8px; border-radius:999px; flex:0 0 auto;
+  }
+
+  /* --- Generic confirm modal (used for the balance-edit double-confirm) --- */
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(6,7,11,.72);
+    opacity:0; pointer-events:none; transition:opacity .18s ease; z-index:60;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  .modal-backdrop.open{ opacity:1; pointer-events:auto; }
+  .modal-box{
+    background: var(--panel); border:1px solid var(--hairline); border-radius:16px;
+    padding:20px; width:100%; max-width:380px;
+    transform: scale(.96); transition: transform .18s ease;
+    box-shadow: 0 20px 60px -20px rgba(0,0,0,.7);
+  }
+  .modal-backdrop.open .modal-box{ transform: scale(1); }
+  .modal-box h3{ margin: 0 0 8px; }
+  .balance-diff{
+    display:flex; align-items:center; justify-content:center; gap:10px;
+    font-family: var(--display); font-size:20px; font-weight:700;
+    padding: 14px 0; color: var(--text);
+  }
+  .balance-diff .arrow{ color: var(--text-faint); font-size:16px; }
+  .balance-diff-delta{ text-align:center; font-size:13px; margin-bottom:4px; }
+  .balance-diff-delta.pos{ color: var(--emerald); }
+  .balance-diff-delta.neg{ color: var(--red); }
+
+  .admin-card{ cursor:pointer; }
+  .admin-card:active{ background: var(--panel-raised); }
+</style>
 </head>
-
 <body>
-  <div class="app-shell">
-    <aside class="sidebar" id="sidebar">
-      <div class="brand">
-        <div class="brand-icon">৳</div>
-        <div>
-          <h1>AdReward</h1>
-          <small>Telegram Earnings</small>
-        </div>
-      </div>
-
-      <nav class="nav">
-        <button class="nav-btn active" data-page="dashboard">
-          <span class="nav-icon">⌂</span>
-          <span>Dashboard</span>
-        </button>
-
-        <button class="nav-btn" data-page="watch">
-          <span class="nav-icon">▶</span>
-          <span>Watch Ads</span>
-        </button>
-
-        <button class="nav-btn" data-page="wallet">
-          <span class="nav-icon">▣</span>
-          <span>My Wallet</span>
-        </button>
-
-        <button class="nav-btn" data-page="withdraw">
-          <span class="nav-icon">↗</span>
-          <span>Withdraw</span>
-        </button>
-
-        <button class="nav-btn" data-page="history">
-          <span class="nav-icon">◷</span>
-          <span>History</span>
-        </button>
-
-        <button class="nav-btn admin-nav" data-page="admin">
-          <span class="nav-icon">⚙</span>
-          <span>Admin Panel</span>
-        </button>
-      </nav>
-
-      <div class="sidebar-footer">
-        <strong>Demo Mode</strong><br />
-        এই Prototype-এ ডেটা আপনার Browser-এর Local Storage-এ সংরক্ষিত হচ্ছে।
-      </div>
-    </aside>
-
-    <main class="main">
-      <header class="topbar">
-        <div class="page-title">
-          <button class="mobile-menu" id="mobileMenu">☰</button>
-          <div>
-            <h2 id="pageHeading">Dashboard</h2>
-            <p id="pageSubheading">আপনার Earnings-এর সারাংশ দেখুন</p>
-          </div>
-        </div>
-
-        <div class="user-pill">
-          <div class="avatar">R</div>
-          <div>
-            <strong id="userName">Rahim Hasan</strong>
-            <span id="userHandle">@rahim_demo</span>
-          </div>
-        </div>
-      </header>
-
-      <!-- Dashboard -->
-      <section class="page active" id="page-dashboard">
-        <div class="hero">
-          <div class="balance-card">
-            <div class="balance-label">Available Balance</div>
-            <div class="balance-amount" id="dashboardBalance">৳0.00</div>
-
-            <div class="balance-meta">
-              <div>
-                <span>Total Earned</span>
-                <strong id="dashboardEarned">৳0.00</strong>
-              </div>
-              <div>
-                <span>Total Withdrawn</span>
-                <strong id="dashboardWithdrawn">৳0.00</strong>
-              </div>
-            </div>
-          </div>
-
-          <div class="quick-card">
-            <h3>আজ আরও Earn করুন</h3>
-            <p>
-              বিজ্ঞাপন দেখুন এবং প্রতিটি বৈধ View-এর জন্য আপনার Wallet-এ Reward পান।
-            </p>
-            <button class="btn full" data-go="watch">▶ বিজ্ঞাপন দেখুন</button>
-          </div>
-        </div>
-
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-icon">▶</div>
-            <p>আজকের Ad Views</p>
-            <strong id="todayViews">0</strong>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">৳</div>
-            <p>আজকের Earnings</p>
-            <strong id="todayEarnings">৳0.00</strong>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">↗</div>
-            <p>Pending Withdrawals</p>
-            <strong id="pendingCount">0</strong>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">✓</div>
-            <p>Completed Ads</p>
-            <strong id="completedAds">0</strong>
-          </div>
-        </div>
-
-        <div class="content-grid">
-          <div class="card">
-            <div class="card-header">
-              <h3>সাম্প্রতিক Activity</h3>
-              <a data-go="history">সব দেখুন</a>
-            </div>
-            <div class="transaction-list" id="recentTransactions"></div>
-          </div>
-
-          <div class="card">
-            <div class="card-header">
-              <h3>কীভাবে কাজ করে?</h3>
-            </div>
-
-            <div class="how-list">
-              <div class="how-item">
-                <div class="how-number">1</div>
-                <div>
-                  <strong>বিজ্ঞাপন দেখুন</strong>
-                  <p>Watch Ads পেজ থেকে Available Ad চালু করুন।</p>
-                </div>
-              </div>
-
-              <div class="how-item">
-                <div class="how-number">2</div>
-                <div>
-                  <strong>Reward পান</strong>
-                  <p>বিজ্ঞাপন সম্পূর্ণ হলে Reward Wallet-এ যোগ হবে।</p>
-                </div>
-              </div>
-
-              <div class="how-item">
-                <div class="how-number">3</div>
-                <div>
-                  <strong>Withdraw করুন</strong>
-                  <p>Minimum Balance পূরণ হলে Withdrawal Request পাঠান।</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Watch Ads -->
-      <section class="page" id="page-watch">
-        <div class="card section-card">
-          <h3>বিজ্ঞাপন দেখুন</h3>
-          <p>প্রতিটি Demo Ad সম্পূর্ণ করলে আপনার Wallet-এ Reward যোগ হবে।</p>
-
-          <div class="ad-box">
-            <div>
-              <div class="ad-icon">▶</div>
-              <h3 id="adTitle">আপনার পরবর্তী Reward-এর জন্য প্রস্তুত?</h3>
-              <p id="adDescription">
-                নিচের Button-এ ক্লিক করে একটি Demo Advertisement দেখুন।
-                Prototype-এ Demo Ad-এর সময়কাল ১০ সেকেন্ড।
-              </p>
-
-              <button class="btn" id="watchAdBtn">▶ বিজ্ঞাপন শুরু করুন</button>
-
-              <div class="ad-progress" id="adProgress">
-                <span id="adProgressBar"></span>
-              </div>
-
-              <div class="ad-note" id="adNote">
-                Demo Reward: ৳1.00 প্রতি সম্পূর্ণ Ad
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h3>আজকের Ad Summary</h3>
-          </div>
-
-          <div class="stats-grid" style="margin-bottom: 0;">
-            <div class="stat-card">
-              <div class="stat-icon">▶</div>
-              <p>আজ দেখেছেন</p>
-              <strong id="watchTodayViews">0</strong>
-            </div>
-
-            <div class="stat-card">
-              <div class="stat-icon">৳</div>
-              <p>আজ Earn করেছেন</p>
-              <strong id="watchTodayEarnings">৳0.00</strong>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- Wallet -->
-      <section class="page" id="page-wallet">
-        <div class="card section-card">
-          <h3>আমার Wallet</h3>
-          <p>আপনার Wallet Balance এবং সম্পূর্ণ Ledger দেখুন।</p>
-
-          <div class="balance-card" style="margin-bottom: 18px;">
-            <div class="balance-label">Current Wallet Balance</div>
-            <div class="balance-amount" id="walletBalance">৳0.00</div>
-
-            <div class="balance-meta">
-              <div>
-                <span>Total Earned</span>
-                <strong id="walletEarned">৳0.00</strong>
-              </div>
-              <div>
-                <span>On Hold</span>
-                <strong id="walletHeld">৳0.00</strong>
-              </div>
-            </div>
-          </div>
-
-          <button class="btn" data-go="withdraw">↗ টাকা Withdraw করুন</button>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h3>Wallet Ledger</h3>
-          </div>
-          <div class="transaction-list" id="walletTransactions"></div>
-        </div>
-      </section>
-
-      <!-- Withdraw -->
-      <section class="page" id="page-withdraw">
-        <div class="card form-card">
-          <h3>Withdrawal Request</h3>
-          <p style="color: var(--muted); font-size: 13px; margin: 7px 0 19px;">
-            আপনার Payout তথ্য প্রদান করুন। Demo Mode-এ Request Pending হিসেবে সংরক্ষিত হবে।
-          </p>
-
-          <div class="withdraw-summary">
-            <div>
-              <span>Available Balance</span>
-              <strong id="withdrawAvailable">৳0.00</strong>
-            </div>
-            <div style="text-align: right;">
-              <span>Minimum Withdrawal</span>
-              <strong>৳100.00</strong>
-            </div>
-          </div>
-
-          <div class="notice">
-            Demo Configuration: Minimum Withdrawal ৳100 এবং Payout Method হিসেবে
-            bKash, Nagad অথবা USDT নির্বাচন করা যাবে।
-          </div>
-
-          <form id="withdrawForm">
-            <div class="form-group">
-              <label for="withdrawAmount">Amount</label>
-              <input
-                class="form-control"
-                id="withdrawAmount"
-                type="number"
-                min="100"
-                step="0.01"
-                placeholder="যেমন: 100"
-                required
-              />
-            </div>
-
-            <div class="form-group">
-              <label for="payoutMethod">Payout Method</label>
-              <select class="form-control" id="payoutMethod" required>
-                <option value="">নির্বাচন করুন</option>
-                <option value="bKash">bKash</option>
-                <option value="Nagad">Nagad</option>
-                <option value="USDT">USDT</option>
-              </select>
-            </div>
-
-            <div class="form-group">
-              <label for="payoutAccount">Account / Wallet Address</label>
-              <input
-                class="form-control"
-                id="payoutAccount"
-                type="text"
-                placeholder="আপনার Payout Account"
-                required
-              />
-            </div>
-
-            <div class="form-group">
-              <label for="withdrawNote">Note <span style="font-weight: 400;">(ঐচ্ছিক)</span></label>
-              <textarea
-                class="form-control"
-                id="withdrawNote"
-                placeholder="প্রয়োজনে অতিরিক্ত তথ্য লিখুন"
-              ></textarea>
-            </div>
-
-            <button class="btn full" type="submit">Withdrawal Request পাঠান</button>
-          </form>
-        </div>
-
-        <div class="card" style="max-width: 680px; margin-top: 18px;">
-          <div class="card-header">
-            <h3>আমার Withdrawal Requests</h3>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Amount</th>
-                  <th>Method</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody id="withdrawalTableBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- History -->
-      <section class="page" id="page-history">
-        <div class="card">
-          <div class="card-header">
-            <div>
-              <h3>Transaction History</h3>
-              <p style="color: var(--muted); font-size: 12px; margin-top: 5px;">
-                আপনার সব Reward এবং Withdrawal Activity
-              </p>
-            </div>
-          </div>
-
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Type</th>
-                  <th>Description</th>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody id="historyTableBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <!-- Admin -->
-      <section class="page admin-only" id="page-admin">
-        <div class="stats-grid">
-          <div class="stat-card">
-            <div class="stat-icon">👥</div>
-            <p>Total Users</p>
-            <strong>1</strong>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">▶</div>
-            <p>Total Ad Views</p>
-            <strong id="adminAdViews">0</strong>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">৳</div>
-            <p>Total Rewards</p>
-            <strong id="adminRewards">৳0.00</strong>
-          </div>
-
-          <div class="stat-card">
-            <div class="stat-icon">↗</div>
-            <p>Pending Requests</p>
-            <strong id="adminPending">0</strong>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header">
-            <h3>Admin Withdrawal Queue</h3>
-            <button class="mode-toggle" id="exitAdminBtn">User Mode</button>
-          </div>
-
-          <div class="admin-tabs">
-            <button class="admin-tab active" data-admin-filter="all">সব</button>
-            <button class="admin-tab" data-admin-filter="pending">Pending</button>
-            <button class="admin-tab" data-admin-filter="completed">Completed</button>
-            <button class="admin-tab" data-admin-filter="rejected">Rejected</button>
-          </div>
-
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>User</th>
-                  <th>Amount</th>
-                  <th>Method</th>
-                  <th>Account</th>
-                  <th>Status</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody id="adminWithdrawalBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <div class="toast-container" id="toastContainer"></div>
-
-  <div class="modal-backdrop" id="modalBackdrop">
-    <div class="modal">
-      <div class="modal-head">
-        <h3 id="modalTitle">Confirm Action</h3>
-        <button class="close-modal" id="closeModal">×</button>
-      </div>
-
-      <p id="modalMessage" style="color: var(--muted); font-size: 13px; line-height: 1.6;"></p>
-
-      <div style="display: flex; gap: 10px; margin-top: 22px;">
-        <button class="btn secondary" id="cancelModal" style="flex: 1;">Cancel</button>
-        <button class="btn" id="confirmModal" style="flex: 1;">Confirm</button>
-      </div>
+<div id="app">
+  <div class="topbar">
+    <div class="brand"><span class="mark">T</span> TGSHORTBOT</div>
+    <div class="topbar-right">
+      <span class="role-badge" id="roleBadge">…</span>
+      <button class="menu-btn" id="menuBtn" style="display:none;" aria-label="Owner settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.06a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.06a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>
+      </button>
     </div>
   </div>
 
-  <script>
-    /*
-      AdReward Bot — Single HTML Demo
-
-      Storage:
-      - সব Demo Data localStorage-এ রাখা হয়।
-      - Production-এ localStorage-এর পরিবর্তে Backend API ব্যবহার করুন।
-
-      Demo Admin:
-      - Admin Panel দেখতে নিচের "Admin Panel" Navigation-এ ক্লিক করুন।
-    */
-
-    const STORAGE_KEY = "adreward_single_file_demo_v1";
-    const REWARD_PER_AD = 1;
-    const MIN_WITHDRAWAL = 100;
-    const AD_DURATION_SECONDS = 10;
-
-    const pageMeta = {
-      dashboard: {
-        title: "Dashboard",
-        subtitle: "আপনার Earnings-এর সারাংশ দেখুন"
-      },
-      watch: {
-        title: "Watch Ads",
-        subtitle: "বিজ্ঞাপন দেখে Reward অর্জন করুন"
-      },
-      wallet: {
-        title: "My Wallet",
-        subtitle: "আপনার Balance এবং Ledger দেখুন"
-      },
-      withdraw: {
-        title: "Withdraw",
-        subtitle: "আপনার Earnings উত্তোলন করুন"
-      },
-      history: {
-        title: "History",
-        subtitle: "আপনার সম্পূর্ণ Activity দেখুন"
-      },
-      admin: {
-        title: "Admin Panel",
-        subtitle: "Withdrawal ও User Activity পরিচালনা করুন"
-      }
-    };
-
-    const defaultState = {
-      user: {
-        id: "demo-user-1",
-        name: "Rahim Hasan",
-        handle: "@rahim_demo"
-      },
-      wallet: {
-        available: 0,
-        held: 0,
-        totalEarned: 0,
-        totalWithdrawn: 0
-      },
-      transactions: [],
-      withdrawals: [],
-      adViews: [],
-      isAdmin: false
-    };
-
-    let state = loadState();
-    let currentAdminFilter = "all";
-    let adRunning = false;
-    let modalAction = null;
-
-    const $ = (selector) => document.querySelector(selector);
-
-    function loadState() {
-      try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-
-        if (!saved) {
-          return structuredClone(defaultState);
-        }
-
-        return {
-          ...structuredClone(defaultState),
-          ...JSON.parse(saved)
-        };
-      } catch (error) {
-        return structuredClone(defaultState);
-      }
-    }
-
-    function saveState() {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    }
-
-    function money(value) {
-      return `৳${Number(value || 0).toFixed(2)}`;
-    }
-
-    function todayKey() {
-      const now = new Date();
-
-      return [
-        now.getFullYear(),
-        String(now.getMonth() + 1).padStart(2, "0"),
-        String(now.getDate()).padStart(2, "0")
-      ].join("-");
-    }
-
-    function formatDate(dateValue) {
-      const date = new Date(dateValue);
-
-      return date.toLocaleString("bn-BD", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit"
-      });
-    }
-
-    function escapeHtml(value) {
-      return String(value ?? "")
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-    }
-
-    function showToast(message, type = "default") {
-      const toast = document.createElement("div");
-
-      toast.className = `toast ${type}`;
-      toast.textContent = message;
-
-      $("#toastContainer").appendChild(toast);
-
-      setTimeout(() => {
-        toast.remove();
-      }, 3500);
-    }
-
-    function addTransaction(transaction) {
-      state.transactions.unshift({
-        id: `TX-${Date.now()}`,
-        createdAt: new Date().toISOString(),
-        ...transaction
-      });
-    }
-
-    function getTodayAds() {
-      return state.adViews.filter((item) => item.day === todayKey());
-    }
-
-    function getTodayEarnings() {
-      return getTodayAds().reduce((sum, item) => sum + Number(item.reward), 0);
-    }
-
-    function getPendingWithdrawals() {
-      return state.withdrawals.filter((item) => item.status === "PENDING");
-    }
-
-    function updateCommonUserInfo() {
-      $("#userName").textContent = state.user.name;
-      $("#userHandle").textContent = state.user.handle;
-    }
-
-    function renderDashboard() {
-      const todayAds = getTodayAds();
-
-      $("#dashboardBalance").textContent = money(state.wallet.available);
-      $("#dashboardEarned").textContent = money(state.wallet.totalEarned);
-      $("#dashboardWithdrawn").textContent = money(state.wallet.totalWithdrawn);
-
-      $("#todayViews").textContent = todayAds.length;
-      $("#todayEarnings").textContent = money(getTodayEarnings());
-      $("#pendingCount").textContent = getPendingWithdrawals().length;
-      $("#completedAds").textContent = state.adViews.length;
-
-      const recent = state.transactions.slice(0, 5);
-      const container = $("#recentTransactions");
-
-      if (!recent.length) {
-        container.innerHTML = `
-          <div class="empty-state">
-            এখনো কোনো Activity নেই। বিজ্ঞাপন দেখে শুরু করুন।
-          </div>
-        `;
-
-        return;
-      }
-
-      container.innerHTML = recent.map(transactionHtml).join("");
-    }
-
-    function renderWatchPage() {
-      const todayAds = getTodayAds();
-
-      $("#watchTodayViews").textContent = todayAds.length;
-      $("#watchTodayEarnings").textContent = money(getTodayEarnings());
-
-      if (adRunning) {
-        $("#watchAdBtn").disabled = true;
-        $("#watchAdBtn").textContent = "বিজ্ঞাপন চলছে...";
-      } else {
-        $("#watchAdBtn").disabled = false;
-        $("#watchAdBtn").textContent = "▶ বিজ্ঞাপন শুরু করুন";
-      }
-    }
-
-    function renderWallet() {
-      $("#walletBalance").textContent = money(state.wallet.available);
-      $("#walletEarned").textContent = money(state.wallet.totalEarned);
-      $("#walletHeld").textContent = money(state.wallet.held);
-
-      const container = $("#walletTransactions");
-
-      if (!state.transactions.length) {
-        container.innerHTML = `
-          <div class="empty-state">
-            Wallet Ledger এখনো খালি।
-          </div>
-        `;
-
-        return;
-      }
-
-      container.innerHTML = state.transactions.map(transactionHtml).join("");
-    }
-
-    function transactionHtml(transaction) {
-      const isWithdrawal = transaction.type === "WITHDRAWAL";
-      const amountClass = isWithdrawal ? "negative" : "";
-      const icon = isWithdrawal ? "↗" : "✓";
-      const amountPrefix = isWithdrawal ? "-" : "+";
-      const status = transaction.status || "COMPLETED";
-
-      return `
-        <div class="transaction">
-          <div class="transaction-icon ${isWithdrawal ? "withdraw" : ""}">
-            ${icon}
-          </div>
-
-          <div class="transaction-info">
-            <strong>${escapeHtml(transaction.title)}</strong>
-            <span>${escapeHtml(formatDate(transaction.createdAt))}</span>
-          </div>
-
-          <div class="transaction-amount ${amountClass}">
-            ${amountPrefix}${money(transaction.amount)}
-          </div>
-        </div>
-      `;
-    }
-
-    function statusBadge(status) {
-      const normalized = String(status).toLowerCase();
-
-      return `
-        <span class="status-badge ${normalized}">
-          ${escapeHtml(status)}
-        </span>
-      `;
-    }
-
-    function renderWithdrawals() {
-      const body = $("#withdrawalTableBody");
-
-      if (!state.withdrawals.length) {
-        body.innerHTML = `
-          <tr>
-            <td colspan="5">
-              <div class="empty-state">কোনো Withdrawal Request নেই।</div>
-            </td>
-          </tr>
-        `;
-
-        return;
-      }
-
-      body.innerHTML = state.withdrawals.map((item) => `
-        <tr>
-          <td><strong>${escapeHtml(item.id)}</strong></td>
-          <td>${money(item.amount)}</td>
-          <td>${escapeHtml(item.method)}</td>
-          <td>${statusBadge(item.status)}</td>
-          <td>${escapeHtml(formatDate(item.createdAt))}</td>
-        </tr>
-      `).join("");
-    }
-
-    function renderHistory() {
-      const body = $("#historyTableBody");
-
-      if (!state.transactions.length) {
-        body.innerHTML = `
-          <tr>
-            <td colspan="5">
-              <div class="empty-state">কোনো Transaction History নেই।</div>
-            </td>
-          </tr>
-        `;
-
-        return;
-      }
-
-      body.innerHTML = state.transactions.map((item) => {
-        const isWithdrawal = item.type === "WITHDRAWAL";
-
-        return `
-          <tr>
-            <td>${isWithdrawal ? "Withdrawal" : "Ad Reward"}</td>
-            <td>${escapeHtml(item.title)}</td>
-            <td style="color: ${isWithdrawal ? "#bf7c21" : "#1d8851"}; font-weight: 800;">
-              ${isWithdrawal ? "-" : "+"}${money(item.amount)}
-            </td>
-            <td>${statusBadge(item.status || "COMPLETED")}</td>
-            <td>${escapeHtml(formatDate(item.createdAt))}</td>
-          </tr>
-        `;
-      }).join("");
-    }
-
-    function renderAdmin() {
-      $("#adminAdViews").textContent = state.adViews.length;
-      $("#adminRewards").textContent = money(state.wallet.totalEarned);
-      $("#adminPending").textContent = getPendingWithdrawals().length;
-
-      const body = $("#adminWithdrawalBody");
-
-      let withdrawals = [...state.withdrawals];
-
-      if (currentAdminFilter === "pending") {
-        withdrawals = withdrawals.filter((item) => item.status === "PENDING");
-      }
-
-      if (currentAdminFilter === "completed") {
-        withdrawals = withdrawals.filter((item) => {
-          return ["APPROVED", "COMPLETED"].includes(item.status);
-        });
-      }
-
-      if (currentAdminFilter === "rejected") {
-        withdrawals = withdrawals.filter((item) => item.status === "REJECTED");
-      }
-
-      if (!withdrawals.length) {
-        body.innerHTML = `
-          <tr>
-            <td colspan="7">
-              <div class="empty-state">এই Filter-এ কোনো Request নেই।</div>
-            </td>
-          </tr>
-        `;
-
-        return;
-      }
-
-      body.innerHTML = withdrawals.map((item) => {
-        let action = "—";
-
-        if (item.status === "PENDING") {
-          action = `
-            <div style="display:flex; gap:6px;">
-              <button
-                class="btn"
-                style="min-height:30px; padding:0 9px; font-size:11px;"
-                data-admin-action="approve"
-                data-id="${escapeHtml(item.id)}"
-              >
-                Approve
-              </button>
-
-              <button
-                class="btn danger"
-                style="min-height:30px; padding:0 9px; font-size:11px;"
-                data-admin-action="reject"
-                data-id="${escapeHtml(item.id)}"
-              >
-                Reject
-              </button>
-            </div>
-          `;
-        }
-
-        return `
-          <tr>
-            <td><strong>${escapeHtml(item.id)}</strong></td>
-            <td>${escapeHtml(state.user.name)}</td>
-            <td>${money(item.amount)}</td>
-            <td>${escapeHtml(item.method)}</td>
-            <td>${escapeHtml(item.account)}</td>
-            <td>${statusBadge(item.status)}</td>
-            <td>${action}</td>
-          </tr>
-        `;
-      }).join("");
-    }
-
-    function renderAll() {
-      updateCommonUserInfo();
-      renderDashboard();
-      renderWatchPage();
-      renderWallet();
-      renderWithdrawals();
-      renderHistory();
-      renderAdmin();
-
-      $("#withdrawAvailable").textContent = money(state.wallet.available);
-    }
-
-    function navigateTo(pageName) {
-      if (pageName === "admin" && !state.isAdmin) {
-        const password = prompt("Demo Admin Password লিখুন:");
-
-        if (password !== "admin123") {
-          showToast("ভুল Admin Password। Demo Password: admin123", "error");
+  <div class="balance-card" id="topCard"><div class="skel" style="height:60px;"></div></div>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="tabContent"></div>
+</div>
+
+<div class="bottom-nav" id="bottomNav" style="display:none;"></div>
+
+<div class="drawer-backdrop" id="drawerBackdrop"></div>
+<div class="drawer" id="drawer">
+  <div class="drawer-handle"></div>
+  <div class="drawer-title">Settings</div>
+  <div id="drawerItems"></div>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal-box" id="modalBox"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function () {
+  // Optional chaining so a Telegram WebApp script that fails to load (or
+  // any non-Telegram browser) never throws here — tg simply ends up null
+  // and everything below degrades to the outside-Telegram landing page.
+  const tg = window.Telegram?.WebApp || null;
+  if (tg) {
+    try { tg.ready(); } catch (e) {}
+    try { tg.expand(); } catch (e) {}
+    try { tg.setHeaderColor("#12141c"); tg.setBackgroundColor("#12141c"); } catch (e) {}
+  }
+  // `let`, not `const` — waitForInitData() below may update this once
+  // the Telegram bridge actually delivers initData (see that function's
+  // comment for why a single synchronous read isn't always enough).
+  let initData = window.Telegram?.WebApp?.initData || "";
+
+  // Telegram sometimes prerenders/prefetches a Mini App in the
+  // background before the user actually opens it, or the bridge script
+  // is simply still connecting on a slow network — in both cases
+  // initData can read as empty for a brief moment even though this is a
+  // completely genuine in-Telegram session, not an outside visit. A
+  // single synchronous check at load time can't tell that apart from
+  // truly being outside Telegram, so instead of deciding instantly,
+  // poll for up to ~1.2s for initData to show up before concluding this
+  // really is an outside-Telegram visit. Real outside visits (where
+  // window.Telegram never appears at all) still resolve almost
+  // instantly since there's nothing to wait for.
+  function waitForInitData(maxWaitMs, intervalMs) {
+    return new Promise((resolve) => {
+      const deadline = Date.now() + maxWaitMs;
+      (function poll() {
+        const fresh = window.Telegram?.WebApp?.initData || "";
+        if (fresh) {
+          initData = fresh;
+          resolve(true);
           return;
         }
-
-        state.isAdmin = true;
-        document.body.classList.add("admin-mode");
-        saveState();
-      }
-
-      document.querySelectorAll(".page").forEach((page) => {
-        page.classList.toggle("active", page.id === `page-${pageName}`);
-      });
-
-      document.querySelectorAll(".nav-btn").forEach((button) => {
-        button.classList.toggle("active", button.dataset.page === pageName);
-      });
-
-      const meta = pageMeta[pageName] || pageMeta.dashboard;
-
-      $("#pageHeading").textContent = meta.title;
-      $("#pageSubheading").textContent = meta.subtitle;
-      $("#sidebar").classList.remove("open");
-
-      renderAll();
-    }
-
-    function startDemoAd() {
-      if (adRunning) {
-        return;
-      }
-
-      adRunning = true;
-
-      const button = $("#watchAdBtn");
-      const progress = $("#adProgress");
-      const progressBar = $("#adProgressBar");
-      const title = $("#adTitle");
-      const description = $("#adDescription");
-      const note = $("#adNote");
-
-      button.disabled = true;
-      button.textContent = "বিজ্ঞাপন চলছে...";
-      progress.style.display = "block";
-      progressBar.style.width = "0%";
-      title.textContent = "Demo Advertisement চলছে";
-      description.textContent = "দয়া করে এই পেজটি খোলা রাখুন। বিজ্ঞাপন সম্পূর্ণ না হওয়া পর্যন্ত অপেক্ষা করুন।";
-      note.textContent = "Reward verification চলছে...";
-
-      let elapsed = 0;
-
-      const timer = setInterval(() => {
-        elapsed += 1;
-        progressBar.style.width = `${(elapsed / AD_DURATION_SECONDS) * 100}%`;
-
-        if (elapsed >= AD_DURATION_SECONDS) {
-          clearInterval(timer);
-          completeDemoAd();
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
         }
-      }, 1000);
+        setTimeout(poll, intervalMs);
+      })();
+    });
+  }
+
+  const state = {
+    me: null,
+    tab: "overview",
+    links: [],
+    withdrawals: [],
+    cpm: null,
+    withdrawalsPending: [],
+    admins: [],
+    stats: null,
+    drawerOpen: false,
+  };
+
+  // ---- helpers ------------------------------------------------------
+
+  function fmt(n) {
+    return "৳" + Number(n || 0).toFixed(2);
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  // ---- SVG icons (stroke-based, feather-style — replaces emoji glyphs
+  // everywhere in this dashboard for a cleaner, more consistent look) ---
+
+  const ICON_PATHS = {
+    home: '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline>',
+    scissors: '<circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><line x1="20" y1="4" x2="8.12" y2="15.88"></line><line x1="14.47" y1="14.48" x2="20" y2="20"></line><line x1="8.12" y1="8.12" x2="12" y2="12"></line>',
+    play: '<polygon points="5 3 19 12 5 21 5 3"></polygon>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>',
+    user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>',
+    users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>',
+    settings: '<circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.06a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.06a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path>',
+    barChart: '<line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line>',
+    radio: '<circle cx="12" cy="12" r="2"></circle><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.25a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"></path>',
+    banknote: '<rect x="2" y="6" width="20" height="12" rx="2"></rect><circle cx="12" cy="12" r="3"></circle><line x1="6" y1="12" x2="6.01" y2="12"></line><line x1="18" y1="12" x2="18.01" y2="12"></line>',
+    trendingUp: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline>',
+    trendingDown: '<polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline><polyline points="17 18 23 18 23 12"></polyline>',
+    clock: '<circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>',
+    alertTriangle: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line>',
+    checkCircle: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>',
+    clipboard: '<path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path><rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>',
+    edit: '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>',
+    trash: '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
+    eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>',
+  };
+
+  function icon(name, size) {
+    size = size || 16;
+    return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px; flex:0 0 auto;">${ICON_PATHS[name] || ""}</svg>`;
+  }
+
+  function isOwner() {
+    return !!(state.me && state.me.role === "owner");
+  }
+
+  // Mirrors storage.Storage.MIN_AD_COUNT / MAX_AD_COUNT — client-side
+  // bound so a bad value is caught before the round trip, not instead of
+  // the server-side check in POST /api/admin/links/{short_code}/ad-count.
+  const AD_COUNT_MIN = 1;
+  const AD_COUNT_MAX = 10;
+
+  // ---- Missed-earnings analytics (Anti-Abuse System read side) --------
+  // Shared by the platform-wide Stats tab and the per-Admin detail view,
+  // scoped by whichever `missed_earnings_trend` / `missed_earnings_by_link`
+  // payload is passed in (platform-wide vs one Admin's own links).
+
+  function missedTrendChartSVG(trend) {
+    if (!trend || !trend.length) return `<div class="empty">No view history yet.</div>`;
+    const W = 320, H = 110, padL = 3, padR = 3, padB = 16, padT = 6;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    const n = trend.length;
+    const gap = 2.5;
+    const barW = Math.max(2, (plotW - gap * (n - 1)) / n);
+    const maxVal = Math.max(1, ...trend.map((d) => d.capped_views));
+    const bars = trend.map((d, i) => {
+      const x = padL + i * (barW + gap);
+      const h = d.capped_views > 0 ? Math.max(2, (d.capped_views / maxVal) * plotH) : 1;
+      const y = padT + (plotH - h);
+      const shortLabel = (d.date || "").slice(5).replace("-", "/");
+      const showLabel = i === 0 || i === n - 1 || i === Math.floor(n / 2);
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"
+          fill="${d.capped_views > 0 ? "var(--red)" : "var(--hairline)"}" opacity="${d.capped_views > 0 ? "0.88" : "0.6"}">
+          <title>${esc(shortLabel)} — ${d.capped_views} missed view(s), ~${fmt(d.estimated_missed_amount)}</title>
+        </rect>${showLabel ? `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>` : ""}`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
+  }
+
+  function adminLinksListHTML(links) {
+    if (!links || !links.length) {
+      return `<div class="card"><div class="empty">This Admin hasn't created any links yet.</div></div>`;
     }
+    return links.map((l) => `
+      <div class="card" data-short-code="${esc(l.short_code)}">
+        <div class="meta" style="color:var(--text); font-weight:600;">/${esc(l.short_code)}</div>
+        <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(l.destination_url)}</div>
+        <div class="meta">${l.view_count} views${l.daily_capped_views ? ` · ${l.daily_capped_views} missed` : ""}</div>
+        <label style="margin-top:8px;">Ads to unlock</label>
+        <div class="btn-row" style="align-items:center;">
+          <input type="number" class="adCountInput" min="${AD_COUNT_MIN}" max="${AD_COUNT_MAX}" step="1" value="${l.ad_count}" style="max-width:90px;" />
+          <button class="btn btn-outline btn-sm saveAdCountBtn">Save</button>
+        </div>
+      </div>
+    `).join("");
+  }
 
-    function completeDemoAd() {
-      const adId = `AD-${Date.now()}`;
-
-      state.adViews.unshift({
-        id: adId,
-        day: todayKey(),
-        reward: REWARD_PER_AD,
-        createdAt: new Date().toISOString()
-      });
-
-      const previousBalance = state.wallet.available;
-
-      state.wallet.available += REWARD_PER_AD;
-      state.wallet.totalEarned += REWARD_PER_AD;
-
-      addTransaction({
-        type: "AD_REWARD",
-        title: "বিজ্ঞাপন দেখার Reward",
-        amount: REWARD_PER_AD,
-        status: "COMPLETED",
-        balanceBefore: previousBalance,
-        balanceAfter: state.wallet.available,
-        referenceId: adId
-      });
-
-      saveState();
-      renderAll();
-
-      adRunning = false;
-
-      $("#watchAdBtn").disabled = false;
-      $("#watchAdBtn").textContent = "▶ আবার বিজ্ঞাপন দেখুন";
-      $("#adTitle").textContent = "Reward সফলভাবে যোগ হয়েছে";
-      $("#adDescription").textContent = `${money(REWARD_PER_AD)} আপনার Wallet-এ যোগ করা হয়েছে।`;
-      $("#adNote").textContent = "এটি একটি Frontend Demo Reward।";
-      $("#adProgress").style.display = "none";
-      $("#adProgressBar").style.width = "0%";
-
-      showToast(`${money(REWARD_PER_AD)} Reward Wallet-এ যোগ হয়েছে।`, "success");
-    }
-
-    function submitWithdrawal(event) {
-      event.preventDefault();
-
-      const amount = Number($("#withdrawAmount").value);
-      const method = $("#payoutMethod").value;
-      const account = $("#payoutAccount").value.trim();
-      const note = $("#withdrawNote").value.trim();
-
-      if (!amount || amount < MIN_WITHDRAWAL) {
-        showToast(`Minimum Withdrawal হলো ${money(MIN_WITHDRAWAL)}।`, "error");
-        return;
-      }
-
-      if (amount > state.wallet.available) {
-        showToast("আপনার Available Balance যথেষ্ট নয়।", "error");
-        return;
-      }
-
-      if (!method || !account) {
-        showToast("সব প্রয়োজনীয় তথ্য পূরণ করুন।", "error");
-        return;
-      }
-
-      const pendingRequest = state.withdrawals.some((item) => {
-        return item.status === "PENDING";
-      });
-
-      if (pendingRequest) {
-        showToast("আপনার একটি Withdrawal Request ইতোমধ্যে Pending আছে।", "error");
-        return;
-      }
-
-      const withdrawalId = `WD-${Date.now()}`;
-      const previousBalance = state.wallet.available;
-
-      state.wallet.available -= amount;
-      state.wallet.held += amount;
-
-      const withdrawal = {
-        id: withdrawalId,
-        amount,
-        method,
-        account,
-        note,
-        status: "PENDING",
-        createdAt: new Date().toISOString()
-      };
-
-      state.withdrawals.unshift(withdrawal);
-
-      addTransaction({
-        type: "WITHDRAWAL",
-        title: `Withdrawal Request — ${method}`,
-        amount,
-        status: "PENDING",
-        balanceBefore: previousBalance,
-        balanceAfter: state.wallet.available,
-        referenceId: withdrawalId
-      });
-
-      saveState();
-      renderAll();
-
-      $("#withdrawForm").reset();
-
-      showToast("Withdrawal Request সফলভাবে পাঠানো হয়েছে।", "success");
-    }
-
-    function openConfirmModal(title, message, callback) {
-      $("#modalTitle").textContent = title;
-      $("#modalMessage").textContent = message;
-      modalAction = callback;
-      $("#modalBackdrop").classList.add("show");
-    }
-
-    function closeModal() {
-      $("#modalBackdrop").classList.remove("show");
-      modalAction = null;
-    }
-
-    function approveWithdrawal(id) {
-      const withdrawal = state.withdrawals.find((item) => item.id === id);
-
-      if (!withdrawal || withdrawal.status !== "PENDING") {
-        return;
-      }
-
-      withdrawal.status = "COMPLETED";
-      withdrawal.completedAt = new Date().toISOString();
-
-      state.wallet.held -= withdrawal.amount;
-      state.wallet.totalWithdrawn += withdrawal.amount;
-
-      const transaction = state.transactions.find((item) => {
-        return item.referenceId === withdrawal.id;
-      });
-
-      if (transaction) {
-        transaction.status = "COMPLETED";
-      }
-
-      saveState();
-      renderAll();
-      showToast("Withdrawal Approved এবং Completed হয়েছে।", "success");
-    }
-
-    function rejectWithdrawal(id) {
-      const withdrawal = state.withdrawals.find((item) => item.id === id);
-
-      if (!withdrawal || withdrawal.status !== "PENDING") {
-        return;
-      }
-
-      withdrawal.status = "REJECTED";
-      withdrawal.rejectionReason = "Demo Admin Rejection";
-
-      state.wallet.held -= withdrawal.amount;
-      state.wallet.available += withdrawal.amount;
-
-      const transaction = state.transactions.find((item) => {
-        return item.referenceId === withdrawal.id;
-      });
-
-      if (transaction) {
-        transaction.status = "REJECTED";
-      }
-
-      saveState();
-      renderAll();
-      showToast("Withdrawal Reject করা হয়েছে এবং Balance ফেরত দেওয়া হয়েছে।", "success");
-    }
-
-    function resetDemo() {
-      openConfirmModal(
-        "Demo Data Reset করুন?",
-        "সব Reward, Transaction এবং Withdrawal Data মুছে যাবে।",
-        () => {
-          state = structuredClone(defaultState);
-          state.isAdmin = false;
-          document.body.classList.remove("admin-mode");
-          saveState();
-          renderAll();
-          navigateTo("dashboard");
-          showToast("Demo Data Reset হয়েছে।", "success");
+  function wireAdCountControls(container) {
+    container.querySelectorAll(".saveAdCountBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const card = btn.closest("[data-short-code]");
+        const code = card.getAttribute("data-short-code");
+        const input = card.querySelector(".adCountInput");
+        const value = parseInt(input.value, 10);
+        if (!Number.isFinite(value) || value < AD_COUNT_MIN || value > AD_COUNT_MAX) {
+          toast(`Ad count must be between ${AD_COUNT_MIN} and ${AD_COUNT_MAX}`, "err");
+          return;
         }
-      );
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = "Saving…";
+        try {
+          await api(`/api/admin/links/${encodeURIComponent(code)}/ad-count`, {
+            method: "POST",
+            body: JSON.stringify({ ad_count: value }),
+          });
+          toast(`/${code} now shows ${value} ad${value === 1 ? "" : "s"}`, "ok");
+        } catch (e) {
+          toast(e.message, "err");
+        } finally {
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+      });
+    });
+  }
+
+  function missedByLinkListHTML(rows, opts) {
+    opts = opts || {};
+    if (!rows || !rows.length) {
+      return `<div class="card"><div class="empty">No links currently flagged by the anti-abuse cap.</div></div>`;
+    }
+    return rows.map((r) => `
+      <div class="card">
+        <div class="meta" style="color:var(--text); font-weight:600;">/r/${esc(r.short_code)}${
+          opts.showOwner ? ` · ${r.owner_username ? "@" + esc(r.owner_username) : "id " + r.owner_telegram_id}` : ""
+        }</div>
+        <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(r.destination_url || "")}</div>
+        <div class="meta">${r.capped_views} of ${r.total_attempts} views missed (${Math.round(r.capped_rate * 100)}%) · ~${fmt(r.estimated_missed_amount)} estimated missed</div>
+      </div>
+    `).join("");
+  }
+
+  function suggestedLimitCardHTML(sug) {
+    if (!sug || !sug.sample_size) {
+      return `<div class="card">
+        <h3>${icon("trendingUp", 15)} Suggested daily view limit</h3>
+        <div class="meta">Not enough view history yet to suggest a limit.</div>
+      </div>`;
+    }
+    const alreadySet = sug.suggested_limit === sug.current_limit;
+    return `<div class="card">
+      <h3>${icon("trendingUp", 15)} Suggested daily view limit</h3>
+      <div class="meta">Over the last ${sug.window_days} days, a typical viewer visits one Admin's links about
+        <b style="color:var(--text)">${sug.median_views_per_viewer_per_day}×/day</b>; the heaviest 10% reach
+        <b style="color:var(--text)">${sug.p90_views_per_viewer_per_day}×/day</b> (99th percentile: ${sug.p99_views_per_viewer_per_day}×).
+        The suggestion targets that top 10% — a rough starting point to review, not a guarantee.</div>
+      <div class="stat-grid" style="margin-top:10px;">
+        <div class="stat-box"><div class="n">${sug.current_limit === 0 ? "Off" : sug.current_limit}</div><div class="l">Current limit</div></div>
+        <div class="stat-box"><div class="n">${sug.suggested_limit}</div><div class="l">Suggested limit</div></div>
+      </div>
+      ${alreadySet
+        ? `<div class="meta" style="margin-top:8px; color:var(--emerald);">${icon("checkCircle", 13)} Already set to the suggested value.</div>`
+        : `<div class="btn-row" style="margin-top:10px;"><button class="btn btn-outline btn-block" id="applySuggestedLimit">Apply suggested limit (${sug.suggested_limit})</button></div>`}
+    </div>`;
+  }
+
+  let toastTimer = null;
+  function toast(msg, kind) {
+    const el = document.getElementById("toast");
+    el.textContent = msg;
+    el.className = "toast show" + (kind ? " " + kind : "");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = "toast"; }, 2600);
+  }
+
+  async function api(path, opts) {
+    opts = opts || {};
+    const headers = Object.assign({ "X-Telegram-Init-Data": initData }, opts.headers || {});
+    if (opts.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+    const resp = await fetch(path, Object.assign({}, opts, { headers }));
+    let data = null;
+    try { data = await resp.json(); } catch (e) { /* no body */ }
+    if (!resp.ok) {
+      const detail = (data && data.detail) || (resp.status + " " + resp.statusText);
+      throw new Error(detail);
+    }
+    return data;
+  }
+
+  // ---- bKash/Nagad account number validation (mirrors validators.py) --
+
+  function normalizeBDMobile(raw) {
+    let s = String(raw == null ? "" : raw).replace(/[\s\-]/g, "");
+    if (s.startsWith("+880")) s = "0" + s.slice(4);
+    else if (s.startsWith("880") && s.length === 13) s = "0" + s.slice(3);
+    return s;
+  }
+
+  function bdMobileError(raw) {
+    const s = normalizeBDMobile(raw);
+    if (!s) return "Account number is required.";
+    if (!/^\d+$/.test(s)) return "Account number must contain digits only, e.g. 017XXXXXXXX.";
+    if (s.length !== 11) return `A bKash/Nagad number must be exactly 11 digits (got ${s.length}).`;
+    if (!/^01[3-9]/.test(s)) return "Enter a valid bKash/Nagad number — it must start with 013, 014, 015, 016, 017, 018 or 019.";
+    return null;
+  }
+
+  // Wires an account-number <input> + adjacent <div class="field-error">
+  // to validate on submit and clear the error state as the user retypes.
+  function setFieldError(inputEl, errEl, message) {
+    if (message) {
+      inputEl.classList.add("input-error");
+      errEl.textContent = message;
+      errEl.classList.add("show");
+    } else {
+      inputEl.classList.remove("input-error");
+      errEl.classList.remove("show");
+    }
+  }
+
+  // ---- Copy-to-clipboard (short links) ---------------------------------
+
+  async function copyToClipboard(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (e) { /* fall through to the legacy fallback below */ }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Finds every `.copyBtn[data-url]` inside `container` and wires a tap
+  // to copy it, with a brief "Copied!" confirmation on the button itself.
+  function wireCopyButtons(container) {
+    container.querySelectorAll(".copyBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const url = btn.dataset.url || "";
+        const original = btn.innerHTML;
+        const ok = await copyToClipboard(url);
+        if (ok) {
+          btn.innerHTML = icon("checkCircle", 14) + " Copied!";
+          toast("Link copied", "ok");
+          setTimeout(() => { btn.innerHTML = original; }, 1500);
+        } else {
+          toast("Couldn't copy — long-press the link to copy manually", "err");
+        }
+      });
+    });
+  }
+
+  function secondsToClock(s) {
+    s = Math.max(0, s | 0);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    return h + "h " + m + "m";
+  }
+
+  // ---- Traffic Sources: shared list + add/edit form (multiple sources) -
+
+  const TS_PLATFORMS = ["Telegram", "YouTube", "Facebook", "TikTok", "Other"];
+
+  // `prefix` namespaces element ids so this can be dropped into more than
+  // one tab (the dedicated "traffic" tab and the Profile tab) without id
+  // collisions, since only one of those is ever on screen at a time.
+  function trafficSourceSectionHTML(prefix, sources) {
+    const listHtml = (sources && sources.length)
+      ? sources.map((s) => `
+          <div class="ts-item">
+            <div class="ts-info">
+              <div class="ts-platform">${esc(s.platform)}</div>
+              <div class="ts-url"><a href="${esc(s.url)}" target="_blank" style="color:var(--brass); text-decoration:none;">${esc(s.url)}</a></div>
+            </div>
+            <div class="ts-actions">
+              <button class="ts-icon-btn ${prefix}EditBtn" data-id="${s.id}" title="Edit">${icon("edit", 14)}</button>
+              <button class="ts-icon-btn danger ${prefix}DelBtn" data-id="${s.id}" title="Remove">${icon("trash", 14)}</button>
+            </div>
+          </div>
+        `).join("")
+      : `<div class="empty" style="padding:14px 4px;">No traffic sources yet — add at least one before creating links.</div>`;
+    return `
+      <div class="card">
+        <h3>Traffic Sources</h3>
+        <div class="meta">Where you'll share your short links — the Owner sees all of these alongside your withdrawal requests. Add as many as you use, and update any of them any time.</div>
+        <div id="${prefix}List" style="margin-top:6px;">${listHtml}</div>
+      </div>
+      <div class="card">
+        <h3 id="${prefix}FormTitle">Add a traffic source</h3>
+        <label>Platform</label>
+        <select id="${prefix}Platform">
+          ${TS_PLATFORMS.map((p) => `<option value="${p}">${p}</option>`).join("")}
+        </select>
+        <label>Channel / group / profile link</label>
+        <input type="url" id="${prefix}Url" placeholder="https://t.me/yourchannel" />
+        <div class="btn-row">
+          <button class="btn btn-primary btn-block" id="${prefix}Save">Add source</button>
+          <button class="btn btn-outline" id="${prefix}Cancel" style="display:none;">Cancel</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // `afterChange` is called (and expected to fully re-render the tab) once
+  // an add/edit/delete succeeds, so this never has to reconcile state by
+  // hand — it just asks the caller to redraw from the fresh /api/me data.
+  function wireTrafficSourceSection(el, prefix, afterChange) {
+    let editingId = null;
+    const platformSel = el.querySelector(`#${prefix}Platform`);
+    const urlInput = el.querySelector(`#${prefix}Url`);
+    const saveBtn = el.querySelector(`#${prefix}Save`);
+    const cancelBtn = el.querySelector(`#${prefix}Cancel`);
+    const titleEl = el.querySelector(`#${prefix}FormTitle`);
+
+    function setFormMode(source) {
+      editingId = source ? source.id : null;
+      titleEl.textContent = source ? "Edit traffic source" : "Add a traffic source";
+      saveBtn.textContent = source ? "Save changes" : "Add source";
+      cancelBtn.style.display = source ? "" : "none";
+      platformSel.value = source && TS_PLATFORMS.includes(source.platform) ? source.platform : "Telegram";
+      urlInput.value = source ? source.url : "";
     }
 
-    // Navigation
-    document.querySelectorAll("[data-go]").forEach((button) => {
-      button.addEventListener("click", () => {
-        navigateTo(button.dataset.go);
+    el.querySelectorAll(`.${prefix}EditBtn`).forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const source = (state.me.traffic_sources || []).find((s) => s.id === btn.dataset.id);
+        if (source) setFormMode(source);
       });
     });
 
-    document.querySelectorAll(".nav-btn").forEach((button) => {
-      button.addEventListener("click", () => {
-        navigateTo(button.dataset.page);
+    el.querySelectorAll(`.${prefix}DelBtn`).forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/traffic-sources/${btn.dataset.id}`, { method: "DELETE" });
+          toast("Traffic source removed", "ok");
+          await loadMe();
+          afterChange();
+        } catch (e) {
+          toast(e.message, "err");
+          btn.disabled = false;
+        }
       });
     });
 
-    $("#mobileMenu").addEventListener("click", () => {
-      $("#sidebar").classList.toggle("open");
+    cancelBtn.addEventListener("click", () => setFormMode(null));
+
+    saveBtn.addEventListener("click", async () => {
+      const platform = platformSel.value;
+      const url = urlInput.value.trim();
+      if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
+      saveBtn.disabled = true;
+      saveBtn.textContent = editingId ? "Saving…" : "Adding…";
+      try {
+        if (editingId) {
+          await api(`/api/traffic-sources/${editingId}`, { method: "PUT", body: JSON.stringify({ platform, url }) });
+          toast("Traffic source updated", "ok");
+        } else {
+          await api("/api/traffic-sources", { method: "POST", body: JSON.stringify({ platform, url }) });
+          toast("Traffic source added", "ok");
+        }
+        await loadMe();
+        afterChange();
+      } catch (e) {
+        toast(e.message, "err");
+        saveBtn.disabled = false;
+        saveBtn.textContent = editingId ? "Save changes" : "Add source";
+      }
     });
+  }
 
-    $("#watchAdBtn").addEventListener("click", startDemoAd);
-    $("#withdrawForm").addEventListener("submit", submitWithdrawal);
+  // ---- navigation: owner top tabs, admin bottom nav, owner drawer -----
 
-    // Admin Filter
-    document.querySelectorAll(".admin-tab").forEach((button) => {
-      button.addEventListener("click", () => {
-        document.querySelectorAll(".admin-tab").forEach((item) => {
-          item.classList.remove("active");
-        });
+  function primaryTabs() {
+    return [
+      ["overview", "Overview", 0],
+      ["payouts", "Withdrawals", state.withdrawalsPending.length],
+      ["admins", "Admins", 0],
+    ];
+  }
 
-        button.classList.add("active");
-        currentAdminFilter = button.dataset.adminFilter;
-        renderAdmin();
+  function bottomNavItems() {
+    return [
+      ["overview", icon("home", 19), "Home"],
+      ["quicklink", icon("scissors", 19), "Short Link"],
+      ["links", icon("link", 19), "My Links"],
+      ["profile", icon("user", 19), "Profile"],
+    ];
+  }
+
+  // Traffic Source / Withdraw live inside the Profile tab for the bottom
+  // nav's active-state purposes, even though renderTab() still dispatches
+  // them individually (Owner's own "admin tools" list links straight to
+  // "traffic" / "withdraw" as separate destinations).
+  function activeNavTab() {
+    return ["traffic", "withdraw"].includes(state.tab) ? "profile" : state.tab;
+  }
+
+  function drawerItems() {
+    if (!isOwner()) return [];
+    return [
+      ["cpm", icon("settings", 17), "CPM Settings", "Real-time / Scheduled mode, rate, cycle, ad delay"],
+      ["stats", icon("barChart", 17), "Platform Stats", "Totals across every admin"],
+    ];
+  }
+
+  function ownerToolItems() {
+    return [
+      ["links", icon("link", 17), "My Links", "Create & manage your own short links"],
+      ["traffic", icon("radio", 17), "Traffic Source", "Set where your own links get shared"],
+      ["withdraw", icon("banknote", 17), "Request Withdrawal", "Cash out your own confirmed balance"],
+    ];
+  }
+
+  function renderTabs() {
+    document.getElementById("app").classList.toggle("has-bottom-nav", !isOwner());
+
+    const tabsEl = document.getElementById("tabs");
+    const navEl = document.getElementById("bottomNav");
+
+    if (isOwner()) {
+      tabsEl.style.display = "flex";
+      navEl.style.display = "none";
+      tabsEl.innerHTML = primaryTabs().map(([id, label, badge]) =>
+        `<button class="tab-btn${state.tab === id ? " active" : ""}" data-tab="${id}">${label}${badge ? `<span class="tab-badge">${badge}</span>` : ""}</button>`
+      ).join("");
+      tabsEl.querySelectorAll(".tab-btn").forEach((btn) => {
+        btn.addEventListener("click", () => { state.tab = btn.dataset.tab; renderTab(); });
+      });
+    } else {
+      tabsEl.style.display = "none";
+      navEl.style.display = "flex";
+      const active = activeNavTab();
+      navEl.innerHTML = bottomNavItems().map(([id, icon, label]) =>
+        `<button class="nav-item${active === id ? " active" : ""}" data-tab="${id}">
+          <span class="nav-ic">${icon}</span><span class="nav-label">${label}</span>
+        </button>`
+      ).join("");
+      navEl.querySelectorAll(".nav-item").forEach((btn) => {
+        btn.addEventListener("click", () => { state.tab = btn.dataset.tab; renderTab(); });
+      });
+    }
+
+    const menuBtn = document.getElementById("menuBtn");
+    menuBtn.style.display = isOwner() ? "flex" : "none";
+  }
+
+  function renderDrawer() {
+    const el = document.getElementById("drawerItems");
+    el.innerHTML = drawerItems().map(([id, icon, title, sub]) => `
+      <div class="drawer-item" data-tab="${id}">
+        <div class="ic">${icon}</div>
+        <div class="label-col"><div class="t">${title}</div><div class="s">${sub}</div></div>
+      </div>
+    `).join("");
+    el.querySelectorAll(".drawer-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        state.tab = item.dataset.tab;
+        closeDrawer();
+        renderTab();
       });
     });
+  }
 
-    // Admin Actions
-    document.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-admin-action]");
+  function openDrawer() {
+    state.drawerOpen = true;
+    document.getElementById("drawerBackdrop").classList.add("open");
+    document.getElementById("drawer").classList.add("open");
+  }
+  function closeDrawer() {
+    state.drawerOpen = false;
+    document.getElementById("drawerBackdrop").classList.remove("open");
+    document.getElementById("drawer").classList.remove("open");
+  }
 
-      if (!button) {
+  document.getElementById("menuBtn").addEventListener("click", () => {
+    state.drawerOpen ? closeDrawer() : openDrawer();
+  });
+  document.getElementById("drawerBackdrop").addEventListener("click", closeDrawer);
+
+  // ---- generic centered confirm modal ----------------------------------
+
+  function openModal(html) {
+    document.getElementById("modalBox").innerHTML = html;
+    document.getElementById("modalBackdrop").classList.add("open");
+  }
+  function closeModal() {
+    document.getElementById("modalBackdrop").classList.remove("open");
+    document.getElementById("modalBox").innerHTML = "";
+  }
+  document.getElementById("modalBackdrop").addEventListener("click", (e) => {
+    if (e.target.id === "modalBackdrop") closeModal();
+  });
+
+  // ---- top card: admin balance card vs owner business snapshot --------
+
+  function renderTopCard() {
+    const card = document.getElementById("topCard");
+    const badge = document.getElementById("roleBadge");
+    if (!state.me) { card.innerHTML = `<div class="skel" style="height:60px;"></div>`; return; }
+
+    badge.textContent = isOwner() ? "Owner" : "Admin";
+    badge.className = "role-badge" + (isOwner() ? " owner" : "");
+
+    if (isOwner()) {
+      const pendingCount = state.withdrawalsPending.length;
+      const pendingSum = state.withdrawalsPending.reduce((s, w) => s + w.amount, 0);
+      const cpmLine = state.cpm
+        ? (state.cpm.mode === "scheduled"
+            ? `Scheduled · next cycle in <b>${secondsToClock(state.cpm.seconds_to_payout)}</b>`
+            : `Real-time · <b>${fmt(state.cpm.current_cpm)}</b> / view`)
+        : "";
+      card.className = "balance-card owner-card";
+      card.innerHTML = `
+        <div class="owner-eyebrow">Business snapshot</div>
+        <div class="balance-row">
+          <div class="balance-item pending"><div class="label">Pending withdrawals</div><div class="value">${pendingCount}</div></div>
+          <div class="balance-item violet"><div class="label">Awaiting payout</div><div class="value">${fmt(pendingSum)}</div></div>
+        </div>
+        <div class="cycle-note">${icon("users", 13)} <b>${state.stats ? state.stats.total_admins : "…"}</b> admins ·
+          ${icon("trendingUp", 13)} CPM: ${cpmLine}</div>
+      `;
+    } else {
+      card.className = "balance-card";
+      const pendingViews = state.links.reduce((sum, l) => sum + (l.pending_views || 0), 0);
+      let cycleNote = "";
+      if (state.cpm && state.cpm.mode === "scheduled") {
+        cycleNote = `${icon("clock", 13)} Next payout in <b>${secondsToClock(state.cpm.seconds_to_payout)}</b> — rate is set at payout time.`;
+      } else if (state.cpm) {
+        cycleNote = `${icon("trendingUp", 13)} Real-time CPM active — currently <b>${fmt(state.cpm.current_cpm)}</b> per view.`;
+      }
+      card.innerHTML = `
+        <div class="balance-row">
+          <div class="balance-item confirmed"><div class="label">Confirmed</div><div class="value">${fmt(state.me.balance_confirmed)}</div></div>
+          <div class="balance-item pending"><div class="label">Pending views</div><div class="value">${pendingViews}</div></div>
+        </div>
+        <div class="cycle-note">${cycleNote}</div>
+      `;
+    }
+  }
+
+  // ---- tab dispatch -----------------------------------------------------
+
+  async function renderTab() {
+    renderTabs();
+    const el = document.getElementById("tabContent");
+    el.innerHTML = `<div class="card"><div class="skel" style="height:80px;"></div></div>`;
+    try {
+      if (state.tab === "overview") await renderOverview(el);
+      else if (state.tab === "quicklink") await renderQuickLink(el);
+      else if (state.tab === "links") await renderLinks(el);
+      else if (state.tab === "profile") await renderProfile(el);
+      else if (state.tab === "traffic") await renderTraffic(el);
+      else if (state.tab === "withdraw") await renderWithdraw(el);
+      else if (state.tab === "payouts") await renderPayouts(el);
+      else if (state.tab === "cpm") await renderCpm(el);
+      else if (state.tab === "admins") await renderAdmins(el);
+      else if (state.tab === "stats") await renderStats(el);
+    } catch (e) {
+      el.innerHTML = `<div class="card"><div class="empty">Couldn't load this tab — ${esc(e.message)}</div></div>`;
+    }
+  }
+
+  // ---- Overview ---------------------------------------------------
+
+  async function renderOverview(el) {
+    if (isOwner()) {
+      el.innerHTML = `
+        <div class="section-title">Quick actions</div>
+        <div class="card">
+          <button class="btn btn-primary btn-block" id="qaPayouts">Review pending withdrawals${state.withdrawalsPending.length ? ` (${state.withdrawalsPending.length})` : ""}</button>
+          <div class="btn-row">
+            <button class="btn btn-outline btn-block" id="qaAdmins">View all admins</button>
+          </div>
+        </div>
+        <div class="section-title" style="margin-top:18px;">Your admin tools</div>
+        <div class="card" style="padding:6px;">
+          ${ownerToolItems().map(([id, icon, title, sub]) => `
+            <div class="drawer-item" data-tab="${id}">
+              <div class="ic">${icon}</div>
+              <div class="label-col"><div class="t">${title}</div><div class="s">${sub}</div></div>
+            </div>
+          `).join("")}
+        </div>
+        <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
+          CPM settings and platform stats live behind the ${icon("settings", 12)} menu, top right.
+        </p>
+      `;
+      el.querySelector("#qaPayouts").addEventListener("click", () => { state.tab = "payouts"; renderTab(); });
+      el.querySelector("#qaAdmins").addEventListener("click", () => { state.tab = "admins"; renderTab(); });
+      el.querySelectorAll(".drawer-item").forEach((item) => {
+        item.addEventListener("click", () => { state.tab = item.dataset.tab; renderTab(); });
+      });
+      return;
+    }
+
+    await loadLinks();
+    const confirmedViews = state.links.reduce((s, l) => s + (l.confirmed_views || 0), 0);
+    const totalViews = state.links.reduce((s, l) => s + (l.view_count || 0), 0);
+    el.innerHTML = `
+      ${!(state.me.traffic_sources && state.me.traffic_sources.length) ? `
+        <div class="card" style="border-color: rgba(226,104,92,.35);">
+          <h3 style="color:var(--red);">${icon("alertTriangle", 15)} No Traffic Source yet</h3>
+          <div class="meta">Add at least one before you can create any short links.</div>
+          <div class="btn-row"><button class="btn btn-primary btn-block" id="ctaTraffic">Add Traffic Source</button></div>
+        </div>` : ""}
+      <div class="section-title">At a glance</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="n">${state.links.length}</div><div class="l">Links created</div></div>
+        <div class="stat-box"><div class="n">${totalViews}</div><div class="l">Total views</div></div>
+        <div class="stat-box"><div class="n">${confirmedViews}</div><div class="l">Confirmed views</div></div>
+        <div class="stat-box"><div class="n">${fmt(state.me.balance_confirmed)}</div><div class="l">Withdrawable</div></div>
+      </div>
+      <div class="section-title" style="margin-top:18px;">Quick actions</div>
+      <div class="card">
+        <button class="btn btn-primary btn-block" id="qaNewLink">+ Create a new short link</button>
+        <div class="btn-row">
+          <button class="btn btn-outline btn-block" id="qaWithdraw">Request withdrawal</button>
+        </div>
+      </div>
+      <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
+        Tip: you can also do all of this from the bot chat with <code>/newlink</code>, <code>/mybalance</code> and <code>/withdraw</code>.
+      </p>
+    `;
+    const ctaTraffic = el.querySelector("#ctaTraffic");
+    if (ctaTraffic) ctaTraffic.addEventListener("click", () => { state.tab = "profile"; renderTab(); });
+    el.querySelector("#qaNewLink").addEventListener("click", () => { state.tab = "quicklink"; renderTab(); });
+    el.querySelector("#qaWithdraw").addEventListener("click", () => { state.tab = "profile"; renderTab(); });
+  }
+
+  // ---- Traffic Source ---------------------------------------------------
+
+  async function renderTraffic(el) {
+    await loadMe();
+    el.innerHTML = trafficSourceSectionHTML("ts", state.me.traffic_sources);
+    wireTrafficSourceSection(el, "ts", () => { renderTopCard(); renderTraffic(el); });
+  }
+
+  // ---- Short Link (quick create) -----------------------------------
+
+  async function renderQuickLink(el) {
+    await loadMe();
+    if (!(state.me.traffic_sources && state.me.traffic_sources.length)) {
+      el.innerHTML = `
+        <div class="card" style="border-color: rgba(226,104,92,.35);">
+          <div class="empty" style="padding:14px 4px; color:var(--red);">
+            Add a Traffic Source before you can create links.
+          </div>
+          <button class="btn btn-primary btn-block" id="goProfile">Add Traffic Source</button>
+        </div>
+      `;
+      el.querySelector("#goProfile").addEventListener("click", () => {
+        state.tab = isOwner() ? "traffic" : "profile";
+        renderTab();
+      });
+      return;
+    }
+    el.innerHTML = `
+      <div class="card">
+        <h3>Create a short link</h3>
+        <label for="newUrl">Destination URL</label>
+        <input type="url" id="newUrl" placeholder="https://example.com/your-page" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="createLinkBtn">Create link</button></div>
+      </div>
+      <div id="createResult"></div>
+      <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
+        Tip: you can also create a link from the bot chat with <code>/newlink</code>. Head to
+        My Links to see everything you've created.
+      </p>
+    `;
+    el.querySelector("#createLinkBtn").addEventListener("click", async () => {
+      const input = el.querySelector("#newUrl");
+      const url = input.value.trim();
+      if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
+      const btn = el.querySelector("#createLinkBtn");
+      btn.disabled = true; btn.textContent = "Creating…";
+      try {
+        const res = await api("/api/links", { method: "POST", body: JSON.stringify({ destination_url: url }) });
+        input.value = "";
+        toast("Short link created", "ok");
+        const resultEl = el.querySelector("#createResult");
+        resultEl.innerHTML = `
+          <div class="card" style="border-color: rgba(63,191,127,.35);">
+            <h3>${icon("checkCircle", 15)} Your short link is ready</h3>
+            <code class="short-url">${esc(res.short_url)}</code>
+            <div class="btn-row"><button class="btn btn-outline btn-block copyBtn" data-url="${esc(res.short_url)}">${icon("clipboard", 14)} Copy link</button></div>
+          </div>
+        `;
+        wireCopyButtons(resultEl);
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Create link";
+      }
+    });
+  }
+
+  // ---- My Links (list only) ------------------------------------------
+
+  async function renderLinks(el) {
+    await loadLinks();
+    await loadMe();
+
+    if (!(state.me.traffic_sources && state.me.traffic_sources.length)) {
+      el.innerHTML = `
+        <div class="card" style="border-color: rgba(226,104,92,.35);">
+          <div class="empty" style="padding:14px 4px; color:var(--red);">
+            Add a Traffic Source before you can create links.
+          </div>
+          <button class="btn btn-primary btn-block" id="goProfile">Add Traffic Source</button>
+        </div>
+        <div class="section-title">My links</div>
+        <div id="linksList"></div>
+      `;
+      el.querySelector("#goProfile").addEventListener("click", () => {
+        state.tab = isOwner() ? "traffic" : "profile";
+        renderTab();
+      });
+      renderLinksList();
+      return;
+    }
+
+    el.innerHTML = `
+      <button class="btn btn-primary btn-block" id="goQuickLink">${icon("scissors", 14)} New short link</button>
+      <div class="section-title" style="margin-top:14px;">My links</div>
+      <div id="linksList"></div>
+    `;
+    el.querySelector("#goQuickLink").addEventListener("click", () => { state.tab = "quicklink"; renderTab(); });
+    renderLinksList();
+  }
+
+  function renderLinksList() {
+    const listEl = document.getElementById("linksList");
+    if (!listEl) return;
+    if (state.links.length === 0) {
+      listEl.innerHTML = `<div class="card"><div class="empty">No links yet — create your first one above.</div></div>`;
+      return;
+    }
+    listEl.innerHTML = state.links.map((l) => `
+      <div class="card">
+        <h3>/${esc(l.short_code)}</h3>
+        <code class="short-url">${esc(l.short_url)}</code>
+        <div class="btn-row"><button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">${icon("clipboard", 14)} Copy</button></div>
+        <div class="meta">→ ${esc(l.destination_url)}</div>
+        <div class="meta">${l.view_count} views · ${l.confirmed_views} confirmed · ${l.pending_views} pending</div>
+        <div class="meta">${icon("play", 12)} ${l.ad_count} ad${l.ad_count === 1 ? "" : "s"} to unlock</div>
+      </div>
+    `).join("");
+    wireCopyButtons(listEl);
+  }
+
+  // ---- Withdraw (personal request + history) ---------------------------
+
+  async function renderWithdraw(el) {
+    await loadMyWithdrawals();
+    el.innerHTML = `
+      <div class="card">
+        <h3>Request a withdrawal</h3>
+        <div class="meta">Confirmed balance: <b style="color:var(--text)">${fmt(state.me.balance_confirmed)}</b></div>
+        ${state.cpm && state.cpm.min_withdraw_amount > 0 ? `<div class="meta">Minimum withdrawal: <b style="color:var(--text)">${fmt(state.cpm.min_withdraw_amount)}</b></div>` : ""}
+        <label>Method</label>
+        <select id="wMethod">
+          <option value="bkash">bKash</option>
+          <option value="nagad">Nagad</option>
+        </select>
+        <label>Account number</label>
+        <input type="text" id="wAccount" inputmode="numeric" placeholder="01XXXXXXXXX (11 digits)" />
+        <div class="field-error" id="wAccountErr"></div>
+        <label>Amount</label>
+        <input type="number" id="wAmount" min="0" step="0.01" placeholder="0.00" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="wSubmit">Submit request</button></div>
+      </div>
+      <div class="section-title">History</div>
+      <div id="wHistory"></div>
+    `;
+    const accountInput = el.querySelector("#wAccount");
+    const accountErr = el.querySelector("#wAccountErr");
+    accountInput.addEventListener("input", () => setFieldError(accountInput, accountErr, null));
+    el.querySelector("#wSubmit").addEventListener("click", async () => {
+      const method = el.querySelector("#wMethod").value;
+      const account_number = accountInput.value.trim();
+      const amount = parseFloat(el.querySelector("#wAmount").value);
+      const accountError = bdMobileError(account_number);
+      if (accountError) {
+        setFieldError(accountInput, accountErr, accountError);
+        toast(accountError, "err");
+        accountInput.focus();
         return;
       }
-
-      const action = button.dataset.adminAction;
-      const id = button.dataset.id;
-
-      if (action === "approve") {
-        openConfirmModal(
-          "Withdrawal Approve করুন",
-          "এই Withdrawal Request-টি Completed হিসেবে চিহ্নিত করা হবে।",
-          () => approveWithdrawal(id)
-        );
-      }
-
-      if (action === "reject") {
-        openConfirmModal(
-          "Withdrawal Reject করুন",
-          "এই Request Reject হবে এবং Amount User-এর Balance-এ ফেরত যাবে।",
-          () => rejectWithdrawal(id)
-        );
-      }
-    });
-
-    $("#confirmModal").addEventListener("click", () => {
-      if (typeof modalAction === "function") {
-        const action = modalAction;
-        closeModal();
-        action();
+      setFieldError(accountInput, accountErr, null);
+      if (!(amount > 0)) { toast("Enter a valid amount", "err"); return; }
+      if (amount > state.me.balance_confirmed) { toast("Amount exceeds your confirmed balance", "err"); return; }
+      const minAmt = state.cpm ? state.cpm.min_withdraw_amount : 0;
+      if (minAmt > 0 && amount < minAmt) { toast(`Minimum withdrawal amount is ${fmt(minAmt)}`, "err"); return; }
+      const btn = el.querySelector("#wSubmit");
+      btn.disabled = true; btn.textContent = "Submitting…";
+      try {
+        await api("/api/withdraw", { method: "POST", body: JSON.stringify({ method, account_number: normalizeBDMobile(account_number), amount }) });
+        toast("Withdrawal requested — the Owner has been notified", "ok");
+        await loadMe();
+        await loadMyWithdrawals();
+        renderWithdrawHistory();
+        renderTopCard();
+      } catch (e) {
+        setFieldError(accountInput, accountErr, e.message);
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Submit request";
       }
     });
+    renderWithdrawHistory();
+  }
 
-    $("#cancelModal").addEventListener("click", closeModal);
-    $("#closeModal").addEventListener("click", closeModal);
-
-    $("#modalBackdrop").addEventListener("click", (event) => {
-      if (event.target === $("#modalBackdrop")) {
-        closeModal();
-      }
-    });
-
-    $("#exitAdminBtn").addEventListener("click", () => {
-      state.isAdmin = false;
-      document.body.classList.remove("admin-mode");
-      saveState();
-      navigateTo("dashboard");
-    });
-
-    // Developer shortcut:
-    // Browser Console থেকে resetDemo() চালালে সব Demo Data মুছে যাবে।
-    window.resetDemo = resetDemo;
-
-    // Initial render
-    if (state.isAdmin) {
-      document.body.classList.add("admin-mode");
+  function renderWithdrawHistory() {
+    const histEl = document.getElementById("wHistory");
+    if (!histEl) return;
+    if (state.withdrawals.length === 0) {
+      histEl.innerHTML = `<div class="card"><div class="empty">No withdrawal requests yet.</div></div>`;
+      return;
     }
+    histEl.innerHTML = state.withdrawals.map((w) => `
+      <div class="card">
+        <div class="row-between">
+          <h3>${fmt(w.amount)} · ${w.method === "bkash" ? "bKash" : "Nagad"}</h3>
+          <span class="pill ${w.status}">${w.status}</span>
+        </div>
+        <div class="meta">Account: ${esc(w.account_number)}</div>
+        <div class="meta">Requested ${esc(new Date(w.created_at).toLocaleString())}</div>
+        ${w.reject_reason ? `<div class="meta" style="color:var(--red);">Reason: ${esc(w.reject_reason)}</div>` : ""}
+      </div>
+    `).join("");
+  }
 
-    renderAll();
-  </script>
+  // ---- Profile (balance summary + Traffic Source + Withdraw) -----------
+
+  async function renderProfile(el) {
+    await Promise.all([loadMe(), loadMyWithdrawals()]);
+    const paidTotal = state.withdrawals
+      .filter((w) => w.status === "paid")
+      .reduce((s, w) => s + w.amount, 0);
+    const totalIncome = state.me.balance_confirmed + paidTotal;
+
+    el.innerHTML = `
+      <div class="profile-header">
+        <div class="profile-avatar">${esc((state.me.username || "A").slice(0, 1).toUpperCase())}</div>
+        <div>
+          <div class="profile-name">${state.me.username ? "@" + esc(state.me.username) : "id " + state.me.telegram_id}</div>
+          <div class="profile-sub">Admin</div>
+        </div>
+      </div>
+
+      <div class="stat-grid stat-grid-3">
+        <div class="stat-box"><div class="n">${fmt(state.me.balance_confirmed)}</div><div class="l">Balance</div></div>
+        <div class="stat-box"><div class="n">${fmt(totalIncome)}</div><div class="l">Total income</div></div>
+        <div class="stat-box"><div class="n">${fmt(paidTotal)}</div><div class="l">Withdrawn</div></div>
+      </div>
+
+      <div class="section-title" style="margin-top:18px;">Traffic Sources</div>
+      ${trafficSourceSectionHTML("pTs", state.me.traffic_sources)}
+
+      <div class="section-title" style="margin-top:18px;">Withdraw</div>
+      <div class="card">
+        <div class="meta">Confirmed balance: <b style="color:var(--text)">${fmt(state.me.balance_confirmed)}</b></div>
+        ${state.cpm && state.cpm.min_withdraw_amount > 0 ? `<div class="meta">Minimum withdrawal: <b style="color:var(--text)">${fmt(state.cpm.min_withdraw_amount)}</b></div>` : ""}
+        <label>Method</label>
+        <select id="pWMethod">
+          <option value="bkash">bKash</option>
+          <option value="nagad">Nagad</option>
+        </select>
+        <label>Account number</label>
+        <input type="text" id="pWAccount" inputmode="numeric" placeholder="01XXXXXXXXX (11 digits)" />
+        <div class="field-error" id="pWAccountErr"></div>
+        <label>Amount</label>
+        <input type="number" id="pWAmount" min="0" step="0.01" placeholder="0.00" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="pWSubmit">Submit request</button></div>
+      </div>
+      <div class="section-title">Withdrawal history</div>
+      <div id="pWHistory"></div>
+    `;
+
+    wireTrafficSourceSection(el, "pTs", () => { renderTopCard(); renderProfile(el); });
+
+    const pAccountInput = el.querySelector("#pWAccount");
+    const pAccountErr = el.querySelector("#pWAccountErr");
+    pAccountInput.addEventListener("input", () => setFieldError(pAccountInput, pAccountErr, null));
+
+    el.querySelector("#pWSubmit").addEventListener("click", async () => {
+      const method = el.querySelector("#pWMethod").value;
+      const account_number = pAccountInput.value.trim();
+      const amount = parseFloat(el.querySelector("#pWAmount").value);
+      const accountError = bdMobileError(account_number);
+      if (accountError) {
+        setFieldError(pAccountInput, pAccountErr, accountError);
+        toast(accountError, "err");
+        pAccountInput.focus();
+        return;
+      }
+      setFieldError(pAccountInput, pAccountErr, null);
+      if (!(amount > 0)) { toast("Enter a valid amount", "err"); return; }
+      if (amount > state.me.balance_confirmed) { toast("Amount exceeds your confirmed balance", "err"); return; }
+      const pMinAmt = state.cpm ? state.cpm.min_withdraw_amount : 0;
+      if (pMinAmt > 0 && amount < pMinAmt) { toast(`Minimum withdrawal amount is ${fmt(pMinAmt)}`, "err"); return; }
+      const btn = el.querySelector("#pWSubmit");
+      btn.disabled = true; btn.textContent = "Submitting…";
+      try {
+        await api("/api/withdraw", { method: "POST", body: JSON.stringify({ method, account_number: normalizeBDMobile(account_number), amount }) });
+        toast("Withdrawal requested — the Owner has been notified", "ok");
+        renderTopCard();
+        renderTab();
+      } catch (e) {
+        setFieldError(pAccountInput, pAccountErr, e.message);
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Submit request";
+      }
+    });
+
+    renderProfileWithdrawHistory();
+  }
+
+  function renderProfileWithdrawHistory() {
+    const histEl = document.getElementById("pWHistory");
+    if (!histEl) return;
+    if (state.withdrawals.length === 0) {
+      histEl.innerHTML = `<div class="card"><div class="empty">No withdrawal requests yet.</div></div>`;
+      return;
+    }
+    histEl.innerHTML = state.withdrawals.map((w) => `
+      <div class="card">
+        <div class="row-between">
+          <h3>${fmt(w.amount)} · ${w.method === "bkash" ? "bKash" : "Nagad"}</h3>
+          <span class="pill ${w.status}">${w.status}</span>
+        </div>
+        <div class="meta">Account: ${esc(w.account_number)}</div>
+        <div class="meta">Requested ${esc(new Date(w.created_at).toLocaleString())}</div>
+        ${w.reject_reason ? `<div class="meta" style="color:var(--red);">Reason: ${esc(w.reject_reason)}</div>` : ""}
+      </div>
+    `).join("");
+  }
+
+  // ---- Owner: Withdrawals queue -----------------------------------------
+
+  async function renderPayouts(el) {
+    const data = await api("/api/admin/withdrawals");
+    state.withdrawalsPending = data.withdrawals;
+    renderTabs();
+
+    if (state.withdrawalsPending.length === 0) {
+      el.innerHTML = `<div class="card"><div class="empty">No pending withdrawal requests.</div></div>`;
+      return;
+    }
+    el.innerHTML = state.withdrawalsPending.map((w) => `
+      <div class="card">
+        <div class="row-between">
+          <h3>${fmt(w.amount)} · ${w.method === "bkash" ? "bKash" : "Nagad"}</h3>
+          <span class="pill pending">pending</span>
+        </div>
+        <div class="meta">Admin: ${esc(w.admin_username ? "@" + w.admin_username : "id " + w.admin_telegram_id)}</div>
+        <div class="meta">Account: ${esc(w.account_number)}</div>
+        <div class="meta">Requested ${esc(new Date(w.created_at).toLocaleString())}</div>
+        ${(w.traffic_sources && w.traffic_sources.length)
+          ? w.traffic_sources.map((s) => `<div class="meta">Traffic Source: <a href="${esc(s.url)}" target="_blank" style="color:var(--brass);">${esc(s.platform)} — view ↗</a></div>`).join("")
+          : `<div class="meta" style="color:var(--red);">No Traffic Source on file</div>`}
+        <div class="btn-row">
+          <button class="btn btn-success btn-sm payBtn" data-id="${w.request_id}">Mark paid</button>
+          <button class="btn btn-danger btn-sm rejectBtn" data-id="${w.request_id}">Reject</button>
+        </div>
+      </div>
+    `).join("");
+    el.querySelectorAll(".payBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/admin/withdrawals/${btn.dataset.id}/resolve`, { method: "POST", body: JSON.stringify({ decision: "paid" }) });
+          toast("Marked as paid", "ok");
+          renderTab();
+          renderTopCard();
+        } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+      });
+    });
+    el.querySelectorAll(".rejectBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/admin/withdrawals/${btn.dataset.id}/resolve`, { method: "POST", body: JSON.stringify({ decision: "rejected", reason: "Rejected by owner" }) });
+          toast("Request rejected", "ok");
+          renderTab();
+          renderTopCard();
+        } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+      });
+    });
+  }
+
+  // ---- Owner: CPM -------------------------------------------------------
+
+  async function renderCpm(el) {
+    const cs = await api("/api/cpm");
+    state.cpm = cs;
+    el.innerHTML = `
+      <div class="card">
+        <h3>Global CPM mode</h3>
+        <div class="meta">Only one mode runs platform-wide at a time.</div>
+        <label>Mode</label>
+        <select id="cpmMode">
+          <option value="realtime" ${cs.mode === "realtime" ? "selected" : ""}>Real-time — credit instantly</option>
+          <option value="scheduled" ${cs.mode === "scheduled" ? "selected" : ""}>Scheduled — batch payout every cycle</option>
+        </select>
+        <label>CPM rate (per verified view)</label>
+        <input type="number" id="cpmRate" min="0" step="0.0001" value="${cs.current_cpm}" />
+        <label>Cycle duration (hours) — used only in Scheduled mode</label>
+        <input type="number" id="cpmDuration" min="0.5" step="0.5" value="${cs.cycle_duration_hours}" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="cpmSave">Save CPM settings</button></div>
+      </div>
+      ${cs.mode === "scheduled" ? `
+        <div class="card">
+          <div class="meta">Current cycle closes in <b style="color:var(--text)">${secondsToClock(cs.seconds_to_payout)}</b>.
+          Whatever rate is set at that moment applies to every view accumulated this cycle.</div>
+        </div>` : ""}
+      <div class="card">
+        <h3>${icon("clock", 15)} Ad view delay</h3>
+        <div class="meta">Adsgram needs a short gap before the next reward ad is ready — the viewer sees a
+        counting-down button for this many seconds between ad 1→2 and ad 2→3. Default is 7s; 5–8s is the
+        recommended range.</div>
+        <label>Delay between ads (seconds)</label>
+        <input type="number" id="adDelaySeconds" min="0" step="1" value="${cs.ad_view_delay_seconds}" />
+        <div class="btn-row"><button class="btn btn-outline btn-block" id="adDelaySave">Save delay</button></div>
+      </div>
+      <div class="card">
+        <h3>${icon("banknote", 15)} Minimum withdrawal amount</h3>
+        <div class="meta">Admins (and you) won't be able to submit a withdrawal request below this amount —
+        enforced both in the bot's /withdraw flow and here in the panel. Set to 0 to allow any amount.</div>
+        <label>Minimum withdrawal amount</label>
+        <input type="number" id="minWithdrawAmount" min="0" step="0.01" value="${cs.min_withdraw_amount}" />
+        <div class="btn-row"><button class="btn btn-outline btn-block" id="minWithdrawSave">Save minimum</button></div>
+      </div>
+      <div class="card">
+        <h3>${icon("alertTriangle", 15)} Anti-abuse: daily view limit</h3>
+        <div class="meta">The most views a single viewer can earn against one Admin's links per day.
+        Once a viewer crosses this on an Admin's links, they still see ads as normal and still reach the
+        destination — the extra views simply stop adding to that Admin's balance, so repeat viewing can't
+        drag that Admin's CPM down. Set to 0 to disable the limit.</div>
+        <label>Max daily view count per Admin</label>
+        <input type="number" id="maxDailyViews" min="0" step="1" value="${cs.max_daily_views_per_admin}" />
+        <div class="btn-row"><button class="btn btn-outline btn-block" id="maxDailyViewsSave">Save limit</button></div>
+      </div>
+    `;
+    el.querySelector("#cpmSave").addEventListener("click", async () => {
+      const btn = el.querySelector("#cpmSave");
+      const mode = el.querySelector("#cpmMode").value;
+      const current_cpm = parseFloat(el.querySelector("#cpmRate").value);
+      const cycle_duration_hours = parseFloat(el.querySelector("#cpmDuration").value);
+      if (!(current_cpm >= 0)) { toast("Enter a valid CPM rate", "err"); return; }
+      if (!(cycle_duration_hours > 0)) { toast("Enter a valid cycle duration", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ mode, current_cpm, cycle_duration_hours }) });
+        toast("CPM settings updated", "ok");
+        renderTab();
+        renderTopCard();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save CPM settings";
+      }
+    });
+    el.querySelector("#adDelaySave").addEventListener("click", async () => {
+      const btn = el.querySelector("#adDelaySave");
+      const ad_view_delay_seconds = parseFloat(el.querySelector("#adDelaySeconds").value);
+      if (!(ad_view_delay_seconds >= 0)) { toast("Enter a valid delay (0 or more seconds)", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ ad_view_delay_seconds }) });
+        toast("Ad view delay updated", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save delay";
+      }
+    });
+    el.querySelector("#minWithdrawSave").addEventListener("click", async () => {
+      const btn = el.querySelector("#minWithdrawSave");
+      const min_withdraw_amount = parseFloat(el.querySelector("#minWithdrawAmount").value);
+      if (!(min_withdraw_amount >= 0)) { toast("Enter a valid minimum amount (0 or more)", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ min_withdraw_amount }) });
+        state.cpm.min_withdraw_amount = min_withdraw_amount;
+        toast("Minimum withdrawal amount updated", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save minimum";
+      }
+    });
+    el.querySelector("#maxDailyViewsSave").addEventListener("click", async () => {
+      const btn = el.querySelector("#maxDailyViewsSave");
+      const max_daily_views_per_admin = parseInt(el.querySelector("#maxDailyViews").value, 10);
+      if (!(max_daily_views_per_admin >= 0)) { toast("Enter a valid limit (0 or more)", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ max_daily_views_per_admin }) });
+        state.cpm.max_daily_views_per_admin = max_daily_views_per_admin;
+        toast(max_daily_views_per_admin > 0 ? "Daily view limit updated" : "Daily view limit disabled", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save limit";
+      }
+    });
+  }
+
+  // ---- Owner: Admins ------------------------------------------------
+
+  async function renderAdmins(el) {
+    const data = await api("/api/admin/admins");
+    state.admins = data.admins;
+    el.innerHTML = state.admins.map((a) => `
+      <div class="card${a.role !== "owner" ? " admin-card" : ""}" ${a.role !== "owner" ? `data-id="${a.telegram_id}"` : ""}>
+        <div class="row-between">
+          <h3>${esc(a.username ? "@" + a.username : "id " + a.telegram_id)}</h3>
+          <span class="pill ${a.role === "owner" ? "owner" : a.status}">${a.role === "owner" ? "owner" : a.status}</span>
+        </div>
+        <div class="meta">${a.role === "owner" ? "Owner" : "Admin"} · <code>${a.telegram_id}</code></div>
+        <div class="meta">Confirmed: ${fmt(a.balance_confirmed)}</div>
+        ${(a.traffic_sources && a.traffic_sources.length)
+          ? a.traffic_sources.map((s) => `<div class="meta">Traffic Source: <a href="${esc(s.url)}" target="_blank" style="color:var(--brass);">${esc(s.platform)} — view ↗</a></div>`).join("")
+          : `<div class="meta" style="color:var(--text-faint);">No Traffic Source on file</div>`}
+        ${a.role !== "owner" ? `
+          <div class="btn-row">
+            <button class="btn btn-outline btn-sm detailBtn" data-id="${a.telegram_id}">${icon("eye", 14)} View details</button>
+            ${a.status === "active"
+              ? `<button class="btn btn-danger btn-sm banBtn" data-id="${a.telegram_id}" data-status="banned">Suspend</button>`
+              : `<button class="btn btn-success btn-sm banBtn" data-id="${a.telegram_id}" data-status="active">Reactivate</button>`}
+          </div>` : ""}
+      </div>
+    `).join("");
+    el.querySelectorAll(".banBtn").forEach((btn) => {
+      btn.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        btn.disabled = true;
+        try {
+          await api(`/api/admin/admins/${btn.dataset.id}/status`, { method: "POST", body: JSON.stringify({ status: btn.dataset.status }) });
+          toast("Status updated", "ok");
+          renderTab();
+        } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+      });
+    });
+    el.querySelectorAll(".detailBtn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        renderAdminDetail(el, btn.dataset.id);
+      });
+    });
+    el.querySelectorAll(".admin-card").forEach((card) => {
+      card.addEventListener("click", () => renderAdminDetail(el, card.dataset.id));
+    });
+  }
+
+  // ---- Owner: single Admin detail (stats + balance edit) ---------------
+
+  async function renderAdminDetail(el, telegramId) {
+    el.innerHTML = `<div class="card"><div class="skel" style="height:120px;"></div></div>`;
+    let d, linksResp;
+    try {
+      [d, linksResp] = await Promise.all([
+        api(`/api/admin/admins/${telegramId}`),
+        api(`/api/admin/admins/${telegramId}/links`),
+      ]);
+    } catch (e) {
+      toast(e.message, "err");
+      renderAdmins(el);
+      return;
+    }
+    const a = d.admin;
+    const adminLinks = linksResp.links || [];
+
+    el.innerHTML = `
+      <button class="btn btn-outline btn-sm" id="backToAdmins" style="margin-bottom:12px;">← Back to Admins</button>
+
+      <div class="profile-header">
+        <div class="profile-avatar">${esc((a.username || "A").slice(0, 1).toUpperCase())}</div>
+        <div>
+          <div class="profile-name">${a.username ? "@" + esc(a.username) : "id " + a.telegram_id}</div>
+          <div class="profile-sub">Admin since ${esc((a.created_at || "").slice(0, 10))} · <span class="pill ${a.status}" style="margin-left:4px;">${a.status}</span></div>
+        </div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-box"><div class="n">${fmt(d.today_income)}</div><div class="l">Today's income</div></div>
+        <div class="stat-box"><div class="n">${fmt(d.lifetime_income)}</div><div class="l">Lifetime income</div></div>
+        <div class="stat-box"><div class="n">${fmt(a.balance_confirmed)}</div><div class="l">Confirmed balance</div></div>
+        <div class="stat-box"><div class="n">${fmt(d.total_withdrawn)}</div><div class="l">Total withdrawn</div></div>
+        <div class="stat-box"><div class="n">${d.pending_views}${d.pending_views ? ` (~${fmt(d.estimated_pending_amount)})` : ""}</div><div class="l">Pending views</div></div>
+        <div class="stat-box"><div class="n">${d.pending_withdrawal_count}${d.pending_withdrawal_count ? ` (${fmt(d.pending_withdrawal_amount)})` : ""}</div><div class="l">Pending withdrawals</div></div>
+        <div class="stat-box"><div class="n">${d.total_links}</div><div class="l">Total links</div></div>
+        <div class="stat-box"><div class="n">${d.total_views}</div><div class="l">Total views</div></div>
+        <div class="stat-box"><div class="n">${d.daily_capped_views}</div><div class="l">Daily-capped views</div></div>
+      </div>
+
+      <div class="section-title" style="margin-top:14px;">${icon("alertTriangle", 14)} Missed earnings trend (last 14 days)</div>
+      <div class="card">
+        <div class="meta" style="margin-bottom:6px;">This Admin's views excluded from earnings by the daily anti-abuse cap, day by day.</div>
+        ${missedTrendChartSVG(d.missed_earnings_trend)}
+      </div>
+
+      ${d.missed_earnings_by_link && d.missed_earnings_by_link.length ? `
+        <div class="section-title" style="margin-top:14px;">${icon("link", 14)} Links with missed views</div>
+        <div>${missedByLinkListHTML(d.missed_earnings_by_link, { showOwner: false })}</div>
+      ` : ""}
+
+      <div class="section-title" style="margin-top:14px;">${icon("play", 14)} Ad count per link</div>
+      <div id="adminLinksList">${adminLinksListHTML(adminLinks)}</div>
+
+      <div class="card">
+        <h3>Traffic Sources</h3>
+        ${(a.traffic_sources && a.traffic_sources.length)
+          ? a.traffic_sources.map((s) => `<div class="meta">${esc(s.platform)}: <a href="${esc(s.url)}" target="_blank" style="color:var(--brass);">${esc(s.url)}</a></div>`).join("")
+          : `<div class="meta" style="color:var(--text-faint);">No Traffic Source on file</div>`}
+      </div>
+
+      <div class="card">
+        <h3>Edit balance</h3>
+        <div class="meta">Current confirmed balance: <b style="color:var(--text)">${fmt(a.balance_confirmed)}</b>. This is a manual correction — it's logged below, and the Admin is not notified.</div>
+        <label>New balance</label>
+        <input type="number" id="editBalanceInput" min="0" step="0.01" value="${a.balance_confirmed}" />
+        <label>Reason (optional)</label>
+        <input type="text" id="editBalanceReason" placeholder="e.g. correcting a duplicate-view credit" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="editBalanceBtn">Update balance</button></div>
+      </div>
+
+      <div class="section-title" style="margin-top:14px;">Balance adjustment history</div>
+      <div id="balanceHistory">
+        ${d.balance_adjustments.length
+          ? d.balance_adjustments.map((h) => `
+              <div class="card">
+                <div class="meta">${fmt(h.detail.old_balance)} → <b style="color:var(--text)">${fmt(h.detail.new_balance)}</b></div>
+                ${h.detail.reason ? `<div class="meta">Reason: ${esc(h.detail.reason)}</div>` : ""}
+                <div class="meta" style="color:var(--text-faint);">${esc((h.created_at || "").replace("T", " ").slice(0, 19))} UTC</div>
+              </div>
+            `).join("")
+          : `<div class="card"><div class="empty">No balance corrections yet.</div></div>`}
+      </div>
+    `;
+
+    el.querySelector("#backToAdmins").addEventListener("click", () => renderAdmins(el));
+    wireAdCountControls(el.querySelector("#adminLinksList"));
+
+    el.querySelector("#editBalanceBtn").addEventListener("click", () => {
+      const newBalanceRaw = el.querySelector("#editBalanceInput").value;
+      const reason = el.querySelector("#editBalanceReason").value.trim();
+      const newBalance = parseFloat(newBalanceRaw);
+      if (!(newBalance >= 0)) { toast("Enter a valid balance (0 or more)", "err"); return; }
+      const oldBalance = a.balance_confirmed;
+      if (Math.abs(newBalance - oldBalance) < 0.0000001) { toast("That's already the current balance", "err"); return; }
+      const delta = newBalance - oldBalance;
+
+      openModal(`
+        <h3>Confirm balance change</h3>
+        <div class="balance-diff">
+          <span>${fmt(oldBalance)}</span><span class="arrow">→</span><span>${fmt(newBalance)}</span>
+        </div>
+        <div class="balance-diff-delta ${delta > 0 ? "pos" : "neg"}">${delta > 0 ? "+" : ""}${fmt(delta)}</div>
+        ${reason ? `<div class="meta" style="text-align:center; margin-bottom:10px;">Reason: ${esc(reason)}</div>` : ""}
+        <div class="meta" style="margin-top:10px;">This can't be undone automatically. Type <b style="color:var(--text)">CONFIRM</b> below to apply it.</div>
+        <input type="text" id="confirmText" placeholder="Type CONFIRM" style="margin-top:8px;" autocomplete="off" />
+        <div class="btn-row">
+          <button class="btn btn-primary btn-block" id="confirmApply" disabled>Apply change</button>
+        </div>
+        <div class="btn-row"><button class="btn btn-outline btn-block" id="confirmCancel">Cancel</button></div>
+      `);
+
+      const confirmInput = document.getElementById("confirmText");
+      const applyBtn = document.getElementById("confirmApply");
+      confirmInput.addEventListener("input", () => {
+        applyBtn.disabled = confirmInput.value !== "CONFIRM";
+      });
+      document.getElementById("confirmCancel").addEventListener("click", closeModal);
+      applyBtn.addEventListener("click", async () => {
+        applyBtn.disabled = true;
+        applyBtn.textContent = "Applying…";
+        try {
+          await api(`/api/admin/admins/${telegramId}/balance`, {
+            method: "POST",
+            body: JSON.stringify({ new_balance: newBalance, reason: reason || null, confirm_text: "CONFIRM" }),
+          });
+          closeModal();
+          toast("Balance updated", "ok");
+          renderAdminDetail(el, telegramId);
+        } catch (e) {
+          toast(e.message, "err");
+          applyBtn.disabled = false;
+          applyBtn.textContent = "Apply change";
+        }
+      });
+      confirmInput.focus();
+    });
+  }
+
+  // ---- Owner: Stats -----------------------------------------------------
+
+  async function renderStats(el) {
+    const s = await api("/api/admin/stats");
+    state.stats = s;
+    el.innerHTML = `
+      <div class="stat-grid">
+        <div class="stat-box"><div class="n">${s.total_admins}</div><div class="l">Admins</div></div>
+        <div class="stat-box"><div class="n">${s.total_links}</div><div class="l">Links</div></div>
+        <div class="stat-box"><div class="n">${s.total_views}</div><div class="l">Total views</div></div>
+        <div class="stat-box"><div class="n">${s.pending_payout_views}</div><div class="l">Pending views</div></div>
+        <div class="stat-box"><div class="n">${s.daily_capped_views}</div><div class="l">Daily-capped views</div></div>
+        <div class="stat-box"><div class="n">${fmt(s.total_confirmed_liability)}</div><div class="l">Confirmed liability</div></div>
+        <div class="stat-box"><div class="n">${fmt(s.total_paid_out)}</div><div class="l">Total paid out</div></div>
+      </div>
+
+      <div class="section-title" style="margin-top:14px;">${icon("alertTriangle", 14)} Missed earnings trend (last 14 days)</div>
+      <div class="card">
+        <div class="meta" style="margin-bottom:6px;">Views watched but excluded from earnings by the daily anti-abuse cap, day by day — a rising bar chain means abuse is trending up, not just a one-off spike.</div>
+        ${missedTrendChartSVG(s.missed_earnings_trend)}
+      </div>
+
+      ${suggestedLimitCardHTML(s.suggested_daily_limit)}
+
+      <div class="section-title" style="margin-top:14px;">${icon("link", 14)} Top links by missed views</div>
+      <div id="missedByLink">${missedByLinkListHTML(s.missed_earnings_by_link, { showOwner: true })}</div>
+    `;
+    const applyBtn = el.querySelector("#applySuggestedLimit");
+    if (applyBtn) {
+      applyBtn.addEventListener("click", async () => {
+        const newLimit = s.suggested_daily_limit.suggested_limit;
+        applyBtn.disabled = true;
+        applyBtn.textContent = "Applying…";
+        try {
+          await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ max_daily_views_per_admin: newLimit }) });
+          if (state.cpm) state.cpm.max_daily_views_per_admin = newLimit;
+          toast(`Daily view limit set to ${newLimit}`, "ok");
+          renderStats(el);
+        } catch (e) {
+          toast(e.message, "err");
+          applyBtn.disabled = false;
+          applyBtn.textContent = `Apply suggested limit (${newLimit})`;
+        }
+      });
+    }
+    renderTopCard();
+  }
+
+  // ---- outside-Telegram fallback --------------------------------------
+  // No initData means: a real browser visit, a link preview, or an
+  // ad-network moderator opening the raw URL directly — there's no
+  // reliable client-side way to tell those apart, and there doesn't need
+  // to be, since this page is safe for anyone to see. Rather than block
+  // or show a bare error, it shows a small branded landing page so a
+  // moderator (or anyone else) can visually confirm the app is alive and
+  // intentional, with a clear path into the real dashboard via Telegram.
+  function renderOutsideTelegram() {
+    document.getElementById("app").innerHTML = `
+      <div class="landing">
+        <div class="landing-mark">T</div>
+        <h1>TGSHORTBOT</h1>
+        <p>A Telegram-based ad-locked URL shortener and earning platform — share links, viewers watch a few ads, everyone earns.</p>
+        <a class="btn btn-primary" href="https://t.me/__BOT_USERNAME__">Open in Telegram</a>
+      </div>`;
+  }
+
+  // ---- data loaders ---------------------------------------------------
+
+  async function loadMe() { state.me = await api("/api/me"); }
+  async function loadLinks() { const d = await api("/api/links"); state.links = d.links; }
+  async function loadMyWithdrawals() { const d = await api("/api/withdrawals/mine"); state.withdrawals = d.withdrawals; }
+  async function loadCpm() { state.cpm = await api("/api/cpm"); }
+  async function loadOwnerWithdrawals() { const d = await api("/api/admin/withdrawals"); state.withdrawalsPending = d.withdrawals; }
+  async function loadStats() { state.stats = await api("/api/admin/stats"); }
+
+  async function init() {
+    if (!initData) {
+      // Give the Telegram bridge a brief window to catch up before
+      // concluding this is genuinely outside Telegram (see
+      // waitForInitData's comment above for why this matters).
+      await waitForInitData(1200, 50);
+    }
+    if (!initData) {
+      renderOutsideTelegram();
+      return;
+    }
+    try {
+      await loadMe();
+      if (isOwner()) {
+        await Promise.all([loadCpm(), loadOwnerWithdrawals(), loadStats()]);
+      } else {
+        await Promise.all([loadLinks(), loadCpm()]);
+      }
+      renderTopCard();
+      renderDrawer();
+      renderTab();
+    } catch (e) {
+      document.getElementById("app").innerHTML = `<div class="card" style="margin-top:40px;"><div class="empty">Couldn't load your dashboard — ${esc(e.message)}</div></div>`;
+    }
+  }
+
+  init();
+})();
+</script>
 </body>
 </html>
