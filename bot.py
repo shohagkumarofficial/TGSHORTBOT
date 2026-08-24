@@ -203,19 +203,19 @@ def _main_menu_keyboard(panel_url: str) -> ReplyKeyboardMarkup:
     """Persistent reply keyboard shown after /start and /help so the
     Admin never has to type a command by hand — every button here maps
     1:1 onto one of the bot's slash commands (see the `menu_*` handlers
-    in register_handlers). The dashboard button opens the Mini App
-    directly, same as /panel's inline button.
+    in register_handlers).
 
-    The dashboard button's URL gets a fresh `_t=` query param every time
-    this keyboard is (re)built — i.e. every time the bot actually sends
-    it, not on every render of an already-visible keyboard the user still
-    has open. Telegram/Android WebViews have occasionally been observed
-    reusing a cached page instance for a `web_app` button whose URL never
-    changes, which can serve a stale page (including one where
-    Telegram's initData bridge never re-connects) instead of a fresh
-    load; a URL that changes each time forces a genuinely fresh load.
+    Deliberately has no Dashboard button of its own anymore. A reply-
+    keyboard `web_app` button pointing at a URL that's identical (or
+    even cache-busted-but-similar) every time has been observed
+    occasionally opening a stale outside-Telegram-looking page instead
+    of the real Mini App — a real risk with an ad network's moderator
+    tapping around the bot (Adsgram Clause 5: "the bot must be working
+    at the time of moderation"). The BotFather-configured Menu Button
+    and the `/panel` command's own inline button remain as the two ways
+    into the dashboard; `panel_url` is kept as a parameter here only so
+    every existing call site doesn't need to change.
     """
-    dashboard_url = f"{panel_url}?_t={int(datetime.now(timezone.utc).timestamp())}"
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -226,7 +226,6 @@ def _main_menu_keyboard(panel_url: str) -> ReplyKeyboardMarkup:
                 KeyboardButton(text=MAIN_MENU_LABELS["mybalance"]),
                 KeyboardButton(text=MAIN_MENU_LABELS["withdraw"]),
             ],
-            [KeyboardButton(text="📊 ড্যাশবোর্ড", web_app=WebAppInfo(url=dashboard_url))],
             [KeyboardButton(text=MAIN_MENU_LABELS["help"])],
         ],
         resize_keyboard=True,
@@ -781,7 +780,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             "🔗 নতুন লিংক — নতুন শর্ট লিংক তৈরি\n"
             "📡 ট্রাফিক সোর্স — সোর্স যোগ/এডিট/মুছুন\n"
             "💰 ব্যালেন্স — ব্যালেন্স ও পেআউট তথ্য\n"
-            "💸 উইথড্র — টাকা তোলার আবেদন\n"
-            "📊 ড্যাশবোর্ড — পূর্ণাঙ্গ প্যানেল খুলুন",
+            "💸 উইথড্র — টাকা তোলার আবেদন\n\n"
+            "📊 পূর্ণাঙ্গ ড্যাশবোর্ড খুলতে /panel লিখুন, অথবা চ্যাট বক্সের বাম পাশের মেনু বাটন ব্যবহার করুন।",
             reply_markup=_main_menu_keyboard(panel_url),
         )
