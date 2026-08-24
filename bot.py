@@ -205,7 +205,17 @@ def _main_menu_keyboard(panel_url: str) -> ReplyKeyboardMarkup:
     1:1 onto one of the bot's slash commands (see the `menu_*` handlers
     in register_handlers). The dashboard button opens the Mini App
     directly, same as /panel's inline button.
+
+    The dashboard button's URL gets a fresh `_t=` query param every time
+    this keyboard is (re)built — i.e. every time the bot actually sends
+    it, not on every render of an already-visible keyboard the user still
+    has open. Telegram/Android WebViews have occasionally been observed
+    reusing a cached page instance for a `web_app` button whose URL never
+    changes, which can serve a stale page (including one where
+    Telegram's initData bridge never re-connects) instead of a fresh
+    load; a URL that changes each time forces a genuinely fresh load.
     """
+    dashboard_url = f"{panel_url}?_t={int(datetime.now(timezone.utc).timestamp())}"
     return ReplyKeyboardMarkup(
         keyboard=[
             [
@@ -216,7 +226,7 @@ def _main_menu_keyboard(panel_url: str) -> ReplyKeyboardMarkup:
                 KeyboardButton(text=MAIN_MENU_LABELS["mybalance"]),
                 KeyboardButton(text=MAIN_MENU_LABELS["withdraw"]),
             ],
-            [KeyboardButton(text="📊 ড্যাশবোর্ড", web_app=WebAppInfo(url=panel_url))],
+            [KeyboardButton(text="📊 ড্যাশবোর্ড", web_app=WebAppInfo(url=dashboard_url))],
             [KeyboardButton(text=MAIN_MENU_LABELS["help"])],
         ],
         resize_keyboard=True,
@@ -757,7 +767,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     @dp.message(Command("panel"))
     async def panel_cmd(message: Message) -> None:
         await _ensure_admin(message.from_user.id, message.from_user.username)
-        panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
+        panel_url = f"{settings.WEBAPP_BASE_URL}/panel?_t={int(datetime.now(timezone.utc).timestamp())}"
         kb = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="📊 ড্যাশবোর্ড খুলুন", web_app=WebAppInfo(url=panel_url))]]
         )
