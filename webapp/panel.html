@@ -432,6 +432,7 @@
     links: [],
     withdrawals: [],
     cpm: null,
+    adNetworks: null,
     withdrawalsPending: [],
     admins: [],
     stats: null,
@@ -473,6 +474,7 @@
     edit: '<path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>',
     trash: '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
     eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>',
+    layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline>',
   };
 
   function icon(name, size) {
@@ -854,6 +856,7 @@
     if (!isOwner()) return [];
     return [
       ["cpm", icon("settings", 17), "CPM Settings", "Real-time / Scheduled mode, rate, cycle, ad delay"],
+      ["adnetworks", icon("layers", 17), "Ad Networks", "Adsgram / Monetag / GigaPub IDs & ad order"],
       ["policy", icon("checkCircle", 17), "User Policy", "Accept/Reject terms shown to every user"],
       ["stats", icon("barChart", 17), "Platform Stats", "Totals across every admin"],
     ];
@@ -1009,6 +1012,7 @@
       else if (state.tab === "withdraw") await renderWithdraw(el);
       else if (state.tab === "payouts") await renderPayouts(el);
       else if (state.tab === "cpm") await renderCpm(el);
+      else if (state.tab === "adnetworks") await renderAdNetworks(el);
       else if (state.tab === "policy") await renderPolicy(el);
       else if (state.tab === "policyview") await renderPolicyView(el);
       else if (state.tab === "admins") await renderAdmins(el);
@@ -1577,6 +1581,124 @@
         btn.disabled = false; btn.textContent = "Save limit";
       }
     });
+  }
+
+  // ---- Owner: Ad Networks (Adsgram / Monetag / GigaPub + slot order) --
+
+  const AD_NETWORK_LABELS = { adsgram: "Adsgram", monetag: "Monetag", gigapub: "GigaPub" };
+
+  async function renderAdNetworks(el) {
+    const ans = await api("/api/ad-networks");
+    state.adNetworks = ans;
+    // Local working copy of the slot sequence, edited in place by the
+    // controls below and only sent to the server on "Save ad order".
+    let seq = (ans.slot_sequence && ans.slot_sequence.length)
+      ? ans.slot_sequence.slice()
+      : ["adsgram", "adsgram", "adsgram"];
+
+    function slotRowsHTML() {
+      return seq.map((net, i) => `
+        <div class="btn-row" style="align-items:center;" data-slot-row="${i}">
+          <label style="min-width:56px; margin:0;">Ad ${i + 1}</label>
+          <select class="slotSelect" data-idx="${i}" style="flex:1;">
+            ${Object.keys(AD_NETWORK_LABELS).map((k) =>
+              `<option value="${k}" ${net === k ? "selected" : ""}>${AD_NETWORK_LABELS[k]}</option>`
+            ).join("")}
+          </select>
+          ${seq.length > 1 ? `<button class="btn btn-outline btn-sm removeSlotBtn" data-idx="${i}" title="Remove this slot">${icon("trash", 14)}</button>` : ""}
+        </div>
+      `).join("");
+    }
+
+    function renderSlotsCard() {
+      const card = el.querySelector("#slotsCard");
+      card.innerHTML = `
+        <h3>${icon("layers", 15)} Ad display order</h3>
+        <div class="meta">Which network's ad plays for Ad 1, Ad 2, Ad 3, and so on — e.g. Adsgram,
+        Monetag, GigaPub. If a link needs more ads than you've listed here, the pattern repeats from the
+        top: a 3-entry sequence covers a 7-ad link as Ad1, Ad2, Ad3, Ad1, Ad2, Ad3, Ad1.</div>
+        <div id="slotRows">${slotRowsHTML()}</div>
+        <div class="btn-row">
+          <button class="btn btn-outline" id="addSlotBtn" ${seq.length >= AD_COUNT_MAX ? "disabled" : ""}>+ Add ad slot</button>
+        </div>
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="slotsSave">Save ad order</button></div>
+      `;
+      card.querySelectorAll(".slotSelect").forEach((sel) => {
+        sel.addEventListener("change", () => { seq[Number(sel.dataset.idx)] = sel.value; });
+      });
+      card.querySelectorAll(".removeSlotBtn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          seq.splice(Number(btn.dataset.idx), 1);
+          renderSlotsCard();
+        });
+      });
+      const addBtn = card.querySelector("#addSlotBtn");
+      if (addBtn) {
+        addBtn.addEventListener("click", () => {
+          if (seq.length >= AD_COUNT_MAX) return;
+          seq.push(seq[seq.length - 1] || "adsgram");
+          renderSlotsCard();
+        });
+      }
+      card.querySelector("#slotsSave").addEventListener("click", async () => {
+        const btn = card.querySelector("#slotsSave");
+        btn.disabled = true; btn.textContent = "Saving…";
+        try {
+          await api("/api/admin/ad-networks", { method: "POST", body: JSON.stringify({ slot_sequence: seq }) });
+          toast("Ad display order updated", "ok");
+          renderTab();
+        } catch (e) {
+          toast(e.message, "err");
+        } finally {
+          btn.disabled = false; btn.textContent = "Save ad order";
+        }
+      });
+    }
+
+    el.innerHTML = `
+      <div class="card">
+        <h3>${icon("settings", 15)} Ad network credentials</h3>
+        <div class="meta">Fill in only the networks you've actually signed up with — leave the rest
+        blank. A slot in "Ad display order" below that points at a network with no ID filled in will
+        simply fail to load for viewers, the same as any other ad-load error.</div>
+        <label>Adsgram Block ID</label>
+        <input type="text" id="adsgramBlockId" placeholder="e.g. 12345" value="${esc(ans.adsgram_block_id)}" />
+        <label style="margin-top:10px;">Monetag Zone ID</label>
+        <input type="text" id="monetagZoneId" placeholder="e.g. 123456" value="${esc(ans.monetag_zone_id)}" />
+        <label>Monetag SDK script URL</label>
+        <input type="text" id="monetagSdkUrl" placeholder="https://…/sdk.js" value="${esc(ans.monetag_sdk_url)}" />
+        <div class="meta">Monetag personalizes this script's domain per zone for anti-adblock reasons —
+        copy the full <code>src</code> URL exactly from your Monetag dashboard's "Get SDK" → Rewarded
+        Interstitial tag, rather than typing it from memory.</div>
+        <label style="margin-top:10px;">GigaPub Project ID</label>
+        <input type="text" id="gigapubProjectId" placeholder="e.g. your-project-id" value="${esc(ans.gigapub_project_id)}" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="credsSave">Save credentials</button></div>
+      </div>
+      <div class="card" id="slotsCard"></div>
+    `;
+
+    el.querySelector("#credsSave").addEventListener("click", async () => {
+      const btn = el.querySelector("#credsSave");
+      const adsgram_block_id = el.querySelector("#adsgramBlockId").value.trim();
+      const monetag_zone_id = el.querySelector("#monetagZoneId").value.trim();
+      const monetag_sdk_url = el.querySelector("#monetagSdkUrl").value.trim();
+      const gigapub_project_id = el.querySelector("#gigapubProjectId").value.trim();
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/ad-networks", {
+          method: "POST",
+          body: JSON.stringify({ adsgram_block_id, monetag_zone_id, monetag_sdk_url, gigapub_project_id }),
+        });
+        toast("Ad network credentials updated", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save credentials";
+      }
+    });
+
+    renderSlotsCard();
   }
 
   // ---- Owner: Policy (Accept/Reject text shown to every user) -------

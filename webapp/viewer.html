@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Unlocking your link…</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
-<script src="https://sad.adsgram.ai/js/sad.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -195,19 +194,103 @@
     <div class="status-line" id="statusLine"></div>
   </div>
 
-  <div class="footer-note">Ads served by Adsgram</div>
+  <div class="footer-note">Ads served by our ad partners</div>
 
 <script>
 (function () {
   const SHORT_CODE = "__SHORT_CODE__";
-  const BLOCK_ID = "__ADSGRAM_BLOCK_ID__";
-  // Set per-link by the Owner (Link.ad_count, default 3) — never fixed
-  // in this file. Clamped defensively here too in case of a bad value.
-  const TOTAL_ADS = Math.max(1, Math.min(20, parseInt("__TOTAL_ADS__", 10) || 3));
-  // Adsgram doesn't have the next reward ad ready the instant one
-  // finishes, so we pause this many seconds before the next ad becomes
-  // tappable. Configurable by the Owner from the panel's CPM Settings.
+  // Built server-side by app.py's redirect_entry from the Owner's Ad
+  // Networks settings (see models.py's AdNetworkSetting): which
+  // network's ad plays for each position, plus that network's
+  // credentials. Shape:
+  //   {
+  //     networks: {
+  //       adsgram: { block_id },
+  //       monetag: { zone_id, sdk_url },
+  //       gigapub: { project_id },
+  //     },
+  //     sequence: ["adsgram", "monetag", ...],  // one entry per ad, already
+  //                                              // expanded/cycled to match
+  //                                              // this Link's ad_count
+  //   }
+  const AD_CONFIG = __AD_CONFIG_JSON__;
+  // Ad count comes straight from the sequence length (already sized to
+  // this Link's ad_count server-side) — clamped defensively here too in
+  // case of a bad value.
+  const TOTAL_ADS = Math.max(1, Math.min(20, (AD_CONFIG.sequence || []).length || 3));
+  // Ad networks don't always have the next reward ad ready the instant
+  // one finishes, so we pause this many seconds before the next ad
+  // becomes tappable. Configurable by the Owner from the panel's CPM
+  // Settings.
   const AD_VIEW_DELAY_SECONDS = Math.max(0, Number("__AD_VIEW_DELAY_SECONDS__") || 0);
+
+  // ---- Multi-network ad SDK loading ----------------------------------
+  // Each network's SDK is only fetched the first time a slot actually
+  // needs it (not up front for all three), and only once even if it
+  // appears at several positions in the sequence.
+
+  const sdkLoadPromises = {};
+
+  function loadScript(src, attrs) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = src;
+      s.async = true;
+      if (attrs) {
+        Object.keys(attrs).forEach((k) => s.setAttribute(k, attrs[k]));
+      }
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error("failed to load " + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  function ensureNetworkLoaded(network) {
+    if (sdkLoadPromises[network]) return sdkLoadPromises[network];
+
+    if (network === "adsgram") {
+      sdkLoadPromises[network] = loadScript("https://sad.adsgram.ai/js/sad.min.js");
+    } else if (network === "monetag") {
+      const cfg = AD_CONFIG.networks.monetag || {};
+      const zoneId = cfg.zone_id || "";
+      sdkLoadPromises[network] = loadScript(cfg.sdk_url, {
+        "data-zone": zoneId,
+        "data-sdk": "show_" + zoneId,
+      });
+    } else if (network === "gigapub") {
+      const cfg = AD_CONFIG.networks.gigapub || {};
+      sdkLoadPromises[network] = loadScript(
+        "https://ad.gigapub.tech/script?id=" + encodeURIComponent(cfg.project_id || "")
+      );
+    } else {
+      sdkLoadPromises[network] = Promise.reject(new Error("unknown ad network: " + network));
+    }
+    return sdkLoadPromises[network];
+  }
+
+  // Resolves once the reward for this ad is confirmed by that network's
+  // own SDK — mirrors the previous single-network `controller.show()`
+  // call, just dispatched per network.
+  async function showAdForNetwork(network) {
+    await ensureNetworkLoaded(network);
+
+    if (network === "adsgram") {
+      if (!window.Adsgram) throw new Error("Adsgram SDK failed to load");
+      const blockId = (AD_CONFIG.networks.adsgram || {}).block_id || "";
+      const controller = window.Adsgram.init({ blockId: blockId });
+      await controller.show();
+    } else if (network === "monetag") {
+      const zoneId = (AD_CONFIG.networks.monetag || {}).zone_id || "";
+      const showFn = window["show_" + zoneId];
+      if (typeof showFn !== "function") throw new Error("Monetag SDK failed to load");
+      await showFn();
+    } else if (network === "gigapub") {
+      if (typeof window.showGiga !== "function") throw new Error("GigaPub SDK failed to load");
+      await window.showGiga();
+    } else {
+      throw new Error("unknown ad network: " + network);
+    }
+  }
 
   const tg = window.Telegram ? window.Telegram.WebApp : null;
   if (tg) {
@@ -307,10 +390,20 @@
     setStatus("");
   }
 
-  // Adsgram needs a short gap to have the next ad ready — show a
-  // disabled, counting-down button instead of letting the tap through
-  // immediately (which would just surface an ad-not-loaded error).
+  // Ad networks generally need a short gap to have the next ad ready —
+  // show a disabled, counting-down button instead of letting the tap
+  // through immediately (which would just surface an ad-not-loaded
+  // error).
   function waitBeforeNextAd(n) {
+    // Start loading the *next* ad's network SDK right away — by the
+    // time the countdown (or an instant resolve, below) finishes, it's
+    // often already loaded, so the following "Loading ad…" wait is
+    // shorter. Errors here are swallowed; showAdForNetwork()'s own
+    // ensureNetworkLoaded() call will surface any real failure when the
+    // viewer actually taps the button.
+    const nextNetwork = AD_CONFIG.sequence[n - 1] || AD_CONFIG.sequence[0];
+    ensureNetworkLoaded(nextNetwork).catch(() => {});
+
     return new Promise((resolve) => {
       if (!AD_VIEW_DELAY_SECONDS) {
         showAdStep(n);
@@ -350,16 +443,10 @@
     mainBtn.disabled = true;
     setBusyStatus(" Loading ad…");
 
-    if (!window.Adsgram) {
-      inFlight = false;
-      mainBtn.disabled = false;
-      setStatus("Ad network failed to load. Check your connection and try again.", "error");
-      return;
-    }
+    const network = AD_CONFIG.sequence[adsWatched] || AD_CONFIG.sequence[0];
 
     try {
-      const controller = window.Adsgram.init({ blockId: BLOCK_ID });
-      await controller.show();
+      await showAdForNetwork(network);
       // Resolved => reward earned for this ad.
       adsWatched += 1;
       renderProgress();
@@ -419,6 +506,7 @@
 
   renderProgress();
   showAdStep(1);
+  ensureNetworkLoaded(AD_CONFIG.sequence[0]).catch(() => {});
 })();
 </script>
 </body>
