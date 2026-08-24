@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import aiohttp
 from aiogram.types import Update
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -45,6 +46,38 @@ bot, dp = build_bot_and_dispatcher(settings.BOT_TOKEN)
 register_handlers(dp, storage, settings)
 
 _cpm_watcher_task: Optional[asyncio.Task] = None
+_keep_alive_task: Optional[asyncio.Task] = None
+
+
+async def _keep_alive_worker(base_url: str, interval_seconds: int = 600) -> None:
+    """Self-pings `/health` every `interval_seconds` (default 10 min) so
+    Render's free tier — which spins a web service down after 15 minutes
+    with no inbound HTTP traffic — never sees a long enough idle gap to
+    sleep it. This is the exact same "external uptime ping" workaround
+    people commonly point an outside service like cron-job.org or
+    UptimeRobot at; the only difference here is the app pings itself, so
+    no third-party service or extra setup is needed.
+
+    Trade-off (identical to the external-pinger approach, not avoided by
+    doing it this way): keeping the service alive around the clock burns
+    through Render's free 750 instance-hours/month much faster than
+    normal bursty traffic would — 750 hours is roughly a full month of
+    24/7 uptime, so this alone can use up nearly the whole free monthly
+    allowance.
+    """
+    await asyncio.sleep(20)  # let the app finish its own startup first
+    url = f"{base_url}/health"
+    async with aiohttp.ClientSession() as session:
+        while True:
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status == 200:
+                        logger.info("Keep-alive ping OK (%s)", url)
+                    else:
+                        logger.warning("Keep-alive ping got HTTP %s from %s", resp.status, url)
+            except Exception:
+                logger.warning("Keep-alive ping failed", exc_info=True)
+            await asyncio.sleep(interval_seconds)
 
 
 @asynccontextmanager
@@ -66,16 +99,19 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Could not set bot command menu on startup")
 
-    global _cpm_watcher_task
+    global _cpm_watcher_task, _keep_alive_task
     _cpm_watcher_task = asyncio.create_task(
         cpm_engine.run_cpm_cycle_watcher(storage, settings.CPM_CHECK_INTERVAL_SECONDS)
     )
+    _keep_alive_task = asyncio.create_task(_keep_alive_worker(settings.WEBAPP_BASE_URL))
     logger.info("TGSHORTBOT backend started")
 
     yield
 
     if _cpm_watcher_task:
         _cpm_watcher_task.cancel()
+    if _keep_alive_task:
+        _keep_alive_task.cancel()
     await bot.session.close()
 
 
