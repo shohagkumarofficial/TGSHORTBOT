@@ -854,6 +854,7 @@
     if (!isOwner()) return [];
     return [
       ["cpm", icon("settings", 17), "CPM Settings", "Real-time / Scheduled mode, rate, cycle, ad delay"],
+      ["policy", icon("checkCircle", 17), "User Policy", "Accept/Reject terms shown to every user"],
       ["stats", icon("barChart", 17), "Platform Stats", "Totals across every admin"],
     ];
   }
@@ -1008,6 +1009,7 @@
       else if (state.tab === "withdraw") await renderWithdraw(el);
       else if (state.tab === "payouts") await renderPayouts(el);
       else if (state.tab === "cpm") await renderCpm(el);
+      else if (state.tab === "policy") await renderPolicy(el);
       else if (state.tab === "admins") await renderAdmins(el);
       else if (state.tab === "stats") await renderStats(el);
     } catch (e) {
@@ -1562,6 +1564,39 @@
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Save limit";
+      }
+    });
+  }
+
+  // ---- Owner: Policy (Accept/Reject text shown to every user) -------
+
+  async function renderPolicy(el) {
+    const ps = await api("/api/policy");
+    el.innerHTML = `
+      <div class="card">
+        <h3>${icon("checkCircle", 15)} User policy / terms</h3>
+        <div class="meta">Shown as an Accept/Reject popup to every user the moment they first open the bot.
+        Saving this bumps the policy version, which re-prompts every existing Admin too — they'll see this
+        new text and have to accept it again before they can keep using the bot.</div>
+        <label>Policy text</label>
+        <textarea id="policyText" rows="10" style="width:100%; resize:vertical; font-family:inherit; font-size:13.5px; line-height:1.5; background:var(--bg); color:var(--text); border:1px solid var(--hairline); border-radius:10px; padding:10px;">${esc(ps.text)}</textarea>
+        <div class="meta" style="margin-top:8px;">Current version: <b style="color:var(--text)">${ps.version}</b></div>
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="policySave">Save & re-prompt everyone</button></div>
+      </div>
+    `;
+    el.querySelector("#policySave").addEventListener("click", async () => {
+      const btn = el.querySelector("#policySave");
+      const text = el.querySelector("#policyText").value.trim();
+      if (!text) { toast("Policy text can't be empty", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/policy", { method: "POST", body: JSON.stringify({ text }) });
+        toast("Policy updated — every user will be re-prompted", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save & re-prompt everyone";
       }
     });
   }
