@@ -847,7 +847,7 @@
   // them individually (Owner's own "admin tools" list links straight to
   // "traffic" / "withdraw" as separate destinations).
   function activeNavTab() {
-    return ["traffic", "withdraw"].includes(state.tab) ? "profile" : state.tab;
+    return ["traffic", "withdraw", "policyview"].includes(state.tab) ? "profile" : state.tab;
   }
 
   function drawerItems() {
@@ -1010,6 +1010,7 @@
       else if (state.tab === "payouts") await renderPayouts(el);
       else if (state.tab === "cpm") await renderCpm(el);
       else if (state.tab === "policy") await renderPolicy(el);
+      else if (state.tab === "policyview") await renderPolicyView(el);
       else if (state.tab === "admins") await renderAdmins(el);
       else if (state.tab === "stats") await renderStats(el);
     } catch (e) {
@@ -1332,9 +1333,19 @@
       </div>
       <div class="section-title">Withdrawal history</div>
       <div id="pWHistory"></div>
+
+      <div class="section-title" style="margin-top:18px;">Legal</div>
+      <div class="card">
+        <button class="btn btn-outline btn-block" id="pViewPolicy">${icon("checkCircle", 15)} Privacy Policy & Terms</button>
+      </div>
     `;
 
     wireTrafficSourceSection(el, "pTs", () => { renderTopCard(); renderProfile(el); });
+
+    el.querySelector("#pViewPolicy").addEventListener("click", () => {
+      state.tab = "policyview";
+      renderTab();
+    });
 
     const pAccountInput = el.querySelector("#pWAccount");
     const pAccountErr = el.querySelector("#pWAccountErr");
@@ -1598,6 +1609,27 @@
       } finally {
         btn.disabled = false; btn.textContent = "Save & re-prompt everyone";
       }
+    });
+  }
+
+  // ---- Everyone: read-only Privacy Policy view -----------------------
+  // Reached from the Profile tab's "Privacy Policy & Terms" link — the
+  // same GET /api/policy the bot's Accept/Reject popup is built from, so
+  // this always mirrors whatever the Owner most recently saved.
+
+  async function renderPolicyView(el) {
+    const ps = await api("/api/policy");
+    el.innerHTML = `
+      <div class="card">
+        <button class="btn btn-outline btn-sm" id="policyBack">← Back</button>
+        <h3 style="margin-top:14px;">${icon("checkCircle", 15)} Privacy Policy & Terms</h3>
+        <div class="meta">Version ${ps.version} · last updated ${new Date(ps.updated_at).toLocaleDateString()}</div>
+        <div style="white-space:pre-wrap; font-size:13.5px; line-height:1.6; color:var(--text); margin-top:12px;">${esc(ps.text)}</div>
+      </div>
+    `;
+    el.querySelector("#policyBack").addEventListener("click", () => {
+      state.tab = "profile";
+      renderTab();
     });
   }
 
