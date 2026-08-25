@@ -506,6 +506,14 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
     return {"short_code": link.short_code, "short_url": _short_url_for(link.short_code), "ad_count": link.ad_count}
 
 
+@app.delete("/api/links/{short_code}")
+async def delete_link(short_code: str, admin: Admin = Depends(require_admin)):
+    ok = await storage.delete_link(short_code, admin.telegram_id, admin.role == Role.OWNER)
+    if not ok:
+        raise HTTPException(status_code=404, detail="link not found")
+    return {"ok": True}
+
+
 @app.get("/api/links")
 async def my_links(admin: Admin = Depends(require_admin)):
     """Per-link stats for the requesting Admin's own "My Links" list.

@@ -343,6 +343,31 @@ class Storage:
     async def list_links_by_owner(self, owner_telegram_id: int) -> List[Link]:
         return [l for l in self.links.values() if l.owner_telegram_id == owner_telegram_id]
 
+    async def delete_link(self, short_code: str, requester_telegram_id: int, is_owner: bool) -> bool:
+        """Removes a Link so it 404s for any future viewer and drops off
+        the owning Admin's "My Links" list. An Admin may only delete
+        their own links; the Owner (is_owner=True) may delete anyone's.
+
+        Deliberately leaves that link's View rows alone — they've
+        already fed into the owning Admin's stored balance_confirmed /
+        balance_pending (see Admin's docstring), so deleting them here
+        wouldn't change anyone's balance, it'd just make old earnings
+        harder to audit later.
+        """
+        async with self._lock:
+            link = self.links.get(short_code)
+            if not link:
+                return False
+            if not is_owner and link.owner_telegram_id != requester_telegram_id:
+                return False
+            del self.links[short_code]
+            # A blanket upsert alone would never remove this row from
+            # Supabase (upsert only adds/updates), so it needs an
+            # explicit delete before the usual full-state save.
+            await self.client.table("links").delete().eq("short_code", short_code).execute()
+            await self._save_locked()
+            return True
+
     async def set_link_ad_count(self, short_code: str, ad_count: int) -> Optional[Link]:
         """Owner-only: how many sequential ads this one link requires
         before it unlocks. Nothing about an Admin's own access changes —
