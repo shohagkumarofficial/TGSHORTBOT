@@ -23,6 +23,7 @@ class Settings:
     SUPABASE_URL: str
     SUPABASE_KEY: str
     CPM_CHECK_INTERVAL_SECONDS: int
+    MINI_APP_SHORT_NAME: str
 
 
 def _require(name: str) -> str:
@@ -53,4 +54,13 @@ def get_settings() -> Settings:
         SUPABASE_URL=_require("SUPABASE_URL"),
         SUPABASE_KEY=_require("SUPABASE_KEY"),
         CPM_CHECK_INTERVAL_SECONDS=int(os.environ.get("CPM_CHECK_INTERVAL_SECONDS", "60")),
+        # Optional. Only set this once you've run /newapp in @BotFather and
+        # attached a Mini App to this bot with a short name (e.g. "unlock"),
+        # pointed at {WEBAPP_BASE_URL}/r. When set, shared short links use
+        # Telegram's "direct link Mini App" format
+        # (t.me/<bot>/<short_name>?startapp=<code>), which opens the ad-lock
+        # page immediately — no chat, no extra button tap. Left blank, the
+        # bot falls back to the original t.me/<bot>?start=<code> flow (opens
+        # the chat first with a "চালিয়ে যান" button). See README.md.
+        MINI_APP_SHORT_NAME=os.environ.get("MINI_APP_SHORT_NAME", "").strip().lstrip("@"),
     )

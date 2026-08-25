@@ -41,6 +41,7 @@ from models import (
     AdNetworkSetting,
     CountedStatus,
     CPMMode,
+    CPMSetting,
     Role,
     WithdrawMethod,
     WithdrawStatus,
@@ -259,14 +260,27 @@ async def telegram_webhook(
 # Short-link entrypoint — serves the ad-lock Mini App page (Section 4.2)
 # ---------------------------------------------------------------------------
 
-def _ad_slot_sequence(ans: AdNetworkSetting, count: int) -> list[str]:
-    """Expands the Owner's configured Ad1/Ad2/Ad3... pattern out to
-    exactly `count` entries (a Link's `ad_count`), cycling back to the
-    start once the configured sequence runs out — see
-    AdNetworkSetting.slot_sequence's docstring in models.py.
+def _ad_slot_sequence(ans: AdNetworkSetting) -> list[str]:
+    """Returns the Owner's configured Ad1/Ad2/Ad3... pattern exactly as
+    listed — one ad per slot, in order, no padding or repeating back to
+    the start. The number of ads a viewer must watch to unlock any link
+    is simply `len(ans.slot_sequence)` — see AdNetworkSetting's
+    docstring in models.py.
     """
     seq = ans.slot_sequence or [AdNetwork.ADSGRAM]
-    return [seq[i % len(seq)].value for i in range(count)]
+    return [n.value for n in seq]
+
+
+def _build_ad_config(ans: AdNetworkSetting, cs: CPMSetting) -> dict:
+    return {
+        "networks": {
+            "adsgram": {"block_id": ans.adsgram_block_id},
+            "monetag": {"zone_id": ans.monetag_zone_id, "sdk_url": ans.monetag_sdk_url},
+            "gigapub": {"project_id": ans.gigapub_project_id},
+        },
+        "sequence": _ad_slot_sequence(ans),
+        "ad_view_delay_seconds": cs.ad_view_delay_seconds,
+    }
 
 
 def _json_for_script(obj) -> str:
@@ -285,14 +299,7 @@ async def redirect_entry(short_code: str):
         raise HTTPException(status_code=404, detail="link not found")
     cs = await storage.get_cpm_setting()
     ans = await storage.get_ad_network_setting()
-    ad_config = {
-        "networks": {
-            "adsgram": {"block_id": ans.adsgram_block_id},
-            "monetag": {"zone_id": ans.monetag_zone_id, "sdk_url": ans.monetag_sdk_url},
-            "gigapub": {"project_id": ans.gigapub_project_id},
-        },
-        "sequence": _ad_slot_sequence(ans, link.ad_count),
-    }
+    ad_config = _build_ad_config(ans, cs)
     with open("webapp/viewer.html", "r", encoding="utf-8") as f:
         html = f.read()
     html = (
@@ -301,6 +308,44 @@ async def redirect_entry(short_code: str):
         .replace("__AD_VIEW_DELAY_SECONDS__", str(cs.ad_view_delay_seconds))
     )
     return HTMLResponse(html)
+
+
+@app.get("/r", response_class=HTMLResponse)
+async def redirect_entry_direct():
+    """Same ad-lock page as /r/{short_code}, but with no short_code baked
+    into the HTML. This is the one fixed URL registered with @BotFather
+    as this bot's Mini App (see README.md's "Direct-open Mini App"
+    section) — Telegram opens it straight from a
+    t.me/<bot>/<short_name>?startapp=<code> link, skipping the chat and
+    the extra button tap entirely. webapp/viewer.html resolves which
+    link it's showing and fetches that link's ad config itself, entirely
+    client-side, via Telegram.WebApp.initDataUnsafe.start_param and
+    GET /api/ad-config/{short_code} below.
+    """
+    with open("webapp/viewer.html", "r", encoding="utf-8") as f:
+        html = f.read()
+    html = (
+        html.replace("__SHORT_CODE__", "")
+        .replace("__AD_CONFIG_JSON__", "null")
+        .replace("__AD_VIEW_DELAY_SECONDS__", "0")
+    )
+    return HTMLResponse(html)
+
+
+@app.get("/api/ad-config/{short_code}")
+async def get_ad_config(short_code: str):
+    """Public, no auth — called client-side by webapp/viewer.html only
+    when it was opened via the short_code-less GET /r route above (the
+    direct-open Mini App flow) and needs to look up which link it's
+    unlocking and that link's ad sequence. Exposes nothing an anyone
+    viewing /r/{short_code}'s page source couldn't already see.
+    """
+    link = await storage.get_link(short_code)
+    if not link:
+        raise HTTPException(status_code=404, detail="link not found")
+    cs = await storage.get_cpm_setting()
+    ans = await storage.get_ad_network_setting()
+    return _build_ad_config(ans, cs)
 
 
 @app.get("/panel", response_class=HTMLResponse)
@@ -432,6 +477,10 @@ def _gen_short_code(length: int = 7) -> str:
 
 
 def _short_url_for(code: str) -> str:
+    if settings.MINI_APP_SHORT_NAME:
+        # Direct-open Mini App link — Telegram loads GET /r straight away
+        # with this code as initDataUnsafe.start_param, no chat step.
+        return f"https://t.me/{settings.BOT_USERNAME}/{settings.MINI_APP_SHORT_NAME}?startapp={code}"
     return f"https://t.me/{settings.BOT_USERNAME}?start={code}"
 
 
@@ -471,10 +520,15 @@ async def my_links(admin: Admin = Depends(require_admin)):
     from this endpoint entirely rather than being labelled and shown.
 
     `ad_count` comes through in `**l.model_dump()` below, so an Admin
-    can see how many ads their own link requires — but read-only: no
-    endpoint reachable with `require_admin` can change it, only
+    can see the old per-link value — but read-only: no endpoint
+    reachable with `require_admin` can change it, only
     `require_owner`'s POST /api/admin/links/{short_code}/ad-count.
+    `effective_ad_count` is the number that actually matters now: how
+    many ads a viewer of this link really watches, i.e.
+    len(AdNetworkSetting.slot_sequence) — see that field's docstring.
     """
+    ans = await storage.get_ad_network_setting()
+    effective_ad_count = len(_ad_slot_sequence(ans))
     links = await storage.list_links_by_owner(admin.telegram_id)
     out = []
     for l in links:
@@ -484,6 +538,7 @@ async def my_links(admin: Admin = Depends(require_admin)):
             {
                 **l.model_dump(),
                 "short_url": _short_url_for(l.short_code),
+                "effective_ad_count": effective_ad_count,
                 "view_count": len(genuine_views),
                 "confirmed_views": len(
                     [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]

@@ -324,6 +324,30 @@ async def notify_admin_of_withdrawal_resolution(bot: Bot, settings, admin, req) 
         logger.exception("failed to notify admin about withdrawal resolution")
 
 
+def _bot_short_url_for(code: str, settings) -> str:
+    """Mirrors app.py's _short_url_for — kept as a separate copy since
+    bot.py builds links directly through storage rather than calling its
+    own HTTP API. When settings.MINI_APP_SHORT_NAME is configured (a
+    Mini App attached to this bot via @BotFather's /newapp), viewers who
+    tap the shared link land straight on the ad-lock page with no chat
+    step in between; otherwise this falls back to the original
+    t.me/<bot>?start=<code> flow handled by start_with_code below.
+    """
+    if getattr(settings, "MINI_APP_SHORT_NAME", ""):
+        return f"https://t.me/{settings.BOT_USERNAME}/{settings.MINI_APP_SHORT_NAME}?startapp={code}"
+    return f"https://t.me/{settings.BOT_USERNAME}?start={code}"
+
+
+async def _effective_ad_count(storage) -> int:
+    """How many ads a viewer actually watches to unlock any link on the
+    platform right now — see AdNetworkSetting.slot_sequence's docstring
+    in models.py. Used only for the human-readable count in bot
+    messages; the real enforcement lives in app.py/webapp/viewer.html.
+    """
+    ans = await storage.get_ad_network_setting()
+    return max(1, len(ans.slot_sequence or []))
+
+
 def register_handlers(dp: Dispatcher, storage, settings) -> None:
     # Runs before every other handler below — see PolicyGateMiddleware's
     # own docstring for exactly what it does and doesn't intercept.
@@ -339,12 +363,13 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         while await storage.get_link(code):
             code = _gen_short_code()
         link = await storage.create_link(code, admin.telegram_id, url)
-        short_url = f"https://t.me/{settings.BOT_USERNAME}?start={code}"
+        short_url = _bot_short_url_for(code, settings)
+        ad_count = await _effective_ad_count(storage)
         panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
         await message.answer(
             f"✅ শর্ট লিংক তৈরি হয়েছে:\n<code>{short_url}</code>\n\n"
             "লিংকটি আপনার Traffic Source-এ (চ্যানেল/গ্রুপ/পোস্ট) শেয়ার করুন। "
-            f"ভিউয়াররা এতে ক্লিক করলে টেলিগ্রাম বট খুলবে, {link.ad_count}টি বিজ্ঞাপন দেখাবে, তারপর গন্তব্যে পৌঁছাবে।",
+            f"ভিউয়াররা এতে ক্লিক করলে {ad_count}টি বিজ্ঞাপন দেখাবে, তারপর গন্তব্যে পৌঁছাবে।",
             reply_markup=_main_menu_keyboard(panel_url),
         )
 
@@ -401,16 +426,17 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         if not link:
             await message.answer("এই শর্ট লিংকটি খুঁজে পাওয়া যায়নি বা মেয়াদোত্তীর্ণ।")
             return
+        ad_count = await _effective_ad_count(storage)
         view_url = f"{settings.WEBAPP_BASE_URL}/r/{code}"
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(
-                    text=f"👉 চালিয়ে যান ({link.ad_count}টি বিজ্ঞাপন দেখুন)", web_app=WebAppInfo(url=view_url)
+                    text=f"👉 চালিয়ে যান ({ad_count}টি বিজ্ঞাপন দেখুন)", web_app=WebAppInfo(url=view_url)
                 )]
             ]
         )
         await message.answer(
-            f"লিংকটি খুলতে নিচের বাটনে চাপ দিন। {link.ad_count}টি বিজ্ঞাপন দেখা শেষ হলে আপনি স্বয়ংক্রিয়ভাবে গন্তব্য পেজে পৌঁছে যাবেন।",
+            f"লিংকটি খুলতে নিচের বাটনে চাপ দিন। {ad_count}টি বিজ্ঞাপন দেখা শেষ হলে আপনি স্বয়ংক্রিয়ভাবে গন্তব্য পেজে পৌঁছে যাবেন।",
             reply_markup=kb,
         )
 
@@ -444,17 +470,18 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         if resume_code and resume_code != _NO_RESUME:
             link = await storage.get_link(resume_code)
             if link:
+                ad_count = await _effective_ad_count(storage)
                 view_url = f"{settings.WEBAPP_BASE_URL}/r/{resume_code}"
                 kb = InlineKeyboardMarkup(
                     inline_keyboard=[
                         [InlineKeyboardButton(
-                            text=f"👉 চালিয়ে যান ({link.ad_count}টি বিজ্ঞাপন দেখুন)",
+                            text=f"👉 চালিয়ে যান ({ad_count}টি বিজ্ঞাপন দেখুন)",
                             web_app=WebAppInfo(url=view_url),
                         )]
                     ]
                 )
                 await callback.message.answer(
-                    f"লিংকটি খুলতে নিচের বাটনে চাপ দিন। {link.ad_count}টি বিজ্ঞাপন দেখা শেষ হলে আপনি "
+                    f"লিংকটি খুলতে নিচের বাটনে চাপ দিন। {ad_count}টি বিজ্ঞাপন দেখা শেষ হলে আপনি "
                     "স্বয়ংক্রিয়ভাবে গন্তব্য পেজে পৌঁছে যাবেন।",
                     reply_markup=kb,
                 )

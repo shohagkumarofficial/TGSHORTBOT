@@ -102,14 +102,14 @@ class Admin(BaseModel):
 
 
 class Link(BaseModel):
-    """`ad_count` is how many sequential Adsgram ads a viewer must watch
-    on `webapp/viewer.html` before this link unlocks. It defaults to 3
-    (the platform's original fixed behavior) at creation time regardless
-    of who creates it — an Admin via `/newlink` or the panel's "Create
-    Link" form always gets the default. Changing it afterward is
-    Owner-only (see storage.set_link_ad_count / POST
-    /api/admin/links/{short_code}/ad-count) — an Admin can see the count
-    on their own "My Links" list but has no endpoint that can change it.
+    """`ad_count` used to independently control how many ads a viewer
+    watched (cycling through AdNetworkSetting.slot_sequence to fill it).
+    It's kept here for backward compatibility and historical stats, but
+    the actual number of ads shown to a viewer is now simply
+    `len(AdNetworkSetting.slot_sequence)` — see that field's docstring.
+    The Owner-only per-link override (storage.set_link_ad_count / POST
+    /api/admin/links/{short_code}/ad-count) still exists but no longer
+    changes what a viewer experiences.
     """
 
     short_code: str
@@ -214,12 +214,13 @@ class AdNetworkSetting(BaseModel):
     could default to (see README's "Ad networks" section).
 
     `slot_sequence` is an ordered list of AdNetwork values, one per ad
-    position (Ad 1, Ad 2, Ad 3, ...). It doesn't need to be as long as
-    any given Link.ad_count — app.py's redirect_entry cycles back to
-    the start of the sequence once it runs out, so e.g. a 3-entry
-    sequence naturally repeats for a Link with ad_count=7 as
-    Ad1,Ad2,Ad3,Ad1,Ad2,Ad3,Ad1. Defaults to three Adsgram slots,
-    matching the platform's original fixed single-network behavior.
+    position (Ad 1, Ad 2, Ad 3, ...). This list's length *is* how many
+    ads every link on the platform makes a viewer watch — Ad1, then
+    Ad2, and so on down to the last slot the Owner has added, with no
+    padding or repeating. A single-entry sequence means every link is a
+    one-ad unlock; a three-entry sequence means every link is a
+    three-ad unlock. Defaults to three Adsgram slots, matching the
+    platform's original fixed single-network behavior.
     """
 
     adsgram_block_id: str = ""
