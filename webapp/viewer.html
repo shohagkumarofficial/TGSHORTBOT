@@ -140,6 +140,7 @@
     font-size: 13px;
     color: var(--text-dim);
     min-height: 18px;
+    white-space: pre-line;
   }
   .status-line.error{ color: var(--red); }
   .status-line.ok{ color: var(--emerald); }
@@ -395,6 +396,21 @@
     return sdkLoadPromises[network];
   }
 
+  // Ad SDKs reject with all sorts of shapes: a real Error, a plain
+  // string, a code, or nothing at all ("no fill" cases especially tend
+  // to reject with little to no detail). Normalize whatever we get into
+  // one readable line for the on-screen diagnostic in showAdError().
+  function describeSdkRejection(e) {
+    if (!e) return "rejected with no reason given (likely no ad available right now)";
+    if (typeof e === "string") return e;
+    if (e.message) return e.message;
+    try {
+      return JSON.stringify(e);
+    } catch (_) {
+      return String(e);
+    }
+  }
+
   // Resolves once the reward for this ad is confirmed by that network's
   // own SDK — mirrors the previous single-network `controller.show()`
   // call, just dispatched per network.
@@ -402,18 +418,37 @@
     await ensureNetworkLoaded(network);
 
     if (network === "adsgram") {
-      if (!window.Adsgram) throw new Error("Adsgram SDK failed to load");
+      if (!window.Adsgram) throw new Error("Adsgram SDK script loaded but window.Adsgram is missing");
       const blockId = (AD_CONFIG.networks.adsgram || {}).block_id || "";
       const controller = window.Adsgram.init({ blockId: blockId });
-      await controller.show();
+      try {
+        await controller.show();
+      } catch (e) {
+        throw new Error("Adsgram: " + describeSdkRejection(e));
+      }
     } else if (network === "monetag") {
       const zoneId = (AD_CONFIG.networks.monetag || {}).zone_id || "";
       const showFn = window["show_" + zoneId];
-      if (typeof showFn !== "function") throw new Error("Monetag SDK failed to load");
-      await showFn();
+      if (typeof showFn !== "function") {
+        throw new Error("Monetag SDK script loaded but window.show_" + zoneId + " is missing");
+      }
+      try {
+        await showFn();
+      } catch (e) {
+        // Most common cause here isn't a broken integration at all — it's
+        // "no fill" (this zone has no ad ready for this viewer right now),
+        // which a brand-new/low-traffic zone hits constantly at first.
+        throw new Error("Monetag: " + describeSdkRejection(e));
+      }
     } else if (network === "gigapub") {
-      if (typeof window.showGiga !== "function") throw new Error("GigaPub SDK failed to load");
-      await window.showGiga();
+      if (typeof window.showGiga !== "function") {
+        throw new Error("GigaPub SDK script loaded but window.showGiga is missing");
+      }
+      try {
+        await window.showGiga();
+      } catch (e) {
+        throw new Error("GigaPub: " + describeSdkRejection(e));
+      }
     } else {
       throw new Error("unknown ad network: " + network);
     }
@@ -488,10 +523,20 @@
     }
   }
 
-  function showAdError() {
+  function showAdError(err) {
     mainBtn.style.display = "none";
     retryBtn.style.display = "inline-block";
-    setStatus("The ad didn't load. This happens sometimes — try again.", "error");
+    // Surface the real reason in small print under the friendly message —
+    // there's no browser devtools inside Telegram's in-app view, so this
+    // is the only way to tell "SDK never loaded" apart from "SDK loaded
+    // fine but this network had no ad to show" (no fill) without asking
+    // the viewer to plug their phone into a computer.
+    const detail = err && err.message ? String(err.message) : "";
+    setStatus(
+      "The ad didn't load. This happens sometimes — try again." +
+        (detail ? "\n" + detail : ""),
+      "error"
+    );
   }
 
   function showAdStep(n) {
@@ -574,7 +619,7 @@
     } catch (err) {
       inFlight = false;
       mainBtn.disabled = false;
-      showAdError();
+      showAdError(err);
     }
   }
 
