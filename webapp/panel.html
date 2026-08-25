@@ -1195,6 +1195,16 @@
     renderLinksList();
   }
 
+  function confirmDestructive(message) {
+    return new Promise((resolve) => {
+      if (tg && typeof tg.showConfirm === "function") {
+        tg.showConfirm(message, (ok) => resolve(!!ok));
+      } else {
+        resolve(window.confirm(message));
+      }
+    });
+  }
+
   function renderLinksList() {
     const listEl = document.getElementById("linksList");
     if (!listEl) return;
@@ -1206,13 +1216,35 @@
       <div class="card">
         <h3>/${esc(l.short_code)}</h3>
         <code class="short-url">${esc(l.short_url)}</code>
-        <div class="btn-row"><button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">${icon("clipboard", 14)} Copy</button></div>
+        <div class="btn-row">
+          <button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">${icon("clipboard", 14)} Copy</button>
+          <button class="btn btn-outline btn-sm linkDelBtn" data-code="${esc(l.short_code)}">${icon("trash", 14)} Delete</button>
+        </div>
         <div class="meta">→ ${esc(l.destination_url)}</div>
         <div class="meta">${l.view_count} views · ${l.confirmed_views} confirmed · ${l.pending_views} pending</div>
         <div class="meta">${icon("play", 12)} ${l.effective_ad_count} ad${l.effective_ad_count === 1 ? "" : "s"} to unlock</div>
       </div>
     `).join("");
     wireCopyButtons(listEl);
+    listEl.querySelectorAll(".linkDelBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const code = btn.dataset.code;
+        const sure = await confirmDestructive(
+          `Delete /${code}? Anyone who already has this link will stop being able to use it. This can't be undone.`
+        );
+        if (!sure) return;
+        btn.disabled = true;
+        try {
+          await api(`/api/links/${code}`, { method: "DELETE" });
+          toast("Link deleted", "ok");
+          await loadLinks();
+          renderLinksList();
+        } catch (e) {
+          toast(e.message, "err");
+          btn.disabled = false;
+        }
+      });
+    });
   }
 
   // ---- Withdraw (personal request + history) ---------------------------
