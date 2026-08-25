@@ -477,7 +477,7 @@ def _gen_short_code(length: int = 7) -> str:
 
 
 def _short_url_for(code: str) -> str:
-    if settings.MINI_APP_SHORT_NAME:
+    if getattr(settings, "MINI_APP_SHORT_NAME", ""):
         # Direct-open Mini App link — Telegram loads GET /r straight away
         # with this code as initDataUnsafe.start_param, no chat step.
         return f"https://t.me/{settings.BOT_USERNAME}/{settings.MINI_APP_SHORT_NAME}?startapp={code}"
