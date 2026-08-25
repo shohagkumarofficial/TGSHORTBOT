@@ -356,17 +356,39 @@
     if (sdkLoadPromises[network]) return sdkLoadPromises[network];
 
     if (network === "adsgram") {
-      sdkLoadPromises[network] = loadScript("https://sad.adsgram.ai/js/sad.min.js");
+      const blockId = (AD_CONFIG.networks.adsgram || {}).block_id || "";
+      if (!blockId) {
+        sdkLoadPromises[network] = Promise.reject(new Error("Adsgram Block ID not configured"));
+      } else {
+        sdkLoadPromises[network] = loadScript("https://sad.adsgram.ai/js/sad.min.js");
+      }
     } else if (network === "monetag") {
       const cfg = AD_CONFIG.networks.monetag || {};
       const zoneId = cfg.zone_id || "";
-      sdkLoadPromises[network] = loadScript(cfg.sdk_url, {
-        "data-zone": zoneId,
-        "data-sdk": "show_" + zoneId,
-      });
+      if (!cfg.sdk_url || !zoneId) {
+        // Most common misconfiguration: Zone ID filled in but the SDK
+        // script URL field left blank (or vice versa). Fail fast with a
+        // clear reason instead of pointing a <script> at an empty src,
+        // which the browser resolves to the current page and silently
+        // "succeeds" without ever defining window["show_<zoneId>"] —
+        // that used to surface as a generic, hard-to-diagnose
+        // "ad didn't load" on the very first ad.
+        sdkLoadPromises[network] = Promise.reject(
+          new Error("Monetag Zone ID / SDK script URL not configured")
+        );
+      } else {
+        sdkLoadPromises[network] = loadScript(cfg.sdk_url, {
+          "data-zone": zoneId,
+          "data-sdk": "show_" + zoneId,
+        });
+      }
     } else if (network === "gigapub") {
       const cfg = AD_CONFIG.networks.gigapub || {};
-      sdkLoadPromises[network] = loadGigaPubWithFallback(cfg.project_id || "");
+      if (!cfg.project_id) {
+        sdkLoadPromises[network] = Promise.reject(new Error("GigaPub Project ID not configured"));
+      } else {
+        sdkLoadPromises[network] = loadGigaPubWithFallback(cfg.project_id);
+      }
     } else {
       sdkLoadPromises[network] = Promise.reject(new Error("unknown ad network: " + network));
     }
