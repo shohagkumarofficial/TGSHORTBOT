@@ -534,7 +534,7 @@
         <div class="meta" style="color:var(--text); font-weight:600;">/${esc(l.short_code)}</div>
         <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(l.destination_url)}</div>
         <div class="meta">${l.view_count} views${l.daily_capped_views ? ` · ${l.daily_capped_views} missed` : ""}</div>
-        <label style="margin-top:8px;">Ads to unlock</label>
+        <label style="margin-top:8px;">Ads to unlock (legacy — actual count now follows Ad display order)</label>
         <div class="btn-row" style="align-items:center;">
           <input type="number" class="adCountInput" min="${AD_COUNT_MIN}" max="${AD_COUNT_MAX}" step="1" value="${l.ad_count}" style="max-width:90px;" />
           <button class="btn btn-outline btn-sm saveAdCountBtn">Save</button>
@@ -1209,7 +1209,7 @@
         <div class="btn-row"><button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">${icon("clipboard", 14)} Copy</button></div>
         <div class="meta">→ ${esc(l.destination_url)}</div>
         <div class="meta">${l.view_count} views · ${l.confirmed_views} confirmed · ${l.pending_views} pending</div>
-        <div class="meta">${icon("play", 12)} ${l.ad_count} ad${l.ad_count === 1 ? "" : "s"} to unlock</div>
+        <div class="meta">${icon("play", 12)} ${l.effective_ad_count} ad${l.effective_ad_count === 1 ? "" : "s"} to unlock</div>
       </div>
     `).join("");
     wireCopyButtons(listEl);
@@ -1620,8 +1620,8 @@
       card.innerHTML = `
         <h3>${icon("layers", 15)} Ad display order</h3>
         <div class="meta">Which network's ad plays for Ad 1, Ad 2, Ad 3, and so on — e.g. Adsgram,
-        Monetag, GigaPub. If a link needs more ads than you've listed here, the pattern repeats from the
-        top: a 3-entry sequence covers a 7-ad link as Ad1, Ad2, Ad3, Ad1, Ad2, Ad3, Ad1.</div>
+        Monetag, GigaPub. This list is exactly how many ads every link on the platform makes a viewer
+        watch — add one slot and every link is a 1-ad unlock, add three and every link is a 3-ad unlock.</div>
         <div id="slotRows">${slotRowsHTML()}</div>
         <div class="btn-row">
           <button class="btn btn-outline" id="addSlotBtn" ${seq.length >= AD_COUNT_MAX ? "disabled" : ""}>+ Add ad slot</button>

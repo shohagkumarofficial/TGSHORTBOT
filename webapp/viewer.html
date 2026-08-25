@@ -204,31 +204,88 @@
 
 <script>
 (function () {
-  const SHORT_CODE = "__SHORT_CODE__";
-  // Built server-side by app.py's redirect_entry from the Owner's Ad
-  // Networks settings (see models.py's AdNetworkSetting): which
-  // network's ad plays for each position, plus that network's
-  // credentials. Shape:
-  //   {
-  //     networks: {
-  //       adsgram: { block_id },
-  //       monetag: { zone_id, sdk_url },
-  //       gigapub: { project_id },
-  //     },
-  //     sequence: ["adsgram", "monetag", ...],  // one entry per ad, already
-  //                                              // expanded/cycled to match
-  //                                              // this Link's ad_count
-  //   }
-  const AD_CONFIG = __AD_CONFIG_JSON__;
-  // Ad count comes straight from the sequence length (already sized to
-  // this Link's ad_count server-side) — clamped defensively here too in
-  // case of a bad value.
-  const TOTAL_ADS = Math.max(1, Math.min(20, (AD_CONFIG.sequence || []).length || 3));
+  // ---- Resolve which link this is, and its ad config -------------------
+  // Two ways this page gets opened:
+  //  1) GET /r/{short_code} (app.py's redirect_entry) — the short_code
+  //     and full ad_config are baked into the page source server-side.
+  //     This is the fallback flow: bot's /start sends a chat message
+  //     with a "চালিয়ে যান" button that opens this page as a WebApp.
+  //  2) GET /r (app.py's redirect_entry_direct) — no short_code baked
+  //     in. This is the direct-open Mini App flow: Telegram opens this
+  //     exact URL straight from a t.me/<bot>/<short_name>?startapp=<code>
+  //     link (registered once via @BotFather's /newapp — see README.md),
+  //     skipping the chat entirely. Here we read the code from Telegram's
+  //     start_param and fetch this link's ad_config ourselves.
+  const EMBEDDED_SHORT_CODE = "__SHORT_CODE__";
+  const EMBEDDED_AD_CONFIG = __AD_CONFIG_JSON__;
+  const EMBEDDED_AD_VIEW_DELAY_SECONDS = "__AD_VIEW_DELAY_SECONDS__";
+
+  const tg = window.Telegram ? window.Telegram.WebApp : null;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    try {
+      tg.setHeaderColor("#12141c");
+      tg.setBackgroundColor("#12141c");
+    } catch (e) { /* older client versions may not support this */ }
+  }
+
+  function resolveShortCodeForDirectOpen() {
+    if (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) {
+      return tg.initDataUnsafe.start_param;
+    }
+    const params = new URLSearchParams(window.location.search);
+    return params.get("tgWebAppStartParam") || params.get("startapp") || params.get("code") || "";
+  }
+
+  const headline = document.getElementById("headline");
+  const subtext = document.getElementById("subtext");
+  const mainBtn = document.getElementById("mainBtn");
+
+  function showFatalError(text) {
+    mainBtn.style.display = "none";
+    headline.textContent = "লিংকটি খোলা যায়নি";
+    subtext.textContent = text;
+  }
+
+  async function boot() {
+    let shortCode = EMBEDDED_SHORT_CODE;
+    let adConfig = EMBEDDED_AD_CONFIG;
+    let adViewDelaySeconds = EMBEDDED_AD_VIEW_DELAY_SECONDS;
+
+    if (!shortCode) {
+      shortCode = resolveShortCodeForDirectOpen();
+      if (!shortCode) {
+        showFatalError("এই লিংকের কোনো তথ্য পাওয়া যায়নি। টেলিগ্রামে দেওয়া লিংকটি থেকে আবার চেষ্টা করুন।");
+        return;
+      }
+      try {
+        const resp = await fetch("/api/ad-config/" + encodeURIComponent(shortCode));
+        if (!resp.ok) throw new Error("ad-config lookup failed: " + resp.status);
+        adConfig = await resp.json();
+        adViewDelaySeconds = adConfig.ad_view_delay_seconds;
+      } catch (e) {
+        showFatalError("লিংকটি খুঁজে পাওয়া যায়নি বা মেয়াদোত্তীর্ণ।");
+        return;
+      }
+    } else if (adConfig && adConfig.ad_view_delay_seconds != null) {
+      adViewDelaySeconds = adConfig.ad_view_delay_seconds;
+    }
+
+    initViewer(shortCode, adConfig, adViewDelaySeconds);
+  }
+
+  function initViewer(SHORT_CODE, AD_CONFIG, adViewDelaySecondsRaw) {
+  // Ad count comes straight from the sequence length — one ad per Owner-
+  // configured slot in the Ad display order, no padding/repeating (see
+  // AdNetworkSetting.slot_sequence's docstring in models.py) — clamped
+  // defensively here too in case of a bad value.
+  const TOTAL_ADS = Math.max(1, Math.min(20, (AD_CONFIG.sequence || []).length || 1));
   // Ad networks don't always have the next reward ad ready the instant
   // one finishes, so we pause this many seconds before the next ad
   // becomes tappable. Configurable by the Owner from the panel's CPM
   // Settings.
-  const AD_VIEW_DELAY_SECONDS = Math.max(0, Number("__AD_VIEW_DELAY_SECONDS__") || 0);
+  const AD_VIEW_DELAY_SECONDS = Math.max(0, Number(adViewDelaySecondsRaw) || 0);
 
   // ---- Multi-network ad SDK loading ----------------------------------
   // Each network's SDK is only fetched the first time a slot actually
@@ -251,46 +308,69 @@
     });
   }
 
-  function startNetworkLoad(network) {
-    if (network === "adsgram") {
-      return loadScript("https://sad.adsgram.ai/js/sad.min.js");
-    }
-    if (network === "monetag") {
-      const cfg = AD_CONFIG.networks.monetag || {};
-      const zoneId = cfg.zone_id || "";
-      if (!cfg.sdk_url) {
-        return Promise.reject(new Error("Monetag SDK script URL is not configured"));
+  // GigaPub's primary ad domain occasionally fails to respond (network
+  // blocks, DNS hiccups, momentary outages) — this mirrors GigaPub's own
+  // recommended "Enhanced Reliability Script" (docs.giga.pub) by racing
+  // a 12s timeout against the primary domain and falling back to their
+  // secondary domain before giving up, instead of surfacing "ad didn't
+  // load" on the very first hiccup.
+  function loadGigaPubWithFallback(projectId) {
+    const domains = ["https://ad.gigapub.tech", "https://ru-ad.gigapub.tech"];
+    const id = encodeURIComponent(projectId || "");
+
+    function tryDomain(i) {
+      if (i >= domains.length) {
+        return Promise.reject(new Error("GigaPub SDK failed to load from all domains"));
       }
-      return loadScript(cfg.sdk_url, {
-        "data-zone": zoneId,
-        "data-sdk": "show_" + zoneId,
-      });
+      return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.async = true;
+        s.src = domains[i] + "/script?id=" + id;
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          s.onload = s.onerror = null;
+          reject(new Error("timed out loading GigaPub from " + domains[i]));
+        }, 12000);
+        s.onload = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        };
+        s.onerror = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          reject(new Error("failed to load GigaPub from " + domains[i]));
+        };
+        document.head.appendChild(s);
+      }).catch(() => tryDomain(i + 1));
     }
-    if (network === "gigapub") {
-      const cfg = AD_CONFIG.networks.gigapub || {};
-      if (!cfg.project_id) {
-        return Promise.reject(new Error("GigaPub Project ID is not configured"));
-      }
-      return loadScript(
-        "https://ad.gigapub.tech/script?id=" + encodeURIComponent(cfg.project_id)
-      );
-    }
-    return Promise.reject(new Error("unknown ad network: " + network));
+
+    return tryDomain(0);
   }
 
   function ensureNetworkLoaded(network) {
     if (sdkLoadPromises[network]) return sdkLoadPromises[network];
 
-    // Only a *successful* load is memoized. Caching a rejection here would
-    // brick the "Try that ad again" button permanently: every retry would
-    // re-await the same settled-rejected promise and fail instantly without
-    // ever re-requesting the script.
-    const p = startNetworkLoad(network);
-    sdkLoadPromises[network] = p;
-    p.catch(() => {
-      if (sdkLoadPromises[network] === p) delete sdkLoadPromises[network];
-    });
-    return p;
+    if (network === "adsgram") {
+      sdkLoadPromises[network] = loadScript("https://sad.adsgram.ai/js/sad.min.js");
+    } else if (network === "monetag") {
+      const cfg = AD_CONFIG.networks.monetag || {};
+      const zoneId = cfg.zone_id || "";
+      sdkLoadPromises[network] = loadScript(cfg.sdk_url, {
+        "data-zone": zoneId,
+        "data-sdk": "show_" + zoneId,
+      });
+    } else if (network === "gigapub") {
+      const cfg = AD_CONFIG.networks.gigapub || {};
+      sdkLoadPromises[network] = loadGigaPubWithFallback(cfg.project_id || "");
+    } else {
+      sdkLoadPromises[network] = Promise.reject(new Error("unknown ad network: " + network));
+    }
+    return sdkLoadPromises[network];
   }
 
   // Resolves once the reward for this ad is confirmed by that network's
@@ -311,35 +391,10 @@
       await showFn();
     } else if (network === "gigapub") {
       if (typeof window.showGiga !== "function") throw new Error("GigaPub SDK failed to load");
-      // The GigaPub script assigns window.showGiga synchronously during its
-      // IIFE, but its internal ad-network init() runs asynchronously after
-      // the script tag fires onload. The SDK's own readiness guard (which
-      // waits for >50 % of networks to be ready) only activates once
-      // _initTimestamp is set — a field that doesn't exist until init()
-      // has progressed. Calling showGiga() before that sets _initTimestamp
-      // silently skips the guard and throws "failed to show ad" immediately.
-      // Polling gigaLoadingProgress() here lets init() reach that threshold
-      // before we call show, matching what the SDK's own guard would do.
-      if (typeof window.gigaLoadingProgress === "function") {
-        const _gpDeadline = Date.now() + 5000;
-        while (window.gigaLoadingProgress() < 0.5 && Date.now() < _gpDeadline) {
-          await new Promise((r) => setTimeout(r, 100));
-        }
-      }
       await window.showGiga();
     } else {
       throw new Error("unknown ad network: " + network);
     }
-  }
-
-  const tg = window.Telegram ? window.Telegram.WebApp : null;
-  if (tg) {
-    tg.ready();
-    tg.expand();
-    try {
-      tg.setHeaderColor("#12141c");
-      tg.setBackgroundColor("#12141c");
-    } catch (e) { /* older client versions may not support this */ }
   }
 
   const CIRC = 2 * Math.PI * 78;
@@ -369,9 +424,6 @@
 
   const stepNum = document.getElementById("stepNum");
   const dialLabel = document.getElementById("dialLabel");
-  const headline = document.getElementById("headline");
-  const subtext = document.getElementById("subtext");
-  const mainBtn = document.getElementById("mainBtn");
   const retryBtn = document.getElementById("retryBtn");
   const statusLine = document.getElementById("statusLine");
 
@@ -498,10 +550,6 @@
         await waitBeforeNextAd(adsWatched + 1);
       }
     } catch (err) {
-      // Keep the viewer-facing copy generic, but leave the network's real
-      // message ("failed to show ad", "No bid available", "…not configured")
-      // in the console — without it an ad failure is undiagnosable.
-      console.error("[ad] " + network + " failed:", err);
       inFlight = false;
       mainBtn.disabled = false;
       showAdError();
@@ -551,6 +599,9 @@
   renderProgress();
   showAdStep(1);
   ensureNetworkLoaded(AD_CONFIG.sequence[0]).catch(() => {});
+  } // end initViewer
+
+  boot();
 })();
 </script>
 </body>
