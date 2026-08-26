@@ -99,6 +99,37 @@ html, body{
 @keyframes spin{ to{ transform: rotate(360deg); } }
 .error-title{ color: var(--text); font-weight:700; font-size:16px; }
 
+/* ============ Fallback landing page (Telegram এর বাইরে থেকে খোলা হলে) ============ */
+.fallback-state{
+  min-height:100vh; align-items:stretch; justify-content:flex-start;
+  text-align:left; padding: 36px 20px 48px;
+}
+.fallback-inner{
+  max-width:420px; margin:0 auto;
+  display:flex; flex-direction:column; align-items:center; text-align:center; gap:16px;
+}
+.fallback-brand{ display:flex; align-items:center; gap:8px; font-family: var(--font-display); }
+.fallback-title{
+  font-family: var(--font-display); font-weight:800; font-size:22px;
+  color: var(--text); margin:4px 0 0; line-height:1.4;
+}
+.fallback-sub{ color: var(--text-dim); font-size:13.5px; line-height:1.65; margin:0; }
+.fallback-features{
+  display:grid; grid-template-columns:1fr 1fr; gap:10px;
+  width:100%; margin-top:4px;
+}
+.fallback-feature{
+  background: var(--surface); border:1px solid var(--border); border-radius: var(--radius-sm);
+  padding:16px 10px; display:flex; flex-direction:column; align-items:center; gap:8px;
+}
+.fallback-feature b{ font-family: var(--font-display); font-size:12.5px; }
+.fallback-feature span{ font-size:11px; color: var(--text-dim); line-height:1.45; }
+.fallback-cta{
+  margin-top:8px; padding:12px 30px; font-size:14px;
+  text-decoration:none; display:inline-block;
+}
+.fallback-note{ color: var(--text-dim); font-size:11.5px; margin:-4px 0 0; }
+
 /* ============ Sections ============ */
 .tab-panel{ display:none; padding: 4px 16px 16px; animation: fadein .25s ease; }
 .tab-panel.active{ display:block; }
