@@ -25,12 +25,20 @@
       </div>
     </div>
 
-    <div class="lives-badge-container">
-      <div class="lives-badge" title="Tap to refill lives">
-        <span class="heart-icon">❤️</span>
-        <span class="lives-count" id="lives-count">3/3</span>
+    <div class="header-right">
+      <!-- Sound Synthesizer Mute Toggle -->
+      <button class="btn-sound-toggle" id="btn-sound-toggle" title="Toggle Sound">🔊</button>
+
+      <!-- Lives Counter Badge -->
+      <div class="lives-badge-container">
+        <div class="lives-badge" title="Tap to refill lives">
+          <span class="heart-icon">
+            <svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+          </span>
+          <span class="lives-count" id="lives-count">3/3</span>
+        </div>
+        <div class="regen-timer" id="regen-timer">Full ❤️</div>
       </div>
-      <div class="regen-timer" id="regen-timer">Full ❤️</div>
     </div>
   </header>
 
@@ -42,7 +50,7 @@
         <div class="refill-icon">📺</div>
         <div class="refill-text">
           <h4>Need More Lives?</h4>
-          <p>Watch a short ad for +1 ❤️ Life</p>
+          <p>Watch a short ad for +1 ❤️ Life (Unlimited!)</p>
         </div>
       </div>
       <button class="btn-watch-ad" id="btn-refill-ad">
@@ -50,9 +58,9 @@
       </button>
     </div>
 
-    <h2 class="section-title">🕹️ Arcade Games</h2>
+    <h2 class="section-title">🕹️ Arcade Games (9)</h2>
     <div class="games-grid" id="games-grid">
-      <!-- Dynamically rendered via hub.js -->
+      <!-- Dynamically rendered via hub.js with SVG icons -->
     </div>
   </section>
 
@@ -66,30 +74,38 @@
 
   <!-- Tab 3: Rules & Info -->
   <section class="tab-content" id="tab-rules">
-    <h2 class="section-title">📜 How It Works</h2>
+    <h2 class="section-title">📜 Game Rules & Features</h2>
     <div class="leaderboard-list" style="padding: 18px; line-height: 1.6; font-size: 13px;">
-      <p>❤️ <b>Life System:</b> You start with 3 lives. Every time you lose or play, 1 life is consumed.</p>
+      <p>❤️ <b>Life System:</b> You start with 3 free lives. When below 3 lives, you automatically regenerate 1 life over time.</p>
       <br>
-      <p>📺 <b>Refill with Ads:</b> Whenever you are low on lives, tap the <b>WATCH</b> button to view a sponsor ad and immediately claim <b>+1 ❤️ Life</b>.</p>
+      <p>🚀 <b>Unlimited Ad Stack:</b> Watching sponsor ads allows you to stack <b>unlimited extra lives</b> (e.g. 4, 5, 10, 50+ ❤️)!</p>
       <br>
-      <p>⏳ <b>Automatic Regeneration:</b> When below maximum capacity, your energy automatically regenerates 1 life over time.</p>
+      <p>🔊 <b>Retro Audio:</b> Built-in Web Audio synthesizer sounds for clicks, scores, and victories. Toggle mute anytime at the top.</p>
       <br>
-      <p>🛡️ <b>Fair Play:</b> All scores and ad verification are verified server-side with anti-cheat protection.</p>
+      <p>🎮 <b>9 Unique Games:</b> Snake, 2048, Flappy Bird, Tic Tac Toe, Memory Match, Whack-a-Mole, Space Shooter, Speed Racer, and Neon Breakout!</p>
+      <br>
+      <p>🛡️ <b>Fair Play:</b> All scores and ad reward verifications are secured server-side.</p>
     </div>
   </section>
 
-  <!-- Bottom Navigation Bar -->
+  <!-- Bottom Navigation Bar with Vector SVGs -->
   <nav class="view-tabs">
     <div class="tab-item active" data-tab="games">
-      <span class="tab-icon">🎮</span>
+      <span class="tab-icon">
+        <svg viewBox="0 0 24 24"><path d="M21 6H3c-1.1 0-2 .9-2 2v8c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-10 7H8v3H6v-3H3v-2h3V8h2v3h3v2zm4.5 2c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm4-3c-.83 0-1.5-.67-1.5-1.5S18.67 9 19.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>
+      </span>
       <span>Games</span>
     </div>
     <div class="tab-item" data-tab="leaderboard">
-      <span class="tab-icon">🏆</span>
+      <span class="tab-icon">
+        <svg viewBox="0 0 24 24"><path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>
+      </span>
       <span>Rankings</span>
     </div>
     <div class="tab-item" data-tab="rules">
-      <span class="tab-icon">ℹ️</span>
+      <span class="tab-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+      </span>
       <span>Rules</span>
     </div>
   </nav>
@@ -100,7 +116,7 @@
       <div class="modal-icon">💔</div>
       <h3 class="modal-title">Out of Lives!</h3>
       <p class="modal-desc">
-        You don't have enough lives to start this game. Watch a short video ad to get <b>+1 ❤️ Life</b> immediately!
+        You have 0 lives remaining. Watch a short sponsor ad to get <b>+1 ❤️ Life</b> immediately and keep stacking!
       </p>
       <div class="modal-actions">
         <button class="btn-primary-action" id="btn-modal-watch-ad">
@@ -117,6 +133,7 @@
   <div class="toast-msg" id="toast">Message</div>
 
   <!-- Scripts -->
+  <script src="/static/js/sound.js"></script>
   <script src="/static/js/telegram.js"></script>
   <script src="/static/js/api.js"></script>
   <script src="/static/js/ads.js"></script>

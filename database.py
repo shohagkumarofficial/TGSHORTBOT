@@ -1,3 +1,4 @@
+import os
 import aiosqlite
 import datetime
 from contextlib import asynccontextmanager
@@ -62,22 +63,36 @@ async def init_db():
 
         await db.commit()
 
-        # Seed initial settings if not present
+        # Seed initial settings
         default_settings = {
             "default_lives": "3",
-            "max_lives": "3",
+            "max_free_lives": "3",            # Cap for free auto-regen
             "regen_interval_minutes": "30",
-            "life_deduct_mode": "on_loss",  # 'on_loss' or 'on_start'
-            "active_ad_network": "both",    # 'adsgram', 'monetag', or 'both'
+            "life_deduct_mode": "on_loss",      # 'on_loss' or 'on_start'
+            "ad_selection_mode": "round_robin", # 'single' or 'round_robin'
+            "selected_ad_network": "adsgram",   # used when mode == 'single'
+            
+            # Ad Networks Individual Switches & Keys
+            "adsgram_enabled": "1",
             "adsgram_block_id": config.ADSGRAM_BLOCK_ID or "int-4166",
+            "monetag_enabled": "1",
             "monetag_zone_id": config.MONETAG_ZONE_ID or "",
+            "gigapub_enabled": "1" if config.GIGAPUB_PROJECT_ID else "0",
+            "gigapub_project_id": config.GIGAPUB_PROJECT_ID or "",
+            "adsterra_enabled": "1" if config.ADSTERRA_KEY else "0",
+            "adsterra_key": config.ADSTERRA_KEY or "",
             "ad_cooldown_seconds": "20",
+            
+            # 9 Games Switches
             "game_snake": "1",
             "game_2048": "1",
             "game_flappy": "1",
             "game_tictactoe": "1",
             "game_memory": "1",
-            "game_whack": "1"
+            "game_whack": "1",
+            "game_space": "1",
+            "game_racer": "1",
+            "game_breakout": "1"
         }
 
         for key, val in default_settings.items():
@@ -125,25 +140,26 @@ def parse_iso_datetime(dt_str: Optional[str]) -> datetime.datetime:
     except Exception:
         return datetime.datetime.now(datetime.timezone.utc)
 
-async def calculate_life_regen(user_row: aiosqlite.Row, max_lives: int, interval_minutes: int) -> Tuple[int, int, datetime.datetime]:
+async def calculate_life_regen(user_row: aiosqlite.Row, max_free_lives: int, interval_minutes: int) -> Tuple[int, int, datetime.datetime]:
+    """
+    Calculates regenerated lives.
+    Rule: Auto-regen ONLY fills up to max_free_lives (default: 3).
+    If user has >= max_free_lives (e.g. 5, 10 lives from watching ads), timer is stopped (0 seconds).
+    """
     current_lives = int(user_row["lives"])
     last_regen_at = parse_iso_datetime(user_row["last_regen_at"])
     now = datetime.datetime.now(datetime.timezone.utc)
     
-    if interval_minutes <= 0:
-        return current_lives, 0, last_regen_at
-
-    interval_seconds = interval_minutes * 60
-
-    if current_lives >= max_lives:
+    if interval_minutes <= 0 or current_lives >= max_free_lives:
         return current_lives, 0, now
 
+    interval_seconds = interval_minutes * 60
     elapsed_seconds = max(0, int((now - last_regen_at).total_seconds()))
     gained_lives = elapsed_seconds // interval_seconds
 
     if gained_lives > 0:
-        updated_lives = min(max_lives, current_lives + gained_lives)
-        if updated_lives >= max_lives:
+        updated_lives = min(max_free_lives, current_lives + gained_lives)
+        if updated_lives >= max_free_lives:
             new_last_regen = now
             seconds_until_next = 0
         else:
@@ -165,7 +181,7 @@ async def calculate_life_regen(user_row: aiosqlite.Row, max_lives: int, interval
 async def get_or_create_user(telegram_id: int, first_name: str = "", last_name: str = "", username: str = "") -> Dict[str, Any]:
     settings = await get_all_settings()
     default_lives = int(settings.get("default_lives", "3"))
-    max_lives = int(settings.get("max_lives", "3"))
+    max_free_lives = int(settings.get("max_free_lives", "3"))
     regen_interval = int(settings.get("regen_interval_minutes", "30"))
 
     now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
@@ -195,7 +211,7 @@ async def get_or_create_user(telegram_id: int, first_name: str = "", last_name: 
             )
             await db.commit()
 
-    lives, seconds_until_regen, last_regen_at = await calculate_life_regen(user, max_lives, regen_interval)
+    lives, seconds_until_regen, last_regen_at = await calculate_life_regen(user, max_free_lives, regen_interval)
 
     return {
         "telegram_id": user["telegram_id"],
@@ -203,7 +219,7 @@ async def get_or_create_user(telegram_id: int, first_name: str = "", last_name: 
         "last_name": user["last_name"],
         "username": user["username"],
         "lives": lives,
-        "max_lives": max_lives,
+        "max_free_lives": max_free_lives,
         "seconds_until_regen": seconds_until_regen,
         "regen_interval_minutes": regen_interval,
         "created_at": user["created_at"]
@@ -211,7 +227,7 @@ async def get_or_create_user(telegram_id: int, first_name: str = "", last_name: 
 
 async def deduct_life(telegram_id: int) -> Tuple[bool, int]:
     settings = await get_all_settings()
-    max_lives = int(settings.get("max_lives", "3"))
+    max_free_lives = int(settings.get("max_free_lives", "3"))
     now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     async with get_db() as db:
@@ -223,7 +239,8 @@ async def deduct_life(telegram_id: int) -> Tuple[bool, int]:
         current_lives = user["lives"]
         new_lives = current_lives - 1
 
-        if current_lives >= max_lives:
+        # If dropping below max_free_lives, start countdown clock from now
+        if current_lives == max_free_lives:
             await db.execute(
                 "UPDATE users SET lives = ?, last_regen_at = ? WHERE telegram_id = ?",
                 (new_lives, now_str, telegram_id)
@@ -237,10 +254,10 @@ async def deduct_life(telegram_id: int) -> Tuple[bool, int]:
         return True, new_lives
 
 async def add_life(telegram_id: int, count: int = 1) -> Tuple[bool, int]:
-    settings = await get_all_settings()
-    max_lives = int(settings.get("max_lives", "3"))
-    now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
+    """
+    Adds lives from watching Rewarded Ads.
+    Rule: Ads grant UNLIMITED stacked lives (no cap of 3)!
+    """
     async with get_db() as db:
         cursor = await db.execute("SELECT lives FROM users WHERE telegram_id = ?", (telegram_id,))
         user = await cursor.fetchone()
@@ -248,20 +265,12 @@ async def add_life(telegram_id: int, count: int = 1) -> Tuple[bool, int]:
             return False, 0
 
         current_lives = user["lives"]
-        if current_lives >= max_lives:
-            return False, current_lives
+        new_lives = current_lives + count
 
-        new_lives = min(max_lives, current_lives + count)
-        if new_lives >= max_lives:
-            await db.execute(
-                "UPDATE users SET lives = ?, last_regen_at = ? WHERE telegram_id = ?",
-                (new_lives, now_str, telegram_id)
-            )
-        else:
-            await db.execute(
-                "UPDATE users SET lives = ? WHERE telegram_id = ?",
-                (new_lives, telegram_id)
-            )
+        await db.execute(
+            "UPDATE users SET lives = ? WHERE telegram_id = ?",
+            (new_lives, telegram_id)
+        )
         await db.commit()
         return True, new_lives
 
@@ -270,15 +279,12 @@ async def add_life(telegram_id: int, count: int = 1) -> Tuple[bool, int]:
 async def can_claim_ad_reward(telegram_id: int) -> Tuple[bool, str, int]:
     settings = await get_all_settings()
     cooldown = int(settings.get("ad_cooldown_seconds", "20"))
-    max_lives = int(settings.get("max_lives", "3"))
 
     async with get_db() as db:
         u_cursor = await db.execute("SELECT lives FROM users WHERE telegram_id = ?", (telegram_id,))
         user = await u_cursor.fetchone()
         if not user:
             return False, "User not found", 0
-        if user["lives"] >= max_lives:
-            return False, "Max lives already reached", 0
 
         cursor = await db.execute(
             "SELECT created_at FROM ad_views WHERE telegram_id = ? ORDER BY id DESC LIMIT 1",
@@ -291,7 +297,7 @@ async def can_claim_ad_reward(telegram_id: int) -> Tuple[bool, str, int]:
             elapsed = int((now - last_time).total_seconds())
             if elapsed < cooldown:
                 remaining = cooldown - elapsed
-                return False, f"Please wait {remaining} seconds before watching another ad", remaining
+                return False, f"Please wait {remaining}s before claiming another ad", remaining
 
     return True, "OK", 0
 
@@ -314,7 +320,7 @@ async def record_game_session(telegram_id: int, game_id: str, score: int, result
         )
         await db.commit()
 
-async def get_leaderboard(game_id: Optional[str] = None, limit: int = 10) -> List[Dict[str, Any]]:
+async def get_leaderboard(game_id: Optional[str] = None, limit: int = 15) -> List[Dict[str, Any]]:
     async with get_db() as db:
         if game_id and game_id != "all":
             query = """
@@ -360,7 +366,7 @@ async def get_user_high_scores(telegram_id: int) -> Dict[str, int]:
         rows = await cursor.fetchall()
         return {row["game_id"]: row["high_score"] for row in rows}
 
-# --- Admin Statistics & Broadcast Helpers ---
+# --- Admin Statistics, Broadcast & Backup/Restore ---
 
 async def get_admin_stats() -> Dict[str, Any]:
     async with get_db() as db:
@@ -395,3 +401,66 @@ async def get_all_user_ids() -> List[int]:
         cursor = await db.execute("SELECT telegram_id FROM users")
         rows = await cursor.fetchall()
         return [row["telegram_id"] for row in rows]
+
+# --- Database Backup & Restore Engine ---
+
+async def export_database_bytes() -> bytes:
+    """
+    Safely reads SQLite database file for Telegram export.
+    """
+    # Flush SQLite WAL to disk
+    async with get_db() as db:
+        await db.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+
+    if os.path.exists(config.DATABASE_PATH):
+        with open(config.DATABASE_PATH, "rb") as f:
+            return f.read()
+    return b""
+
+async def restore_database_from_bytes(data: bytes) -> Tuple[bool, str]:
+    """
+    Safely restores database file from uploaded backup bytes.
+    """
+    if not data or len(data) < 100:
+        return False, "File is empty or corrupted."
+
+    # Verify SQLite header
+    if not data.startswith(b"SQLite format 3"):
+        return False, "Invalid SQLite database file format."
+
+    temp_path = f"{config.DATABASE_PATH}.restore_temp"
+    try:
+        with open(temp_path, "wb") as f:
+            f.write(data)
+
+        # Test integrity
+        test_conn = await aiosqlite.connect(temp_path)
+        cursor = await test_conn.execute("PRAGMA integrity_check;")
+        row = await cursor.fetchone()
+        await test_conn.close()
+
+        if not row or row[0] != "ok":
+            if os.path.exists(temp_path): os.remove(temp_path)
+            return False, f"Integrity check failed: {row[0] if row else 'unknown'}"
+
+        # Replace main database
+        if os.path.exists(config.DATABASE_PATH):
+            try:
+                os.remove(config.DATABASE_PATH)
+            except Exception:
+                pass
+
+        # Also remove old WAL/SHM
+        for ext in ["-wal", "-shm"]:
+            wal_file = f"{config.DATABASE_PATH}{ext}"
+            if os.path.exists(wal_file):
+                try: os.remove(wal_file)
+                except Exception: pass
+
+        os.replace(temp_path, config.DATABASE_PATH)
+        return True, "Database restored successfully."
+    except Exception as e:
+        if os.path.exists(temp_path):
+            try: os.remove(temp_path)
+            except Exception: pass
+        return False, str(e)

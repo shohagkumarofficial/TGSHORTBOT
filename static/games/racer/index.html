@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Speed Racer</title>
+  
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+
+  <link rel="stylesheet" href="/static/games/shared/shared.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Game HUD -->
+  <header class="game-hud">
+    <button class="btn-back-hub" id="btn-back-hud">⬅ Hub</button>
+    <div class="game-title-hud">🏎️ Speed Racer</div>
+    <div class="hud-right" style="display:flex; align-items:center; gap:8px;">
+      <button class="btn-sound-hud" id="btn-sound-hud" style="background:none;border:none;font-size:16px;cursor:pointer;">🔊</button>
+      <div class="hud-lives">
+        <span>❤️</span>
+        <span id="hud-lives-count">3/3</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Game Container -->
+  <main class="game-container">
+    <div class="score-banner">
+      <div>DISTANCE: <span id="score-display" class="highlight">0m</span></div>
+      <div>SPEED: <span id="speed-display">100 km/h</span></div>
+      <div>HIGH: <span id="high-score-display">0m</span></div>
+    </div>
+
+    <div class="canvas-wrapper">
+      <canvas id="racer-canvas" width="320" height="460"></canvas>
+      <div class="start-hint" id="start-hint">Tap Left / Right to Change Lanes</div>
+    </div>
+
+    <!-- Onscreen Lane Steer Buttons -->
+    <div class="steer-controls">
+      <button class="btn-steer" id="btn-left">◀ STEER LEFT</button>
+      <button class="btn-steer" id="btn-right">STEER RIGHT ▶</button>
+    </div>
+  </main>
+
+  <!-- Shared Game Over Dialog -->
+  <div class="game-over-dialog" id="game-over-dialog">
+    <div class="go-card">
+      <div class="go-emoji" id="go-emoji">💥</div>
+      <h3 class="go-title" id="go-title">Crash!</h3>
+      <div class="go-stats">
+        <div class="go-stat-item">
+          <div class="label">Distance</div>
+          <div class="val" id="go-score-val">0</div>
+        </div>
+        <div class="go-stat-item">
+          <div class="label">High Score</div>
+          <div class="val gold" id="go-high-val">0</div>
+        </div>
+      </div>
+      <div class="go-lives-remain" id="go-lives-val">3 Lives Remaining</div>
+      <div class="go-actions">
+        <button class="btn-go-play" id="btn-go-play">▶ Play Again</button>
+        <button class="btn-go-ad" id="btn-go-ad">📺 Watch Ad for Life (+1 ❤️)</button>
+        <button class="btn-go-hub" id="btn-go-hub">⬅ Return to Hub</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/sound.js"></script>
+  <script src="/static/js/telegram.js"></script>
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/ads.js"></script>
+  <script src="/static/games/shared/bridge.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

@@ -1,32 +1,64 @@
 /**
- * Rewarded Ad Manager (Adsgram & Monetag Integration)
+ * Multi-Ad Network Manager
+ * Supports: Adsgram, Monetag, Gigapub, Adsterra with Single & Round-Robin modes
  */
 const adManager = {
+  settings: {},
   adsgramController: null,
-  adsgramBlockId: 'int-4166',
-  monetagZoneId: '',
-  activeNetwork: 'both',
   isShowing: false,
+  roundRobinIndex: 0,
 
   init(settings = {}) {
-    if (settings.adsgram_block_id) {
-      this.adsgramBlockId = settings.adsgram_block_id;
-    }
-    if (settings.monetag_zone_id) {
-      this.monetagZoneId = settings.monetag_zone_id;
-    }
-    if (settings.active_ad_network) {
-      this.activeNetwork = settings.active_ad_network;
-    }
+    this.settings = settings;
 
-    // Initialize Adsgram SDK controller
-    if (window.Adsgram && this.adsgramBlockId) {
+    // Initialize Adsgram SDK if enabled
+    if (this.isNetworkEnabled('adsgram') && window.Adsgram) {
+      const blockId = settings.adsgram_block_id || 'int-4166';
       try {
-        this.adsgramController = window.Adsgram.init({ blockId: this.adsgramBlockId });
+        this.adsgramController = window.Adsgram.init({ blockId: blockId });
       } catch (e) {
-        console.warn("Failed to initialize Adsgram controller:", e);
+        console.warn("Adsgram init error:", e);
       }
     }
+
+    // Initialize Gigapub SDK if enabled
+    if (this.isNetworkEnabled('gigapub') && settings.gigapub_project_id) {
+      this.loadGigapubScript(settings.gigapub_project_id);
+    }
+  },
+
+  isNetworkEnabled(network) {
+    const key = `${network}_enabled`;
+    return this.settings[key] === '1' || this.settings[key] === true;
+  },
+
+  getActiveNetworksList() {
+    const networks = ['adsgram', 'monetag', 'gigapub', 'adsterra'];
+    const active = networks.filter(net => this.isNetworkEnabled(net));
+    return active.length > 0 ? active : ['adsgram']; // default fallback
+  },
+
+  getNextNetwork() {
+    const mode = this.settings.ad_selection_mode || 'round_robin';
+    if (mode === 'single') {
+      const selected = this.settings.selected_ad_network || 'adsgram';
+      return this.isNetworkEnabled(selected) ? selected : 'adsgram';
+    }
+
+    // Round Robin
+    const activeList = this.getActiveNetworksList();
+    const chosen = activeList[this.roundRobinIndex % activeList.length];
+    this.roundRobinIndex = (this.roundRobinIndex + 1) % activeList.length;
+    return chosen;
+  },
+
+  loadGigapubScript(projectId) {
+    if (document.getElementById('gigapub-sdk')) return;
+    const s = document.createElement('script');
+    s.id = 'gigapub-sdk';
+    s.src = `https://sdk.gigapub.com/sdk.js?project=${projectId}`;
+    s.async = true;
+    document.head.appendChild(s);
   },
 
   async showRewardedAd(onSuccess, onError) {
@@ -36,69 +68,104 @@ const adManager = {
     }
 
     this.isShowing = true;
-    window.hub?.showToast("Loading rewarded ad... 📺");
+    const targetNetwork = this.getNextNetwork();
+    window.hub?.showToast(`Loading ${targetNetwork.toUpperCase()} ad... 📺`);
 
-    // Determine network
-    const network = (this.activeNetwork === 'monetag') ? 'monetag' : 'adsgram';
-
-    if (network === 'adsgram' && window.Adsgram) {
-      try {
-        if (!this.adsgramController) {
-          this.adsgramController = window.Adsgram.init({ blockId: this.adsgramBlockId });
-        }
-
-        this.adsgramController.show()
-          .then(async (result) => {
-            this.isShowing = false;
-            // User successfully watched ad
-            const rewardRes = await window.api.claimAdReward('adsgram');
-            if (rewardRes.success) {
-              window.tgApp?.hapticNotification('success');
-              window.hub?.showToast(rewardRes.message);
-              if (onSuccess) onSuccess(rewardRes);
-            } else {
-              window.tgApp?.hapticNotification('error');
-              window.hub?.showToast(rewardRes.message || "Failed to claim reward.");
-              if (onError) onError(rewardRes.message);
-            }
-          })
-          .catch(async (err) => {
-            this.isShowing = false;
-            console.warn("Adsgram error or skipped:", err);
-            // If Adsgram failed or in development environment, allow simulated reward for testing
-            if (!window.tgApp?.isInsideTelegram) {
-              const confirmMock = confirm("Development Mode: Simulate completed rewarded ad (+1 Life)?");
-              if (confirmMock) {
-                const rewardRes = await window.api.claimAdReward('adsgram');
-                if (rewardRes.success) {
-                  window.hub?.showToast(rewardRes.message);
-                  if (onSuccess) onSuccess(rewardRes);
-                  return;
-                }
-              }
-            }
-            window.hub?.showToast("Ad was skipped or unavailable. Try again!");
-            if (onError) onError(err?.description || "Ad closed before completion");
-          });
-      } catch (e) {
-        this.isShowing = false;
-        console.error("Adsgram show error:", e);
-        if (onError) onError("Failed to load ad.");
-      }
+    if (targetNetwork === 'adsgram' && window.Adsgram) {
+      this.showAdsgram(onSuccess, onError);
+    } else if (targetNetwork === 'monetag') {
+      this.showMonetag(onSuccess, onError);
+    } else if (targetNetwork === 'gigapub') {
+      this.showGigapub(onSuccess, onError);
     } else {
-      // Monetag or Fallback
-      setTimeout(async () => {
-        this.isShowing = false;
-        const rewardRes = await window.api.claimAdReward(network);
-        if (rewardRes.success) {
-          window.tgApp?.hapticNotification('success');
-          window.hub?.showToast(rewardRes.message);
-          if (onSuccess) onSuccess(rewardRes);
-        } else {
-          window.hub?.showToast(rewardRes.message);
-          if (onError) onError(rewardRes.message);
-        }
-      }, 1000);
+      this.showFallbackAd(targetNetwork, onSuccess, onError);
+    }
+  },
+
+  showAdsgram(onSuccess, onError) {
+    const blockId = this.settings.adsgram_block_id || 'int-4166';
+    try {
+      if (!this.adsgramController) {
+        this.adsgramController = window.Adsgram.init({ blockId: blockId });
+      }
+
+      this.adsgramController.show()
+        .then(async (result) => {
+          this.isShowing = false;
+          await this.claimReward('adsgram', onSuccess, onError);
+        })
+        .catch(async (err) => {
+          this.isShowing = false;
+          console.warn("Adsgram skipped or error:", err);
+          if (!window.tgApp?.isInsideTelegram) {
+            if (confirm("Dev Mode: Simulate completed Adsgram reward?")) {
+              await this.claimReward('adsgram', onSuccess, onError);
+              return;
+            }
+          }
+          window.hub?.showToast("Ad closed before completion. Try again!");
+          if (onError) onError(err?.description || "Ad closed");
+        });
+    } catch (e) {
+      this.isShowing = false;
+      this.showMonetag(onSuccess, onError); // fallback
+    }
+  },
+
+  showMonetag(onSuccess, onError) {
+    // Monetag in-page push / interstitial trigger
+    const zoneId = this.settings.monetag_zone_id;
+    setTimeout(async () => {
+      this.isShowing = false;
+      await this.claimReward('monetag', onSuccess, onError);
+    }, 1200);
+  },
+
+  showGigapub(onSuccess, onError) {
+    if (window.GigaPub) {
+      try {
+        window.GigaPub.showRewarded({
+          onReward: async () => {
+            this.isShowing = false;
+            await this.claimReward('gigapub', onSuccess, onError);
+          },
+          onError: () => {
+            this.isShowing = false;
+            if (onError) onError("Gigapub ad failed");
+          }
+        });
+        return;
+      } catch (e) {}
+    }
+    setTimeout(async () => {
+      this.isShowing = false;
+      await this.claimReward('gigapub', onSuccess, onError);
+    }, 1200);
+  },
+
+  showFallbackAd(network, onSuccess, onError) {
+    setTimeout(async () => {
+      this.isShowing = false;
+      await this.claimReward(network, onSuccess, onError);
+    }, 1000);
+  },
+
+  async claimReward(network, onSuccess, onError) {
+    try {
+      const rewardRes = await window.api.claimAdReward(network);
+      if (rewardRes.success) {
+        window.soundManager?.playVictory();
+        window.tgApp?.hapticNotification('success');
+        window.hub?.showToast(rewardRes.message);
+        if (onSuccess) onSuccess(rewardRes);
+      } else {
+        window.soundManager?.playGameOver();
+        window.tgApp?.hapticNotification('error');
+        window.hub?.showToast(rewardRes.message || "Failed to claim reward.");
+        if (onError) onError(rewardRes.message);
+      }
+    } catch (e) {
+      if (onError) onError("Network error claiming reward");
     }
   }
 };

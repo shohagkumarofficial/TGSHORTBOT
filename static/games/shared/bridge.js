@@ -12,29 +12,50 @@ const gameBridge = {
 
     // Telegram back button
     window.tgApp?.showBackButton(() => {
+      window.soundManager?.playClick();
       this.returnToHub();
     });
 
     // Back to hub button in HUD
     const backBtn = document.getElementById('btn-back-hud');
     if (backBtn) {
-      backBtn.addEventListener('click', () => this.returnToHub());
+      backBtn.addEventListener('click', () => {
+        window.soundManager?.playClick();
+        this.returnToHub();
+      });
+    }
+
+    // Sound toggle button in HUD
+    const soundBtn = document.getElementById('btn-sound-hud');
+    if (soundBtn) {
+      soundBtn.addEventListener('click', () => {
+        window.soundManager?.toggleMute();
+      });
     }
 
     // Modal buttons
     const goHubBtn = document.getElementById('btn-go-hub');
     if (goHubBtn) {
-      goHubBtn.addEventListener('click', () => this.returnToHub());
+      goHubBtn.addEventListener('click', () => {
+        window.soundManager?.playClick();
+        this.returnToHub();
+      });
     }
 
     const goPlayBtn = document.getElementById('btn-go-play');
     if (goPlayBtn) {
-      goPlayBtn.addEventListener('click', () => this.handleRestart());
+      goPlayBtn.addEventListener('click', () => {
+        window.soundManager?.playClick();
+        this.handleRestart();
+      });
     }
 
     const goAdBtn = document.getElementById('btn-go-ad');
     if (goAdBtn) {
-      goAdBtn.addEventListener('click', () => this.handleWatchAdGameOver());
+      goAdBtn.addEventListener('click', () => {
+        window.soundManager?.playClick();
+        this.handleWatchAdGameOver();
+      });
     }
 
     // Fetch initial user state
@@ -54,7 +75,8 @@ const gameBridge = {
   updateLivesHUD() {
     const livesEl = document.getElementById('hud-lives-count');
     if (livesEl && this.user) {
-      livesEl.textContent = `${this.user.lives}/${this.user.max_lives}`;
+      const maxFree = this.user.max_free_lives || 3;
+      livesEl.textContent = `${this.user.lives}/${maxFree}`;
     }
   },
 
@@ -64,7 +86,14 @@ const gameBridge = {
 
   async reportGameOver(score, result = 'lost', onRestart = null) {
     this.onRestartCallback = onRestart;
-    window.tgApp?.hapticNotification(result === 'won' ? 'success' : 'error');
+    
+    if (result === 'won' || result === 'completed') {
+      window.soundManager?.playVictory();
+      window.tgApp?.hapticNotification('success');
+    } else {
+      window.soundManager?.playGameOver();
+      window.tgApp?.hapticNotification('error');
+    }
 
     let currentLives = this.user ? this.user.lives : 0;
     let high = this.highScore;
@@ -95,9 +124,9 @@ const gameBridge = {
     if (highVal) highVal.textContent = high;
     if (livesRemain) livesRemain.textContent = `${currentLives} Lives Remaining`;
 
-    if (result === 'won') {
+    if (result === 'won' || result === 'completed') {
       if (emojiEl) emojiEl.textContent = '🎉';
-      if (titleEl) titleEl.textContent = 'Victory!';
+      if (titleEl) titleEl.textContent = 'Awesome Game!';
     } else {
       if (emojiEl) emojiEl.textContent = '💀';
       if (titleEl) titleEl.textContent = 'Game Over';
@@ -117,7 +146,6 @@ const gameBridge = {
   async handleRestart() {
     const dialog = document.getElementById('game-over-dialog');
     
-    // Check lives & start game session
     const startRes = await window.api.startGame(this.gameId);
     if (!startRes.success) {
       if (startRes.error === 'no_lives') {
@@ -153,7 +181,7 @@ const gameBridge = {
         this.handleRestart();
       },
       (err) => {
-        console.warn("Ad skipped or failed in game over modal:", err);
+        console.warn("Ad skipped in game over:", err);
       }
     );
   }

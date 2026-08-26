@@ -1,7 +1,7 @@
 import os
 from dotenv import load_dotenv
 
-# Load .env if present (for local development)
+# Load .env if present
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -14,19 +14,26 @@ except ValueError:
 
 WEBAPP_BASE_URL = os.getenv("WEBAPP_BASE_URL", "").strip().rstrip("/")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
+
+# Ad Network Environment Variables
 ADSGRAM_BLOCK_ID = os.getenv("ADSGRAM_BLOCK_ID", "").strip()
 MONETAG_ZONE_ID = os.getenv("MONETAG_ZONE_ID", "").strip()
+GIGAPUB_PROJECT_ID = os.getenv("GIGAPUB_PROJECT_ID", "").strip()
+ADSTERRA_KEY = os.getenv("ADSTERRA_KEY", "").strip()
 
 PORT = int(os.getenv("PORT", "8000"))
 HOST = os.getenv("HOST", "0.0.0.0")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "game_bot.db")
 
-# Default Game Configuration Constants
+# Default Game Configuration Constants (9 Games Total)
 DEFAULT_GAMES = [
     {"id": "snake", "name": "🐍 Snake Classic", "enabled": True},
     {"id": "2048", "name": "🔢 2048 Puzzle", "enabled": True},
     {"id": "flappy", "name": "🕊️ Flappy Bird", "enabled": True},
     {"id": "tictactoe", "name": "❌ Tic Tac Toe (AI)", "enabled": True},
     {"id": "memory", "name": "🧠 Memory Match", "enabled": True},
-    {"id": "whack", "name": "🔨 Whack-a-Mole", "enabled": True}
+    {"id": "whack", "name": "🔨 Whack-a-Mole", "enabled": True},
+    {"id": "space", "name": "🚀 Space Shooter", "enabled": True},
+    {"id": "racer", "name": "🏎️ Speed Racer", "enabled": True},
+    {"id": "breakout", "name": "🧱 Neon Breakout", "enabled": True}
 ]

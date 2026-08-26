@@ -1,7 +1,7 @@
 :root {
   --bg-primary: #0a0e17;
   --bg-secondary: #121826;
-  --bg-card: rgba(26, 34, 52, 0.7);
+  --bg-card: rgba(26, 34, 52, 0.75);
   --border-color: rgba(255, 255, 255, 0.08);
   --accent-cyan: #00f2fe;
   --accent-blue: #4facfe;
@@ -30,8 +30,8 @@
 body {
   background-color: var(--bg-primary);
   background-image: 
-    radial-gradient(at 0% 0%, rgba(79, 172, 254, 0.12) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(121, 40, 202, 0.12) 0px, transparent 50%);
+    radial-gradient(at 0% 0%, rgba(79, 172, 254, 0.15) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(121, 40, 202, 0.15) 0px, transparent 50%);
   color: var(--text-main);
   font-family: var(--font-family);
   min-height: 100vh;
@@ -43,13 +43,13 @@ body {
 
 /* Header & Profile */
 .app-header {
-  padding: 16px 18px 12px;
+  padding: 14px 18px 12px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid var(--border-color);
   background: rgba(10, 14, 23, 0.85);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(14px);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -69,9 +69,9 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
+  font-weight: 800;
   font-size: 18px;
-  box-shadow: 0 0 12px rgba(79, 172, 254, 0.35);
+  box-shadow: 0 0 14px rgba(79, 172, 254, 0.4);
 }
 
 .user-meta .username {
@@ -85,6 +85,31 @@ body {
   color: var(--accent-cyan);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Sound Toggle Button */
+.btn-sound-toggle {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+
+.btn-sound-toggle:active {
+  transform: scale(0.9);
 }
 
 /* Lives Box */
@@ -111,9 +136,18 @@ body {
 }
 
 .heart-icon {
-  font-size: 16px;
-  color: var(--accent-red);
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   animation: pulse 1.8s infinite;
+}
+
+.heart-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: var(--accent-red);
 }
 
 .lives-count {
@@ -131,14 +165,14 @@ body {
 /* Ad Refill Banner */
 .ad-refill-banner {
   margin: 16px;
-  background: linear-gradient(135deg, rgba(79, 172, 254, 0.15), rgba(121, 40, 202, 0.15));
-  border: 1px solid rgba(79, 172, 254, 0.3);
+  background: linear-gradient(135deg, rgba(79, 172, 254, 0.18), rgba(121, 40, 202, 0.18));
+  border: 1px solid rgba(79, 172, 254, 0.35);
   border-radius: var(--radius-md);
   padding: 14px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25);
 }
 
 .refill-left {
@@ -148,14 +182,14 @@ body {
 }
 
 .refill-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
   background: rgba(0, 242, 254, 0.15);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 22px;
 }
 
 .refill-text h4 {
@@ -196,7 +230,7 @@ body {
   left: 0;
   right: 0;
   height: 65px;
-  background: rgba(18, 24, 38, 0.95);
+  background: rgba(18, 24, 38, 0.96);
   backdrop-filter: blur(16px);
   border-top: 1px solid var(--border-color);
   display: flex;
@@ -223,7 +257,17 @@ body {
 }
 
 .tab-item .tab-icon {
-  font-size: 20px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tab-item .tab-icon svg {
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
 }
 
 /* Sections */
@@ -288,9 +332,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 32px;
+  font-size: 30px;
   margin-bottom: 12px;
   box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.game-card-icon svg {
+  width: 32px;
+  height: 32px;
+  fill: #fff;
 }
 
 /* Custom icon gradients */
@@ -300,9 +350,12 @@ body {
 .icon-tictactoe { background: linear-gradient(135deg, #f857a6, #ff5858); }
 .icon-memory { background: linear-gradient(135deg, #a18cd1, #fbc2eb); }
 .icon-whack { background: linear-gradient(135deg, #f12711, #f5af19); }
+.icon-space { background: linear-gradient(135deg, #8a2387, #e94057, #f27121); }
+.icon-racer { background: linear-gradient(135deg, #00b09b, #96c93d); }
+.icon-breakout { background: linear-gradient(135deg, #4e54c8, #8f94fb); }
 
 .game-card-title {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text-main);
   margin-bottom: 4px;
@@ -494,7 +547,6 @@ body {
   transform: translateX(-50%) translateY(0);
 }
 
-/* Animations */
 @keyframes pulse {
   0% { transform: scale(1); }
   50% { transform: scale(1.15); }

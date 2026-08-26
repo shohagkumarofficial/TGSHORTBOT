@@ -17,13 +17,9 @@ class GameEndRequest(BaseModel):
     result: str = "completed"  # 'won', 'lost', 'game_over', 'completed'
 
 class AdRewardRequest(BaseModel):
-    network: str = "adsgram"  # 'adsgram' or 'monetag'
+    network: str = "adsgram"  # 'adsgram', 'monetag', 'gigapub', 'adsterra'
 
 def get_authenticated_user(request: Request, x_telegram_init_data: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Extracts and validates user from X-Telegram-Init-Data header or query parameter.
-    Falls back to mock user in local development if no initData is provided.
-    """
     init_data = x_telegram_init_data or request.query_params.get("initData") or ""
     
     if init_data:
@@ -31,7 +27,7 @@ def get_authenticated_user(request: Request, x_telegram_init_data: Optional[str]
         if user and "id" in user:
             return user
 
-    # Fallback for browser preview / local dev testing when not opened inside Telegram
+    # Fallback for browser preview / local dev testing
     dev_user_id = request.query_params.get("dev_user_id")
     if dev_user_id:
         try:
@@ -40,7 +36,6 @@ def get_authenticated_user(request: Request, x_telegram_init_data: Optional[str]
         except ValueError:
             pass
 
-    # If in local testing without headers, give a default test player
     if not config.BOT_TOKEN or config.HOST == "127.0.0.1":
         return {"id": 99999999, "first_name": "Demo Player", "username": "demo_player"}
 
@@ -65,7 +60,7 @@ async def get_user_info(
     high_scores = await database.get_user_high_scores(telegram_id)
     settings = await database.get_all_settings()
 
-    # Build active games list
+    # Build active 9 games list
     games = []
     for g in config.DEFAULT_GAMES:
         game_key = f"game_{g['id']}"
@@ -84,12 +79,19 @@ async def get_user_info(
         "games": games,
         "settings": {
             "life_deduct_mode": settings.get("life_deduct_mode", "on_loss"),
-            "active_ad_network": settings.get("active_ad_network", "both"),
+            "ad_selection_mode": settings.get("ad_selection_mode", "round_robin"),
+            "selected_ad_network": settings.get("selected_ad_network", "adsgram"),
+            "adsgram_enabled": settings.get("adsgram_enabled", "1"),
             "adsgram_block_id": settings.get("adsgram_block_id", config.ADSGRAM_BLOCK_ID),
+            "monetag_enabled": settings.get("monetag_enabled", "1"),
             "monetag_zone_id": settings.get("monetag_zone_id", config.MONETAG_ZONE_ID),
+            "gigapub_enabled": settings.get("gigapub_enabled", "0"),
+            "gigapub_project_id": settings.get("gigapub_project_id", config.GIGAPUB_PROJECT_ID),
+            "adsterra_enabled": settings.get("adsterra_enabled", "0"),
+            "adsterra_key": settings.get("adsterra_key", config.ADSTERRA_KEY),
             "ad_cooldown_seconds": int(settings.get("ad_cooldown_seconds", "20")),
             "regen_interval_minutes": int(settings.get("regen_interval_minutes", "30")),
-            "max_lives": int(settings.get("max_lives", "3"))
+            "max_free_lives": int(settings.get("max_free_lives", "3"))
         }
     }
 
@@ -113,7 +115,7 @@ async def start_game(
         return {
             "success": False,
             "error": "no_lives",
-            "message": "Out of lives! Watch an ad to get 1 free life ❤️.",
+            "message": "Out of lives! Watch a short ad to get +1 life ❤️.",
             "lives": 0,
             "seconds_until_regen": user["seconds_until_regen"]
         }
@@ -142,24 +144,21 @@ async def end_game(
     user_data = get_authenticated_user(request, x_telegram_init_data)
     telegram_id = int(user_data["id"])
 
-    # Record the game session
     await database.record_game_session(telegram_id, payload.game_id, payload.score, payload.result)
 
     settings = await database.get_all_settings()
     life_deduct_mode = settings.get("life_deduct_mode", "on_loss")
 
-    # If life_deduct_mode is 'on_loss' and game ended in loss/game_over
     if life_deduct_mode == "on_loss" and payload.result in ["lost", "game_over"]:
         await database.deduct_life(telegram_id)
 
-    # Fetch updated user info
     user = await database.get_or_create_user(telegram_id, user_data.get("first_name", ""), user_data.get("last_name", ""), user_data.get("username", ""))
     high_scores = await database.get_user_high_scores(telegram_id)
 
     return {
         "success": True,
         "lives": user["lives"],
-        "max_lives": user["max_lives"],
+        "max_free_lives": user["max_free_lives"],
         "seconds_until_regen": user["seconds_until_regen"],
         "high_score": high_scores.get(payload.game_id, payload.score)
     }
@@ -173,7 +172,6 @@ async def claim_ad_reward(
     user_data = get_authenticated_user(request, x_telegram_init_data)
     telegram_id = int(user_data["id"])
 
-    # Check eligibility & cooldown
     can_claim, reason, cooldown_remaining = await database.can_claim_ad_reward(telegram_id)
     if not can_claim:
         return {
@@ -182,22 +180,19 @@ async def claim_ad_reward(
             "cooldown_remaining": cooldown_remaining
         }
 
-    # Grant life
+    # Grant unlimited stacked life
     success, new_lives = await database.add_life(telegram_id, 1)
     if not success:
-        return {"success": False, "message": "Could not add life. You might already have max lives."}
+        return {"success": False, "message": "Could not add life."}
 
-    # Record ad view
     await database.record_ad_view(telegram_id, payload.network)
-    
-    # Get updated user info
     user = await database.get_or_create_user(telegram_id, user_data.get("first_name", ""), user_data.get("last_name", ""), user_data.get("username", ""))
 
     return {
         "success": True,
-        "message": "🎉 Ad rewarded! +1 Life added to your account ❤️",
+        "message": f"🎉 +1 Life Added via {payload.network.upper()}! (Total: {new_lives} ❤️)",
         "lives": user["lives"],
-        "max_lives": user["max_lives"],
+        "max_free_lives": user["max_free_lives"],
         "seconds_until_regen": user["seconds_until_regen"]
     }
 

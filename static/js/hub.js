@@ -1,5 +1,5 @@
 /**
- * Game Hub Application Controller
+ * Game Hub Application Controller (9 Games with SVGs & Sound Engine)
  */
 const hub = {
   user: null,
@@ -14,24 +14,38 @@ const hub = {
   },
 
   setupEventListeners() {
-    // Tab items
+    // Tab switching
     document.querySelectorAll('.tab-item').forEach(tab => {
       tab.addEventListener('click', () => {
+        window.soundManager?.playClick();
         window.tgApp?.hapticSelection();
         this.switchTab(tab.dataset.tab);
       });
     });
 
-    // Refill ad button in banner
+    // Sound toggle button
+    const soundBtn = document.getElementById('btn-sound-toggle');
+    if (soundBtn) {
+      soundBtn.addEventListener('click', () => {
+        const isMuted = window.soundManager?.toggleMute();
+        this.showToast(isMuted ? "Sound Muted 🔇" : "Sound Enabled 🔊");
+      });
+    }
+
+    // Refill ad button
     const btnRefill = document.getElementById('btn-refill-ad');
     if (btnRefill) {
-      btnRefill.addEventListener('click', () => this.handleWatchAd());
+      btnRefill.addEventListener('click', () => {
+        window.soundManager?.playClick();
+        this.handleWatchAd();
+      });
     }
 
     // Modal watch ad button
     const btnModalAd = document.getElementById('btn-modal-watch-ad');
     if (btnModalAd) {
       btnModalAd.addEventListener('click', () => {
+        window.soundManager?.playClick();
         this.closeModal();
         this.handleWatchAd();
       });
@@ -40,18 +54,18 @@ const hub = {
     // Modal close button
     const btnModalClose = document.getElementById('btn-modal-close');
     if (btnModalClose) {
-      btnModalClose.addEventListener('click', () => this.closeModal());
+      btnModalClose.addEventListener('click', () => {
+        window.soundManager?.playClick();
+        this.closeModal();
+      });
     }
 
     // Lives badge click
     const livesBadge = document.querySelector('.lives-badge');
     if (livesBadge) {
       livesBadge.addEventListener('click', () => {
-        if (this.user && this.user.lives < this.user.max_lives) {
-          this.handleWatchAd();
-        } else {
-          this.showToast("Your lives are currently FULL! ❤️");
-        }
+        window.soundManager?.playClick();
+        this.handleWatchAd();
       });
     }
   },
@@ -65,7 +79,6 @@ const hub = {
         this.settings = data.settings || {};
         this.secondsUntilRegen = this.user.seconds_until_regen || 0;
 
-        // Init ads
         window.adManager.init(this.settings);
 
         this.renderUser();
@@ -74,30 +87,28 @@ const hub = {
       }
     } catch (e) {
       console.error("Failed to load hub data:", e);
-      this.showToast("Failed to connect to game server.");
+      this.showToast("Failed to connect to server.");
     }
   },
 
   renderUser() {
     if (!this.user) return;
 
-    // Avatar Initial
     const avatarEl = document.getElementById('user-avatar');
     if (avatarEl) {
       const initial = (this.user.first_name || this.user.username || 'P')[0].toUpperCase();
       avatarEl.textContent = initial;
     }
 
-    // Username
     const usernameEl = document.getElementById('user-name');
     if (usernameEl) {
       usernameEl.textContent = this.user.first_name || this.user.username || 'Player';
     }
 
-    // Lives
     const livesCountEl = document.getElementById('lives-count');
     if (livesCountEl) {
-      livesCountEl.textContent = `${this.user.lives}/${this.user.max_lives}`;
+      const maxFree = this.user.max_free_lives || 3;
+      livesCountEl.textContent = `${this.user.lives}/${maxFree}`;
     }
 
     this.updateRegenTimerUI();
@@ -107,12 +118,12 @@ const hub = {
     if (this.regenTimerInterval) clearInterval(this.regenTimerInterval);
 
     this.regenTimerInterval = setInterval(() => {
-      if (this.user && this.user.lives < this.user.max_lives) {
+      const maxFree = this.user ? (this.user.max_free_lives || 3) : 3;
+      if (this.user && this.user.lives < maxFree) {
         if (this.secondsUntilRegen > 0) {
           this.secondsUntilRegen--;
           this.updateRegenTimerUI();
         } else {
-          // Time expired, refresh user data
           this.loadData();
         }
       } else {
@@ -125,8 +136,9 @@ const hub = {
     const timerEl = document.getElementById('regen-timer');
     if (!timerEl) return;
 
-    if (!this.user || this.user.lives >= this.user.max_lives) {
-      timerEl.textContent = 'Full ❤️';
+    const maxFree = this.user ? (this.user.max_free_lives || 3) : 3;
+    if (!this.user || this.user.lives >= maxFree) {
+      timerEl.textContent = this.user && this.user.lives > maxFree ? `Boosted (${this.user.lives} ❤️)` : 'Full ❤️';
       timerEl.style.color = 'var(--accent-green)';
     } else {
       const minutes = Math.floor(this.secondsUntilRegen / 60);
@@ -148,16 +160,22 @@ const hub = {
       flappy: 'icon-flappy',
       tictactoe: 'icon-tictactoe',
       memory: 'icon-memory',
-      whack: 'icon-whack'
+      whack: 'icon-whack',
+      space: 'icon-space',
+      racer: 'icon-racer',
+      breakout: 'icon-breakout'
     };
 
-    const emojis = {
-      snake: '🐍',
-      '2048': '🔢',
-      flappy: '🕊️',
-      tictactoe: '❌',
-      memory: '🧠',
-      whack: '🔨'
+    const svgs = {
+      snake: '<svg viewBox="0 0 24 24"><path d="M7 2a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h4v2H7a4 4 0 0 0-4 4v4a4 4 0 0 0 4 4h10a4 4 0 0 0 4-4v-4a4 4 0 0 0-4-4h-4V8h4a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H7zm11 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4z"/></svg>',
+      '2048': '<svg viewBox="0 0 24 24"><path d="M3 3v18h18V3H3zm16 16H5V5h14v14zM7 7h4v2H7V7zm6 0h4v6h-4V7zm-6 4h4v6H7v-6zm6 4h4v2h-4v-2z"/></svg>',
+      flappy: '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 14h-2v-2h2v2zm0-4h-2V7h2v5z"/></svg>',
+      tictactoe: '<svg viewBox="0 0 24 24"><path d="M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm-9 14H6v-4h4v4zm0-6H6V7h4v4zm6 6h-4v-4h4v4zm0-6h-4V7h4v4z"/></svg>',
+      memory: '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6zm3 3h6v6H9V9z"/></svg>',
+      whack: '<svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8zm-1-5h2v2h-2zm0-8h2v6h-2z"/></svg>',
+      space: '<svg viewBox="0 0 24 24"><path d="M12 2.5L7 8l2.5 1.5L12 6l2.5 3.5L17 8l-5-5.5zM6 10l-3 4 3 2 1.5-2L6 10zm12 0l-1.5 4 1.5 2 3-2-3-4zM12 9l-3 7h2v5h2v-5h2L12 9z"/></svg>',
+      racer: '<svg viewBox="0 0 24 24"><path d="M18.92 6.01C18.72 5.42 18.16 5 17.5 5h-11c-.66 0-1.21.42-1.42 1.01L3 12v8c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h12v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-8l-2.08-5.99zM6.5 16c-.83 0-1.5-.67-1.5-1.5S5.67 13 6.5 13s1.5.67 1.5 1.5S7.33 16 6.5 16zm11 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM5 11l1.5-4.5h11L19 11H5z"/></svg>',
+      breakout: '<svg viewBox="0 0 24 24"><path d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm0 4h-4V6h4v2zm-6 0H9V6h4v2zm-6 0H5V6h2v2zm-2 4h4v2H5v-2zm6 0h4v2h-4v-2zm6 0h2v2h-2v-2zM5 18v-2h14v2H5z"/></svg>'
     };
 
     this.games.forEach(g => {
@@ -165,7 +183,7 @@ const hub = {
       card.className = `game-card ${g.enabled ? '' : 'disabled'}`;
       card.innerHTML = `
         <div class="game-card-icon ${iconClasses[g.id] || ''}">
-          ${emojis[g.id] || '🎮'}
+          ${svgs[g.id] || '🎮'}
         </div>
         <div class="game-card-title">${g.name.replace(/^[^\s]+\s/, '')}</div>
         <div class="game-card-score">Best: <span>${g.high_score || 0}</span></div>
@@ -175,7 +193,10 @@ const hub = {
       `;
 
       if (g.enabled) {
-        card.addEventListener('click', () => this.launchGame(g.id));
+        card.addEventListener('click', () => {
+          window.soundManager?.playClick();
+          this.launchGame(g.id);
+        });
       }
       container.appendChild(card);
     });
@@ -189,7 +210,6 @@ const hub = {
       return;
     }
 
-    // Call start game API
     const startRes = await window.api.startGame(gameId);
     if (!startRes.success) {
       if (startRes.error === 'no_lives') {
@@ -200,13 +220,11 @@ const hub = {
       return;
     }
 
-    // Update local lives if deducted on start
     if (startRes.lives !== undefined) {
       this.user.lives = startRes.lives;
       this.renderUser();
     }
 
-    // Navigate to game view
     window.location.href = `/static/games/${gameId}/index.html`;
   },
 
@@ -214,7 +232,6 @@ const hub = {
     window.tgApp?.hapticImpact('medium');
     window.adManager.showRewardedAd(
       (rewardRes) => {
-        // Success
         if (rewardRes.lives !== undefined) {
           this.user.lives = rewardRes.lives;
           this.secondsUntilRegen = rewardRes.seconds_until_regen || 0;
@@ -222,13 +239,13 @@ const hub = {
         }
       },
       (errorMsg) => {
-        // Error / skipped
         if (errorMsg) this.showToast(errorMsg);
       }
     );
   },
 
   showNoLivesModal() {
+    window.soundManager?.playGameOver();
     window.tgApp?.hapticNotification('warning');
     const modal = document.getElementById('no-lives-modal');
     if (modal) modal.classList.add('active');

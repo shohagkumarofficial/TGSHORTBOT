@@ -1,0 +1,47 @@
+.score-banner {
+  display: flex;
+  justify-content: space-between;
+  width: 320px;
+  max-width: 95%;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.score-banner .highlight {
+  color: var(--accent-cyan);
+  font-size: 15px;
+}
+
+.canvas-wrapper {
+  position: relative;
+  background: #090e1a;
+  border: 2px solid rgba(78, 84, 200, 0.4);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.7);
+}
+
+#breakout-canvas {
+  display: block;
+  touch-action: none;
+  cursor: ew-resize;
+}
+
+.start-hint {
+  position: absolute;
+  top: 65%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.75);
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  border: 1px solid var(--accent-cyan);
+  pointer-events: none;
+  animation: pulse 1.5s infinite;
+  white-space: nowrap;
+}
