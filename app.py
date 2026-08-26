@@ -1,0 +1,103 @@
+import os
+import logging
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, Response
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from aiogram.types import Update
+
+import config
+import database
+from api.routes import router as api_router
+from bot.bot_instance import get_bot, dp
+from bot.handlers import router as bot_handlers_router
+from bot.admin import router as admin_router
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Wire bot routers
+dp.include_router(bot_handlers_router)
+dp.include_router(admin_router)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 1. Initialize Database Tables and Seeds
+    logger.info("Initializing SQLite database...")
+    await database.init_db()
+    logger.info("Database initialized successfully.")
+
+    # 2. Configure Telegram Webhook
+    if config.BOT_TOKEN and config.WEBHOOK_URL:
+        bot = get_bot()
+        webhook_endpoint = f"{config.WEBHOOK_URL}/webhook"
+        try:
+            logger.info(f"Setting Telegram Webhook to: {webhook_endpoint}")
+            await bot.set_webhook(
+                url=webhook_endpoint,
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query"]
+            )
+            webhook_info = await bot.get_webhook_info()
+            logger.info(f"Webhook configured. Pending updates: {webhook_info.pending_update_count}")
+        except Exception as e:
+            logger.error(f"Failed to set Telegram webhook: {e}")
+    else:
+        logger.warning("BOT_TOKEN or WEBHOOK_URL not set; Telegram webhook not registered on startup.")
+
+    yield
+
+    # Teardown logic
+    if config.BOT_TOKEN:
+        try:
+            bot = get_bot()
+            await bot.session.close()
+        except Exception:
+            pass
+
+app = FastAPI(title="Telegram Game Bot & Mini App", lifespan=lifespan)
+
+# Allow CORS for Mini App iframe and webview requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register API Router
+app.include_router(api_router)
+
+# Webhook endpoint for Telegram updates
+@app.post("/webhook")
+async def telegram_webhook(request: Request):
+    if not config.BOT_TOKEN:
+        return JSONResponse({"status": "error", "message": "BOT_TOKEN not configured"}, status_code=400)
+    
+    try:
+        data = await request.json()
+        bot = get_bot()
+        update = Update.model_validate(data, context={"bot": bot})
+        await dp.feed_update(bot, update)
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"Error processing Telegram update: {e}", exc_info=True)
+        return {"ok": False, "error": str(e)}
+
+# Serve Static files for Mini App & Games
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.get("/")
+async def serve_home():
+    index_file = os.path.join(static_dir, "index.html")
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+    return {"message": "Telegram Mini App Game Bot API is running!"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host=config.HOST, port=config.PORT, reload=True)

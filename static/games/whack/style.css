@@ -1,0 +1,92 @@
+.score-banner {
+  display: flex;
+  justify-content: space-between;
+  width: 320px;
+  max-width: 95%;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 16px;
+}
+
+.score-banner .highlight {
+  color: var(--accent-gold);
+  font-size: 16px;
+}
+
+.score-banner .combo {
+  color: var(--accent-red);
+  font-size: 16px;
+}
+
+.whack-board {
+  width: 320px;
+  height: 320px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  background: #141b2d;
+  border: 2px solid rgba(241, 39, 17, 0.4);
+  border-radius: 16px;
+  padding: 12px;
+  box-shadow: 0 4px 25px rgba(0, 0, 0, 0.5);
+  position: relative;
+}
+
+.hole {
+  background: #0d131f;
+  border: 2px solid rgba(255, 255, 255, 0.1);
+  border-radius: 50%;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  box-shadow: inset 0 6px 12px rgba(0, 0, 0, 0.8);
+}
+
+.mole {
+  font-size: 44px;
+  position: absolute;
+  bottom: -60px;
+  transition: bottom 0.15s ease-out;
+  cursor: pointer;
+  user-select: none;
+}
+
+.hole.up .mole {
+  bottom: 6px;
+}
+
+.hole.hit .mole {
+  transform: scale(0.85);
+  filter: brightness(1.5);
+}
+
+/* Start Overlay */
+.start-whack-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(10, 14, 23, 0.8);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+
+.btn-start-whack {
+  background: linear-gradient(135deg, #f12711, #f5af19);
+  color: #fff;
+  border: none;
+  border-radius: 30px;
+  padding: 14px 28px;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(241, 39, 17, 0.5);
+  animation: pulse 1.5s infinite;
+}

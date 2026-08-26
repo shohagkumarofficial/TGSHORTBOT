@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Telegram Arcade Game Hub</title>
+  
+  <!-- Telegram Web App SDK -->
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  
+  <!-- Adsgram SDK for Rewarded Video Ads -->
+  <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- Top App Header -->
+  <header class="app-header">
+    <div class="user-info">
+      <div class="user-avatar" id="user-avatar">P</div>
+      <div class="user-meta">
+        <div class="username" id="user-name">Player</div>
+        <div class="user-rank">Arcade Gamer</div>
+      </div>
+    </div>
+
+    <div class="lives-badge-container">
+      <div class="lives-badge" title="Tap to refill lives">
+        <span class="heart-icon">❤️</span>
+        <span class="lives-count" id="lives-count">3/3</span>
+      </div>
+      <div class="regen-timer" id="regen-timer">Full ❤️</div>
+    </div>
+  </header>
+
+  <!-- Tab 1: Games Hub -->
+  <section class="tab-content active" id="tab-games">
+    <!-- Ad Refill Banner -->
+    <div class="ad-refill-banner">
+      <div class="refill-left">
+        <div class="refill-icon">📺</div>
+        <div class="refill-text">
+          <h4>Need More Lives?</h4>
+          <p>Watch a short ad for +1 ❤️ Life</p>
+        </div>
+      </div>
+      <button class="btn-watch-ad" id="btn-refill-ad">
+        <span>+1 ❤️</span> WATCH
+      </button>
+    </div>
+
+    <h2 class="section-title">🕹️ Arcade Games</h2>
+    <div class="games-grid" id="games-grid">
+      <!-- Dynamically rendered via hub.js -->
+    </div>
+  </section>
+
+  <!-- Tab 2: Leaderboard -->
+  <section class="tab-content" id="tab-leaderboard">
+    <h2 class="section-title">🏆 Top Champions</h2>
+    <div class="leaderboard-list" id="leaderboard-list">
+      <!-- Dynamically rendered via hub.js -->
+    </div>
+  </section>
+
+  <!-- Tab 3: Rules & Info -->
+  <section class="tab-content" id="tab-rules">
+    <h2 class="section-title">📜 How It Works</h2>
+    <div class="leaderboard-list" style="padding: 18px; line-height: 1.6; font-size: 13px;">
+      <p>❤️ <b>Life System:</b> You start with 3 lives. Every time you lose or play, 1 life is consumed.</p>
+      <br>
+      <p>📺 <b>Refill with Ads:</b> Whenever you are low on lives, tap the <b>WATCH</b> button to view a sponsor ad and immediately claim <b>+1 ❤️ Life</b>.</p>
+      <br>
+      <p>⏳ <b>Automatic Regeneration:</b> When below maximum capacity, your energy automatically regenerates 1 life over time.</p>
+      <br>
+      <p>🛡️ <b>Fair Play:</b> All scores and ad verification are verified server-side with anti-cheat protection.</p>
+    </div>
+  </section>
+
+  <!-- Bottom Navigation Bar -->
+  <nav class="view-tabs">
+    <div class="tab-item active" data-tab="games">
+      <span class="tab-icon">🎮</span>
+      <span>Games</span>
+    </div>
+    <div class="tab-item" data-tab="leaderboard">
+      <span class="tab-icon">🏆</span>
+      <span>Rankings</span>
+    </div>
+    <div class="tab-item" data-tab="rules">
+      <span class="tab-icon">ℹ️</span>
+      <span>Rules</span>
+    </div>
+  </nav>
+
+  <!-- Out of Lives Modal -->
+  <div class="modal-overlay" id="no-lives-modal">
+    <div class="modal-card">
+      <div class="modal-icon">💔</div>
+      <h3 class="modal-title">Out of Lives!</h3>
+      <p class="modal-desc">
+        You don't have enough lives to start this game. Watch a short video ad to get <b>+1 ❤️ Life</b> immediately!
+      </p>
+      <div class="modal-actions">
+        <button class="btn-primary-action" id="btn-modal-watch-ad">
+          📺 Watch Ad (+1 ❤️)
+        </button>
+        <button class="btn-secondary-action" id="btn-modal-close">
+          Later
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast-msg" id="toast">Message</div>
+
+  <!-- Scripts -->
+  <script src="/static/js/telegram.js"></script>
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/ads.js"></script>
+  <script src="/static/js/hub.js"></script>
+</body>
+</html>

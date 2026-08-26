@@ -1,0 +1,208 @@
+:root {
+  --bg-primary: #0a0e17;
+  --bg-secondary: #121826;
+  --accent-cyan: #00f2fe;
+  --accent-blue: #4facfe;
+  --accent-purple: #7928ca;
+  --accent-red: #ff4757;
+  --accent-gold: #ffd700;
+  --text-main: #f1f2f6;
+  --text-muted: #8b9bb4;
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Game Header HUD */
+.game-hud {
+  padding: 12px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(10, 14, 23, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  z-index: 100;
+}
+
+.btn-back-hub {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.game-title-hud {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+}
+
+.hud-lives {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 71, 87, 0.15);
+  border: 1px solid rgba(255, 71, 87, 0.3);
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Game Area Container */
+.game-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+  padding: 10px;
+}
+
+/* Game Over Modal Dialog */
+.game-over-dialog {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 2000;
+}
+
+.game-over-dialog.active {
+  display: flex;
+}
+
+.go-card {
+  background: var(--bg-secondary);
+  border: 1px solid rgba(0, 242, 254, 0.3);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  width: 100%;
+  max-width: 320px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  animation: popIn 0.25s ease-out;
+}
+
+.go-emoji {
+  font-size: 46px;
+  margin-bottom: 8px;
+}
+
+.go-title {
+  font-size: 22px;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+
+.go-stats {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin-bottom: 16px;
+  display: flex;
+  justify-content: space-around;
+}
+
+.go-stat-item .label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.go-stat-item .val {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--accent-cyan);
+  margin-top: 2px;
+}
+
+.go-stat-item .val.gold {
+  color: var(--accent-gold);
+}
+
+.go-lives-remain {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 18px;
+}
+
+.go-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.btn-go-play {
+  background: linear-gradient(135deg, #00f2fe, #4facfe);
+  color: #000;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-go-ad {
+  background: linear-gradient(135deg, #ff4757, #ff6b81);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  display: none;
+}
+
+.btn-go-hub {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+@keyframes popIn {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}

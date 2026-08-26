@@ -1,0 +1,82 @@
+.diff-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.btn-diff {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-diff.active {
+  background: var(--accent-cyan);
+  color: #000;
+  border-color: var(--accent-cyan);
+}
+
+.status-banner {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin-bottom: 16px;
+  min-height: 24px;
+}
+
+.ttt-board {
+  width: 290px;
+  height: 290px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  background: #141b2d;
+  border: 2px solid rgba(248, 87, 166, 0.4);
+  border-radius: 16px;
+  padding: 10px;
+  box-shadow: 0 4px 25px rgba(0, 0, 0, 0.5);
+}
+
+.ttt-cell {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 42px;
+  font-weight: 900;
+  cursor: pointer;
+  transition: transform 0.1s, background 0.2s;
+}
+
+.ttt-cell:active {
+  transform: scale(0.94);
+}
+
+.ttt-cell.x {
+  color: #00f2fe;
+  text-shadow: 0 0 12px rgba(0, 242, 254, 0.6);
+}
+
+.ttt-cell.o {
+  color: #ff4757;
+  text-shadow: 0 0 12px rgba(255, 71, 87, 0.6);
+}
+
+.stats-row {
+  display: flex;
+  gap: 20px;
+  margin-top: 24px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.stats-row .highlight {
+  color: var(--accent-cyan);
+}

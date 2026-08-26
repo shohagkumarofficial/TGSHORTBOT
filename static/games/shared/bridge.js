@@ -1,0 +1,162 @@
+/**
+ * Unified Game Bridge: connects standalone HTML5 games to the Life & Monetization backend
+ */
+const gameBridge = {
+  gameId: '',
+  user: null,
+  highScore: 0,
+  onRestartCallback: null,
+
+  async init(gameId) {
+    this.gameId = gameId;
+
+    // Telegram back button
+    window.tgApp?.showBackButton(() => {
+      this.returnToHub();
+    });
+
+    // Back to hub button in HUD
+    const backBtn = document.getElementById('btn-back-hud');
+    if (backBtn) {
+      backBtn.addEventListener('click', () => this.returnToHub());
+    }
+
+    // Modal buttons
+    const goHubBtn = document.getElementById('btn-go-hub');
+    if (goHubBtn) {
+      goHubBtn.addEventListener('click', () => this.returnToHub());
+    }
+
+    const goPlayBtn = document.getElementById('btn-go-play');
+    if (goPlayBtn) {
+      goPlayBtn.addEventListener('click', () => this.handleRestart());
+    }
+
+    const goAdBtn = document.getElementById('btn-go-ad');
+    if (goAdBtn) {
+      goAdBtn.addEventListener('click', () => this.handleWatchAdGameOver());
+    }
+
+    // Fetch initial user state
+    try {
+      const data = await window.api.getUserInfo();
+      if (data && data.success) {
+        this.user = data.user;
+        this.highScore = data.high_scores[gameId] || 0;
+        window.adManager.init(data.settings);
+        this.updateLivesHUD();
+      }
+    } catch (e) {
+      console.warn("Could not fetch user in game bridge:", e);
+    }
+  },
+
+  updateLivesHUD() {
+    const livesEl = document.getElementById('hud-lives-count');
+    if (livesEl && this.user) {
+      livesEl.textContent = `${this.user.lives}/${this.user.max_lives}`;
+    }
+  },
+
+  returnToHub() {
+    window.location.href = '/';
+  },
+
+  async reportGameOver(score, result = 'lost', onRestart = null) {
+    this.onRestartCallback = onRestart;
+    window.tgApp?.hapticNotification(result === 'won' ? 'success' : 'error');
+
+    let currentLives = this.user ? this.user.lives : 0;
+    let high = this.highScore;
+
+    try {
+      const res = await window.api.endGame(this.gameId, score, result);
+      if (res && res.success) {
+        currentLives = res.lives;
+        high = res.high_score;
+        if (this.user) this.user.lives = currentLives;
+        this.updateLivesHUD();
+      }
+    } catch (e) {
+      console.error("Failed to report game over:", e);
+    }
+
+    // Show Game Over Dialog
+    const dialog = document.getElementById('game-over-dialog');
+    const scoreVal = document.getElementById('go-score-val');
+    const highVal = document.getElementById('go-high-val');
+    const livesRemain = document.getElementById('go-lives-val');
+    const playBtn = document.getElementById('btn-go-play');
+    const adBtn = document.getElementById('btn-go-ad');
+    const emojiEl = document.getElementById('go-emoji');
+    const titleEl = document.getElementById('go-title');
+
+    if (scoreVal) scoreVal.textContent = score;
+    if (highVal) highVal.textContent = high;
+    if (livesRemain) livesRemain.textContent = `${currentLives} Lives Remaining`;
+
+    if (result === 'won') {
+      if (emojiEl) emojiEl.textContent = '🎉';
+      if (titleEl) titleEl.textContent = 'Victory!';
+    } else {
+      if (emojiEl) emojiEl.textContent = '💀';
+      if (titleEl) titleEl.textContent = 'Game Over';
+    }
+
+    if (currentLives <= 0) {
+      if (playBtn) playBtn.style.display = 'none';
+      if (adBtn) adBtn.style.display = 'block';
+    } else {
+      if (playBtn) playBtn.style.display = 'block';
+      if (adBtn) adBtn.style.display = 'none';
+    }
+
+    if (dialog) dialog.classList.add('active');
+  },
+
+  async handleRestart() {
+    const dialog = document.getElementById('game-over-dialog');
+    
+    // Check lives & start game session
+    const startRes = await window.api.startGame(this.gameId);
+    if (!startRes.success) {
+      if (startRes.error === 'no_lives') {
+        const playBtn = document.getElementById('btn-go-play');
+        const adBtn = document.getElementById('btn-go-ad');
+        if (playBtn) playBtn.style.display = 'none';
+        if (adBtn) adBtn.style.display = 'block';
+      }
+      return;
+    }
+
+    if (startRes.lives !== undefined && this.user) {
+      this.user.lives = startRes.lives;
+      this.updateLivesHUD();
+    }
+
+    if (dialog) dialog.classList.remove('active');
+
+    if (this.onRestartCallback) {
+      this.onRestartCallback();
+    } else {
+      window.location.reload();
+    }
+  },
+
+  handleWatchAdGameOver() {
+    window.adManager.showRewardedAd(
+      (rewardRes) => {
+        if (rewardRes.lives !== undefined && this.user) {
+          this.user.lives = rewardRes.lives;
+          this.updateLivesHUD();
+        }
+        this.handleRestart();
+      },
+      (err) => {
+        console.warn("Ad skipped or failed in game over modal:", err);
+      }
+    );
+  }
+};
+
+window.gameBridge = gameBridge;

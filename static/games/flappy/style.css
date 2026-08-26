@@ -1,0 +1,29 @@
+.canvas-wrapper {
+  position: relative;
+  background: #0d1b2a;
+  border: 2px solid rgba(0, 198, 255, 0.4);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6);
+}
+
+#flappy-canvas {
+  display: block;
+  cursor: pointer;
+}
+
+.start-hint {
+  position: absolute;
+  top: 60%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.7);
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent-cyan);
+  border: 1px solid var(--accent-cyan);
+  pointer-events: none;
+  animation: pulse 1.5s infinite;
+}

@@ -1,0 +1,69 @@
+.score-banner {
+  display: flex;
+  justify-content: space-between;
+  width: 320px;
+  max-width: 95%;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+.score-banner .highlight {
+  color: var(--accent-gold);
+  font-size: 16px;
+}
+
+.grid-container {
+  width: 320px;
+  height: 320px;
+  background: #141b2d;
+  border: 2px solid rgba(247, 151, 30, 0.4);
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  touch-action: none;
+  box-shadow: 0 4px 25px rgba(0, 0, 0, 0.6);
+}
+
+.grid-row {
+  display: flex;
+  justify-content: space-between;
+  height: 70px;
+}
+
+.grid-cell {
+  width: 70px;
+  height: 70px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 800;
+  color: #fff;
+  transition: transform 0.1s ease-in-out;
+}
+
+/* Tile Colors based on value */
+.tile-2 { background: #3d4a68; color: #fff; }
+.tile-4 { background: #4a5c82; color: #fff; }
+.tile-8 { background: #f39c12; color: #fff; box-shadow: 0 0 10px rgba(243, 156, 18, 0.5); }
+.tile-16 { background: #e67e22; color: #fff; box-shadow: 0 0 12px rgba(230, 126, 34, 0.5); }
+.tile-32 { background: #e74c3c; color: #fff; box-shadow: 0 0 14px rgba(231, 76, 60, 0.5); }
+.tile-64 { background: #c0392b; color: #fff; box-shadow: 0 0 16px rgba(192, 57, 43, 0.6); }
+.tile-128 { background: #f1c40f; color: #000; font-size: 20px; box-shadow: 0 0 18px rgba(241, 196, 15, 0.7); }
+.tile-256 { background: #f39c12; color: #000; font-size: 20px; box-shadow: 0 0 20px rgba(243, 156, 18, 0.8); }
+.tile-512 { background: #2ecc71; color: #000; font-size: 20px; box-shadow: 0 0 22px rgba(46, 204, 113, 0.8); }
+.tile-1024 { background: #00f2fe; color: #000; font-size: 17px; box-shadow: 0 0 24px rgba(0, 242, 254, 0.9); }
+.tile-2048 { background: #ff007f; color: #fff; font-size: 17px; box-shadow: 0 0 28px rgba(255, 0, 127, 1); }
+
+.instructions-text {
+  margin-top: 20px;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+}

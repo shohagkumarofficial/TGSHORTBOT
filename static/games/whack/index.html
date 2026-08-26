@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Whack-a-Mole</title>
+  
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://sad.adsgram.ai/js/sad.min.js"></script>
+
+  <link rel="stylesheet" href="/static/games/shared/shared.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Game HUD -->
+  <header class="game-hud">
+    <button class="btn-back-hub" id="btn-back-hud">⬅ Hub</button>
+    <div class="game-title-hud">🔨 Whack-a-Mole</div>
+    <div class="hud-lives">
+      <span>❤️</span>
+      <span id="hud-lives-count">3/3</span>
+    </div>
+  </header>
+
+  <!-- Game Container -->
+  <main class="game-container">
+    <div class="score-banner">
+      <div>SCORE: <span id="score-display" class="highlight">0</span></div>
+      <div>COMBO: <span id="combo-display" class="combo">x1</span></div>
+      <div>TIME: <span id="time-left">30s</span></div>
+    </div>
+
+    <!-- 3x3 Holes Board -->
+    <div class="whack-board" id="whack-board">
+      <div class="hole" data-id="0"><div class="mole">🐹</div></div>
+      <div class="hole" data-id="1"><div class="mole">🐹</div></div>
+      <div class="hole" data-id="2"><div class="mole">🐹</div></div>
+      <div class="hole" data-id="3"><div class="mole">🐹</div></div>
+      <div class="hole" data-id="4"><div class="mole">🐹</div></div>
+      <div class="hole" data-id="5"><div class="mole">🐹</div></div>
+      <div class="hole" data-id="6"><div class="mole">🐹</div></div>
+      <div class="hole" data-id="7"><div class="mole">🐹</div></div>
+      <div class="hole" data-id="8"><div class="mole">🐹</div></div>
+    </div>
+
+    <div class="start-whack-overlay" id="start-overlay">
+      <button class="btn-start-whack" id="btn-start-whack">START (30s)</button>
+    </div>
+  </main>
+
+  <!-- Shared Game Over Dialog -->
+  <div class="game-over-dialog" id="game-over-dialog">
+    <div class="go-card">
+      <div class="go-emoji" id="go-emoji">🎉</div>
+      <h3 class="go-title" id="go-title">Time's Up!</h3>
+      <div class="go-stats">
+        <div class="go-stat-item">
+          <div class="label">Final Score</div>
+          <div class="val" id="go-score-val">0</div>
+        </div>
+        <div class="go-stat-item">
+          <div class="label">High Score</div>
+          <div class="val gold" id="go-high-val">0</div>
+        </div>
+      </div>
+      <div class="go-lives-remain" id="go-lives-val">3 Lives Remaining</div>
+      <div class="go-actions">
+        <button class="btn-go-play" id="btn-go-play">▶ Play Again</button>
+        <button class="btn-go-ad" id="btn-go-ad">📺 Watch Ad for Life (+1 ❤️)</button>
+        <button class="btn-go-hub" id="btn-go-hub">⬅ Return to Hub</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/telegram.js"></script>
+  <script src="/static/js/api.js"></script>
+  <script src="/static/js/ads.js"></script>
+  <script src="/static/games/shared/bridge.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

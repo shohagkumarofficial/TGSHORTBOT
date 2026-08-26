@@ -1,0 +1,75 @@
+.score-banner {
+  display: flex;
+  justify-content: space-between;
+  width: 340px;
+  max-width: 95%;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.score-banner .highlight {
+  color: var(--accent-cyan);
+  font-size: 16px;
+}
+
+.canvas-wrapper {
+  background: #0d131f;
+  border: 2px solid rgba(0, 242, 254, 0.3);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#game-canvas {
+  display: block;
+  border-radius: 10px;
+}
+
+/* D-Pad Controls */
+.dpad-container {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.dpad-mid {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dpad-center {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dpad-btn {
+  width: 52px;
+  height: 48px;
+  background: rgba(26, 34, 52, 0.8);
+  border: 1px solid rgba(0, 242, 254, 0.3);
+  border-radius: 10px;
+  color: var(--accent-cyan);
+  font-size: 18px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.1s, background 0.1s;
+}
+
+.dpad-btn:active {
+  transform: scale(0.92);
+  background: var(--accent-cyan);
+  color: #000;
+}
