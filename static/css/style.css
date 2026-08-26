@@ -450,8 +450,8 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
-  backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
   display: none;
   align-items: center;
   justify-content: center;
@@ -465,23 +465,24 @@ body {
 
 .modal-card {
   background: var(--bg-secondary);
-  border: 1px solid rgba(255, 71, 87, 0.4);
+  border: 1px solid rgba(0, 242, 254, 0.3);
   border-radius: var(--radius-lg);
   padding: 24px;
   width: 100%;
   max-width: 340px;
   text-align: center;
   animation: scaleUp 0.25s ease-out;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.7);
 }
 
 .modal-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
+  font-size: 46px;
+  margin-bottom: 10px;
   color: var(--accent-red);
 }
 
 .modal-title {
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 800;
   margin-bottom: 8px;
 }
@@ -490,7 +491,7 @@ body {
   font-size: 13px;
   color: var(--text-muted);
   line-height: 1.5;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 
 .modal-actions {
@@ -505,9 +506,14 @@ body {
   border: none;
   border-radius: var(--radius-sm);
   padding: 12px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.btn-primary-action:active {
+  transform: scale(0.97);
 }
 
 .btn-secondary-action {
@@ -519,6 +525,39 @@ body {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Rewarded Ad Timer & Progress Bar */
+.ad-timer-container {
+  margin: 15px 0 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.ad-timer-text {
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--accent-cyan);
+  text-shadow: 0 0 12px rgba(0, 242, 254, 0.6);
+}
+
+.ad-progress-bar-bg {
+  width: 100%;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.ad-progress-bar-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #00f2fe, #2ed573);
+  border-radius: 10px;
+  transition: width 1s linear;
 }
 
 /* Toast */
