@@ -13,6 +13,7 @@ Render রিস্টার্ট/রি-ডিপ্লয় হলে সব
 import threading
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
 _lock = threading.RLock()
 
@@ -22,9 +23,23 @@ _data = {
     "withdrawals": {},   # withdrawal_id(str) -> {...}
 }
 
+# বাংলাদেশ টাইমজোন (UTC+6, DST নেই) — ডেইলি রিসেট/চেক-ইন এই তারিখ অনুযায়ী হিসাব হয়
+BD_TZ = timezone(timedelta(hours=6))
+
+# ৭ দিনের চেক-ইন স্ট্রিক সাইকেল — reward বাড়তে থাকে, ৭ দিন পর আবার ঘোরে
+CHECKIN_REWARDS = [10, 15, 20, 25, 30, 40, 60]
+
 
 def _now():
     return int(time.time())
+
+
+def _today_str():
+    return datetime.now(BD_TZ).strftime("%Y-%m-%d")
+
+
+def _yesterday_str():
+    return (datetime.now(BD_TZ) - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +62,10 @@ def get_or_create_user(tg_id, name="", username=""):
                 "username": username,
                 "coins": 0,
                 "completed_tasks": [],
+                "daily_claims": {},      # task_id -> "YYYY-MM-DD" (সর্বশেষ যেদিন claim হয়েছে)
+                "last_checkin": None,    # "YYYY-MM-DD"
+                "checkin_streak": 0,
+                "total_checkins": 0,
                 "joined_at": _now(),
             }
             _data["users"][tg_id] = user
@@ -106,6 +125,7 @@ def create_task(**kwargs):
             "ad_provider": kwargs.get("ad_provider", ""),  # monetag | gigapub
             "max_claims": kwargs.get("max_claims") or None,
             "claims_count": 0,
+            "daily": bool(kwargs.get("daily", False)),  # True হলে প্রতি ২৪ ঘন্টায় আবার claim করা যায়
             "created_at": _now(),
         }
         _data["tasks"][task_id] = task
@@ -119,7 +139,7 @@ def update_task(task_id, **kwargs):
             return None
         allowed = {
             "title", "description", "type", "link", "reward", "active",
-            "verify_type", "chat_id", "ad_provider", "max_claims",
+            "verify_type", "chat_id", "ad_provider", "max_claims", "daily",
         }
         for k, v in kwargs.items():
             if k in allowed:
@@ -146,8 +166,17 @@ def list_tasks(active_only=False):
 
 
 def has_completed(tg_id, task_id):
+    """
+    সাধারণ টাস্কের জন্য permanent completed_tasks লিস্ট চেক করে।
+    ডেইলি টাস্কের জন্য আজকের তারিখে already claim হয়েছে কিনা চেক করে।
+    """
     user = get_user(tg_id)
-    return bool(user and task_id in user.get("completed_tasks", []))
+    task = _data["tasks"].get(task_id)
+    if not user or not task:
+        return False
+    if task.get("daily"):
+        return user.get("daily_claims", {}).get(task_id) == _today_str()
+    return task_id in user.get("completed_tasks", [])
 
 
 def mark_task_completed(tg_id, task_id):
@@ -157,6 +186,18 @@ def mark_task_completed(tg_id, task_id):
         task = _data["tasks"].get(task_id)
         if not user or not task:
             return False
+
+        if task.get("daily"):
+            daily_claims = user.setdefault("daily_claims", {})
+            today = _today_str()
+            if daily_claims.get(task_id) == today:
+                return False
+            if task.get("max_claims") and task["claims_count"] >= task["max_claims"]:
+                return False
+            daily_claims[task_id] = today
+            task["claims_count"] += 1
+            return True
+
         if task_id in user["completed_tasks"]:
             return False
         if task.get("max_claims") and task["claims_count"] >= task["max_claims"]:
@@ -164,6 +205,84 @@ def mark_task_completed(tg_id, task_id):
         user["completed_tasks"].append(task_id)
         task["claims_count"] += 1
         return True
+
+
+# ---------------------------------------------------------------------------
+# DAILY CHECK-IN
+# ---------------------------------------------------------------------------
+
+def get_checkin_status(tg_id):
+    """একবার claim না করেই বর্তমান স্ট্রিক/পরবর্তী রিওয়ার্ড দেখানোর জন্য।"""
+    user = get_user(tg_id)
+    if not user:
+        return None
+    today = _today_str()
+    checked_today = user.get("last_checkin") == today
+    streak = user.get("checkin_streak", 0)
+    if checked_today:
+        next_streak = streak
+    elif user.get("last_checkin") == _yesterday_str():
+        next_streak = streak + 1
+    else:
+        next_streak = 1
+    idx = min(next_streak - 1, len(CHECKIN_REWARDS) - 1)
+    return {
+        "checked_today": checked_today,
+        "streak": streak,
+        "total_checkins": user.get("total_checkins", 0),
+        "next_reward": CHECKIN_REWARDS[idx],
+    }
+
+
+def checkin(tg_id):
+    """আজকের চেক-ইন claim করে; আগে থেকেই করা থাকলে already=True রিটার্ন করে।"""
+    tg_id = str(tg_id)
+    with _lock:
+        user = _data["users"].get(tg_id)
+        if not user:
+            return None
+        today = _today_str()
+        if user.get("last_checkin") == today:
+            return {"already": True, "user": user}
+
+        if user.get("last_checkin") == _yesterday_str():
+            streak = user.get("checkin_streak", 0) + 1
+        else:
+            streak = 1
+
+        idx = min(streak - 1, len(CHECKIN_REWARDS) - 1)
+        reward = CHECKIN_REWARDS[idx]
+
+        user["checkin_streak"] = streak
+        user["last_checkin"] = today
+        user["total_checkins"] = user.get("total_checkins", 0) + 1
+        user["coins"] = user.get("coins", 0) + reward
+        return {"already": False, "reward": reward, "streak": streak, "user": user}
+
+
+# ---------------------------------------------------------------------------
+# DEFAULT / SEED ডাটা
+# ---------------------------------------------------------------------------
+
+def seed_default_tasks():
+    """
+    প্রসেস প্রথম চালু হওয়ার সময় (in-memory স্টোর খালি থাকলে) একটা ডিফল্ট
+    ডেইলি টাস্ক যোগ করে, যাতে অ্যাডমিন প্যানেলে কিছু না করেই ইউজাররা প্রথম
+    থেকেই একটা কাজ করে কয়েন ইনকাম শুরু করতে পারে। App restart/redeploy হলে
+    RAM খালি হয়ে যায় বলে এটা প্রতিবার process start এ আবার বসে যায়।
+    """
+    with _lock:
+        if _data["tasks"]:
+            return
+        create_task(
+            title="🎬 প্রতিদিন অ্যাড দেখে কয়েন নিন",
+            description="প্রতি ২৪ ঘন্টায় একবার অ্যাড দেখে ফ্রি কয়েন নিতে পারবেন",
+            type="ad",
+            reward=20,
+            verify_type="ad_watch",
+            ad_provider="monetag",
+            daily=True,
+        )
 
 
 # ---------------------------------------------------------------------------

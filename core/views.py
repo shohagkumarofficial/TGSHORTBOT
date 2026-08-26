@@ -3,7 +3,7 @@ import os
 
 from django.http import JsonResponse
 from django.shortcuts import render
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_POST, require_http_methods
 
 from . import store, telegram_bot
 from .telegram_auth import authenticate_request, is_owner
@@ -127,3 +127,59 @@ def api_withdraw(request):
     return JsonResponse(
         {"ok": True, "withdrawal": w, "coins": store.get_user(tg_id)["coins"]}
     )
+
+
+@require_http_methods(["GET", "POST"])
+def api_checkin(request):
+    """GET → বর্তমান স্ট্রিক/স্ট্যাটাস দেখায়। POST → আজকের চেক-ইন claim করে।"""
+    user, err = _require_user(request)
+    if err:
+        return err
+    tg_id = user["id"]
+
+    if request.method == "GET":
+        status = store.get_checkin_status(tg_id)
+        if status is None:
+            return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+        return JsonResponse({"ok": True, **status})
+
+    result = store.checkin(tg_id)
+    if result is None:
+        return JsonResponse({"ok": False, "error": "not_found"}, status=404)
+    if result["already"]:
+        return JsonResponse({"ok": False, "error": "already_checked_in"}, status=400)
+    return JsonResponse(
+        {
+            "ok": True,
+            "reward": result["reward"],
+            "streak": result["streak"],
+            "coins": result["user"]["coins"],
+        }
+    )
+
+
+@require_POST
+def telegram_webhook(request, secret):
+    """
+    Telegram থেকে আসা update গুলো এখানে আসে (setWebhook দিয়ে রেজিস্টার করা লাগবে)।
+    আপাতত শুধু /start কমান্ড হ্যান্ডল করে।
+    """
+    expected_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+    if not expected_secret or secret != expected_secret:
+        return JsonResponse({"ok": False, "error": "forbidden"}, status=403)
+
+    try:
+        update = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": True})  # Telegram কে সবসময় 200 দিতে হয়
+
+    message = update.get("message") or update.get("edited_message") or {}
+    text = (message.get("text") or "").strip()
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+
+    if chat_id and text.startswith("/start"):
+        first_name = (message.get("from") or {}).get("first_name", "")
+        telegram_bot.send_start_message(chat_id, first_name)
+
+    return JsonResponse({"ok": True})
