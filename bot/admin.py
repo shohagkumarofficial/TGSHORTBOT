@@ -42,7 +42,11 @@ def get_admin_main_kb() -> InlineKeyboardMarkup:
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
-        await message.answer("⛔ <i>Access denied. This command is restricted to bot administrators.</i>")
+        await message.answer(
+            f"⛔ <b>Access denied.</b>\n\n"
+            f"Your Telegram ID: <code>{message.from_user.id}</code>\n"
+            f"Configured Admin ID: <code>{config.OWNER_TELEGRAM_ID}</code>"
+        )
         return
 
     await state.clear()
