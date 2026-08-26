@@ -13,6 +13,7 @@ def index(request):
     context = {
         "monetag_zone": os.environ.get("MONETAG_ZONE_ID", "11646009"),
         "gigapub_id": os.environ.get("GIGAPUB_PROJECT_ID", "7860"),
+        "bot_username": os.environ.get("BOT_USERNAME", "").lstrip("@"),
     }
     return render(request, "core/index.html", context)
 
