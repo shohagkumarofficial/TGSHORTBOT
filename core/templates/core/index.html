@@ -1,1 +1,177 @@
-hi
+{% load static %}
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>TGSHORT Tasks</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="{% static 'core/style.css' %}" />
+
+<!-- Telegram Mini App SDK -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<!-- Monetag SDK -->
+<script src='//libtl.com/sdk.js' data-zone='{{ monetag_zone }}' data-sdk='show_{{ monetag_zone }}'></script>
+
+<!-- GigaPub SDK -->
+<script src="https://ad.gigapub.tech/script?id={{ gigapub_id }}"></script>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===== Header ===== -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">TG</span>
+      <span class="brand-name">SHORT <em>Tasks</em></span>
+    </div>
+    <button class="coin-pill" id="coinPill" type="button">
+      <span class="coin-icon" aria-hidden="true"></span>
+      <span id="coinBalance">0</span>
+    </button>
+  </header>
+
+  <!-- ===== Loading state ===== -->
+  <div id="loadingState" class="state-screen">
+    <div class="spinner"></div>
+    <p>লোড হচ্ছে…</p>
+  </div>
+
+  <!-- ===== Error state (not opened inside Telegram) ===== -->
+  <div id="errorState" class="state-screen hidden">
+    <p class="error-title">এই অ্যাপটি Telegram এর ভেতর থেকে খুলুন</p>
+    <p class="error-sub">বটের মেনু বাটন থেকে TGSHORT Tasks ওপেন করুন।</p>
+  </div>
+
+  <!-- ===== Main content ===== -->
+  <main id="mainContent" class="hidden">
+
+    <!-- ---- TASKS TAB ---- -->
+    <section id="tab-tasks" class="tab-panel active">
+      <div class="section-head">
+        <h2>ছোট টাস্ক করুন</h2>
+        <span class="section-sub">প্রতিটি টাস্ক শেষ করে কয়েন জিতুন</span>
+      </div>
+      <div id="taskList" class="task-list"></div>
+      <div id="taskEmpty" class="empty-note hidden">এই মুহূর্তে কোনো টাস্ক নেই। পরে আবার দেখুন।</div>
+    </section>
+
+    <!-- ---- WALLET TAB ---- -->
+    <section id="tab-wallet" class="tab-panel">
+      <div class="wallet-hero">
+        <span class="wallet-label">আপনার ব্যালেন্স</span>
+        <div class="wallet-amount"><span class="coin-icon lg" aria-hidden="true"></span><span id="walletBalance">0</span></div>
+      </div>
+
+      <form id="withdrawForm" class="card-form">
+        <h3>উইথড্র রিকোয়েস্ট</h3>
+        <label>পরিমাণ (কয়েন)
+          <input type="number" id="withdrawAmount" min="1" required placeholder="যেমন: 500" />
+        </label>
+        <label>পেমেন্ট নাম্বার / তথ্য
+          <input type="text" id="withdrawInfo" required placeholder="bKash/Nagad নাম্বার" />
+        </label>
+        <button type="submit" class="btn btn-primary">রিকোয়েস্ট পাঠান</button>
+        <p id="withdrawMsg" class="form-msg"></p>
+      </form>
+
+      <div class="section-head compact">
+        <h3>উইথড্র হিস্ট্রি</h3>
+      </div>
+      <div id="withdrawHistory" class="withdraw-list"></div>
+    </section>
+
+    <!-- ---- ADMIN TAB (শুধু owner দেখবে) ---- -->
+    <section id="tab-admin" class="tab-panel">
+      <div class="section-head">
+        <h2>অ্যাডমিন প্যানেল</h2>
+        <span class="section-sub">শুধু আপনি এটা দেখতে পারছেন</span>
+      </div>
+
+      <div id="adminStats" class="stats-grid"></div>
+
+      <div class="card-form">
+        <h3>ব্যাকআপ / রিস্টোর</h3>
+        <div class="btn-row">
+          <button id="backupBtn" type="button" class="btn btn-secondary">📥 ব্যাকআপ ডাউনলোড</button>
+          <label class="btn btn-secondary file-btn">
+            📤 রিস্টোর আপলোড
+            <input type="file" id="restoreFile" accept="application/json" hidden />
+          </label>
+        </div>
+        <p id="restoreMsg" class="form-msg"></p>
+      </div>
+
+      <form id="taskForm" class="card-form">
+        <h3>নতুন টাস্ক যোগ করুন</h3>
+        <label>টাইটেল
+          <input type="text" id="taskTitle" required placeholder="যেমন: আমাদের চ্যানেল জয়েন করুন" />
+        </label>
+        <label>বিবরণ
+          <input type="text" id="taskDesc" placeholder="সংক্ষিপ্ত বিবরণ (ঐচ্ছিক)" />
+        </label>
+        <label>রিওয়ার্ড (কয়েন)
+          <input type="number" id="taskReward" min="1" required placeholder="যেমন: 50" />
+        </label>
+        <label>ভেরিফিকেশন টাইপ
+          <select id="taskVerifyType">
+            <option value="manual">ম্যানুয়াল (লিংক ভিজিট / ভিডিও দেখা)</option>
+            <option value="channel_join">চ্যানেল/গ্রুপ জয়েন (বট verify করবে)</option>
+            <option value="ad_watch">অ্যাড দেখা (Monetag/GigaPub)</option>
+          </select>
+        </label>
+        <label id="linkField">লিংক
+          <input type="text" id="taskLink" placeholder="https://..." />
+        </label>
+        <label id="chatIdField" class="hidden">চ্যানেল Chat ID
+          <input type="text" id="taskChatId" placeholder="@channelusername বা -100xxxxxxxxxx" />
+        </label>
+        <label id="adProviderField" class="hidden">অ্যাড প্রোভাইডার
+          <select id="taskAdProvider">
+            <option value="monetag">Monetag</option>
+            <option value="gigapub">GigaPub</option>
+          </select>
+        </label>
+        <button type="submit" class="btn btn-primary">টাস্ক তৈরি করুন</button>
+        <p id="taskFormMsg" class="form-msg"></p>
+      </form>
+
+      <div class="section-head compact"><h3>সব টাস্ক</h3></div>
+      <div id="adminTaskList" class="task-list"></div>
+
+      <div class="section-head compact"><h3>পেন্ডিং উইথড্র</h3></div>
+      <div id="adminWithdrawList" class="withdraw-list"></div>
+    </section>
+
+  </main>
+
+  <!-- ===== Bottom nav ===== -->
+  <nav id="bottomNav" class="bottom-nav hidden">
+    <button class="nav-btn active" data-tab="tasks">
+      <span class="nav-icon">✅</span><span>টাস্ক</span>
+    </button>
+    <button class="nav-btn" data-tab="wallet">
+      <span class="nav-icon">👛</span><span>ওয়ালেট</span>
+    </button>
+    <button class="nav-btn hidden" data-tab="admin" id="adminNavBtn">
+      <span class="nav-icon">⚙️</span><span>অ্যাডমিন</span>
+    </button>
+  </nav>
+
+</div>
+
+<script>
+  window.TGSHORT_CONFIG = {
+    monetagZone: "{{ monetag_zone }}",
+    gigapubId: "{{ gigapub_id }}"
+  };
+</script>
+<script src="{% static 'core/app.js' %}"></script>
+</body>
+</html>
