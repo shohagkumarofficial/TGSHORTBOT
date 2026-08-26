@@ -1,34 +1,37 @@
 /**
  * Multi-Ad Network Manager (Adsgram, Monetag, Gigapub, Adsterra)
- * True multi-SDK integration with verified watch timers and anti-cheat protection
+ * All networks show ads IN-APP (inside the mini app) via their own SDK overlays.
+ * NO external page redirects. Each SDK returns a Promise:
+ *   .then() = user watched ad fully → grant reward
+ *   .catch() = user skipped/closed → no reward
  */
 const adManager = {
   settings: {},
   adsgramController: null,
   isShowing: false,
   roundRobinIndex: 0,
-  adCountdownTimer: null,
-  adSecondsLeft: 15,
 
   init(settings = {}) {
     this.settings = settings;
 
-    // 1. Initialize Adsgram SDK
+    // 1. Adsgram SDK
     if (this.isNetworkEnabled('adsgram') && window.Adsgram) {
-      const blockId = settings.adsgram_block_id || 'int-4166';
-      try {
-        this.adsgramController = window.Adsgram.init({ blockId: blockId });
-      } catch (e) {
-        console.warn("Adsgram init error:", e);
+      const blockId = settings.adsgram_block_id || '';
+      if (blockId) {
+        try {
+          this.adsgramController = window.Adsgram.init({ blockId: blockId });
+        } catch (e) {
+          console.warn("Adsgram init error:", e);
+        }
       }
     }
 
-    // 2. Initialize Monetag SDK & Tag
+    // 2. Monetag TMA SDK — creates global show_ZONE_ID() function
     if (this.isNetworkEnabled('monetag') && settings.monetag_zone_id) {
       this.loadMonetagSDK(settings.monetag_zone_id);
     }
 
-    // 3. Initialize Gigapub SDK
+    // 3. Gigapub TMA SDK
     if (this.isNetworkEnabled('gigapub') && settings.gigapub_project_id) {
       this.loadGigapubSDK(settings.gigapub_project_id);
     }
@@ -41,65 +44,67 @@ const adManager = {
 
   getActiveNetworksList() {
     const networks = ['adsgram', 'monetag', 'gigapub', 'adsterra'];
-    const active = networks.filter(net => this.isNetworkEnabled(net));
-    return active.length > 0 ? active : ['adsgram'];
+    return networks.filter(net => this.isNetworkEnabled(net));
   },
 
   getNextNetwork() {
     const mode = this.settings.ad_selection_mode || 'round_robin';
     if (mode === 'single') {
       const selected = this.settings.selected_ad_network || 'adsgram';
-      return this.isNetworkEnabled(selected) ? selected : 'adsgram';
+      return this.isNetworkEnabled(selected) ? selected : this.getActiveNetworksList()[0] || 'adsgram';
     }
 
     const activeList = this.getActiveNetworksList();
+    if (activeList.length === 0) return 'adsgram';
     const chosen = activeList[this.roundRobinIndex % activeList.length];
     this.roundRobinIndex = (this.roundRobinIndex + 1) % activeList.length;
     return chosen;
   },
 
+  /**
+   * Monetag TMA SDK Loader
+   * Injects the official Monetag script tag which auto-creates window.show_ZONE_ID()
+   * This function shows a rewarded interstitial INSIDE the mini app (overlay, no redirect)
+   * and returns a Promise.
+   */
   loadMonetagSDK(zoneId) {
-    if (document.getElementById('monetag-sdk-tag')) return;
-    try {
-      const cleanZone = zoneId.toString().replace(/[^0-9]/g, '');
-      if (cleanZone) {
-        // Tag 1: Main Monetag multi-tag loader
-        const s1 = document.createElement('script');
-        s1.id = 'monetag-sdk-tag';
-        s1.src = 'https://alwingulla.com/88/tag.min.js';
-        s1.setAttribute('data-zone', cleanZone);
-        s1.async = true;
-        s1.setAttribute('data-cfasync', 'false');
-        document.head.appendChild(s1);
+    const cleanZone = zoneId.toString().trim();
+    if (!cleanZone || document.getElementById('monetag-tma-sdk')) return;
 
-        // Tag 2: Vignette / Interstitial trigger
-        const s2 = document.createElement('script');
-        s2.id = 'monetag-vignette-tag';
-        s2.src = 'https://niphaumeenses.net/vignette.min.js';
-        s2.setAttribute('data-zone', cleanZone);
-        s2.async = true;
-        document.head.appendChild(s2);
-      }
-    } catch (e) {
-      console.warn("Failed to inject Monetag SDK:", e);
-    }
+    const script = document.createElement('script');
+    script.id = 'monetag-tma-sdk';
+    script.src = `https://alwingulla.com/88/tag.min.js`;
+    script.setAttribute('data-zone', cleanZone);
+    script.setAttribute('data-sdk', `show_${cleanZone}`);
+    script.async = true;
+    script.setAttribute('data-cfasync', 'false');
+    document.head.appendChild(script);
+
+    console.log(`[AdManager] Monetag TMA SDK loaded for zone: ${cleanZone}`);
   },
 
+  /**
+   * Gigapub TMA SDK Loader
+   * Injects the Gigapub SDK which creates window.Gigapub or window.show_PROJECT_ID()
+   */
   loadGigapubSDK(projectId) {
-    if (document.getElementById('gigapub-sdk')) return;
-    const s = document.createElement('script');
-    s.id = 'gigapub-sdk';
-    s.src = 'https://sdk.gigapub.com/sdk.js';
-    s.async = true;
-    s.onload = () => {
-      if (window.GigaPub && typeof window.GigaPub.init === 'function') {
-        try {
-          window.GigaPub.init({ projectId: projectId });
-        } catch (e) {}
-      }
-    };
-    document.head.appendChild(s);
+    const cleanId = projectId.toString().trim();
+    if (!cleanId || document.getElementById('gigapub-tma-sdk')) return;
+
+    const script = document.createElement('script');
+    script.id = 'gigapub-tma-sdk';
+    script.src = `https://gigapub.com/sdk.js`;
+    script.setAttribute('data-project', cleanId);
+    script.setAttribute('data-sdk', `show_${cleanId}`);
+    script.async = true;
+    document.head.appendChild(script);
+
+    console.log(`[AdManager] Gigapub TMA SDK loaded for project: ${cleanId}`);
   },
+
+  // =========================================================
+  //  Main Entry Point: Show Rewarded Ad
+  // =========================================================
 
   async showRewardedAd(onSuccess, onError) {
     if (this.isShowing) {
@@ -107,236 +112,236 @@ const adManager = {
       return;
     }
 
-    const targetNetwork = this.getNextNetwork();
-    if (!this.isNetworkEnabled(targetNetwork)) {
-      window.hub?.showToast(`⚠️ ${targetNetwork.toUpperCase()} is currently disabled.`);
-      if (onError) onError("Network disabled");
+    const activeList = this.getActiveNetworksList();
+    if (activeList.length === 0) {
+      window.hub?.showToast("⚠️ No ad networks are enabled.");
+      if (onError) onError("No networks enabled");
       return;
     }
 
+    const targetNetwork = this.getNextNetwork();
     this.isShowing = true;
     window.hub?.showToast(`Loading ${targetNetwork.toUpperCase()} ad... 📺`);
 
-    if (targetNetwork === 'adsgram') {
-      this.showAdsgram(onSuccess, onError);
-    } else if (targetNetwork === 'monetag') {
-      this.showMonetag(onSuccess, onError);
-    } else if (targetNetwork === 'gigapub') {
-      this.showGigapub(onSuccess, onError);
-    } else {
-      this.showAdsterra(onSuccess, onError);
+    try {
+      switch (targetNetwork) {
+        case 'adsgram':
+          await this._showAdsgram(onSuccess, onError);
+          break;
+        case 'monetag':
+          await this._showMonetag(onSuccess, onError);
+          break;
+        case 'gigapub':
+          await this._showGigapub(onSuccess, onError);
+          break;
+        case 'adsterra':
+          await this._showAdsterra(onSuccess, onError);
+          break;
+        default:
+          this.isShowing = false;
+          if (onError) onError("Unknown network");
+      }
+    } catch (e) {
+      this.isShowing = false;
+      console.error(`[AdManager] ${targetNetwork} error:`, e);
+      if (onError) onError(`${targetNetwork} ad failed`);
     }
   },
 
-  // --- 1. Adsgram (Rewarded Video SDK) ---
-  showAdsgram(onSuccess, onError) {
-    const blockId = this.settings.adsgram_block_id || 'int-4166';
+  // =========================================================
+  //  1. ADSGRAM — In-App Rewarded Video
+  //  SDK: window.Adsgram.init({blockId}).show() → Promise
+  // =========================================================
+
+  async _showAdsgram(onSuccess, onError) {
+    const blockId = this.settings.adsgram_block_id || '';
+    if (!blockId) {
+      this.isShowing = false;
+      window.hub?.showToast("⚠️ Adsgram Block ID not configured.");
+      if (onError) onError("Adsgram Block ID missing");
+      return;
+    }
+
     try {
       if (!this.adsgramController && window.Adsgram) {
         this.adsgramController = window.Adsgram.init({ blockId: blockId });
       }
 
-      if (this.adsgramController) {
-        this.adsgramController.show()
-          .then(async (result) => {
-            this.isShowing = false;
-            await this.claimReward('adsgram', onSuccess, onError);
-          })
-          .catch(async (err) => {
-            this.isShowing = false;
-            console.warn("Adsgram video ad skipped or error:", err);
-            window.hub?.showToast("Ad was closed before completion. No reward granted.");
-            if (onError) onError(err?.description || "Ad closed early");
-          });
-      } else {
+      if (!this.adsgramController) {
         this.isShowing = false;
-        window.hub?.showToast("Adsgram SDK is not loaded. Check internet or Block ID.");
+        window.hub?.showToast("⚠️ Adsgram SDK not loaded.");
         if (onError) onError("Adsgram SDK unavailable");
+        return;
       }
-    } catch (e) {
+
+      // show() displays the ad INSIDE the mini app and returns a Promise
+      await this.adsgramController.show();
+
+      // If we reach here, user watched the ad fully
       this.isShowing = false;
-      if (onError) onError("Adsgram execution failed");
+      await this.claimReward('adsgram', onSuccess, onError);
+
+    } catch (err) {
+      // User closed/skipped the ad
+      this.isShowing = false;
+      console.warn("[AdManager] Adsgram ad not completed:", err);
+      window.hub?.showToast("Ad closed before completion. No reward.");
+      if (onError) onError(err?.description || "Ad closed");
     }
   },
 
-  // --- 2. Monetag (Telegram Mini App Rewarded Ad) ---
-  showMonetag(onSuccess, onError) {
-    const zoneId = this.settings.monetag_zone_id || '';
+  // =========================================================
+  //  2. MONETAG — In-App Rewarded Interstitial
+  //  SDK: window.show_ZONE_ID() → Promise
+  //  Shows fullscreen ad overlay INSIDE the mini app (no redirect)
+  // =========================================================
+
+  async _showMonetag(onSuccess, onError) {
+    const zoneId = (this.settings.monetag_zone_id || '').toString().trim();
     if (!zoneId) {
       this.isShowing = false;
-      window.hub?.showToast("⚠️ Monetag Zone ID is not configured in Admin panel.");
+      window.hub?.showToast("⚠️ Monetag Zone ID not configured.");
       if (onError) onError("Monetag Zone ID missing");
       return;
     }
 
-    let sponsorUrl = '';
-    const cleanZone = zoneId.toString().replace(/[^0-9]/g, '');
+    // The Monetag SDK auto-creates this global function when the script loads
+    const showFnName = `show_${zoneId}`;
+    const showFn = window[showFnName];
 
-    if (zoneId.startsWith('http://') || zoneId.startsWith('https://')) {
-      sponsorUrl = zoneId;
-    } else if (cleanZone) {
-      sponsorUrl = `https://otieuwai.net/4/${cleanZone}`;
-      
-      // If Monetag programmatic function exists, invoke it
-      const fnName = 'show_' + cleanZone;
-      if (typeof window[fnName] === 'function') {
-        try {
-          window[fnName]().then(() => {}).catch(() => {});
-        } catch (e) {}
-      }
+    if (typeof showFn !== 'function') {
+      this.isShowing = false;
+      console.warn(`[AdManager] Monetag function ${showFnName}() not found. SDK may still be loading.`);
+      window.hub?.showToast("⚠️ Monetag ad is loading... Try again in a few seconds.");
+      if (onError) onError("Monetag SDK not ready");
+      return;
     }
 
-    // Launch Full-Screen Sponsor Modal with 15s countdown
-    this.showSponsorCountdownModal('monetag', sponsorUrl, onSuccess, onError);
+    try {
+      // show_ZONE_ID() displays the rewarded interstitial INSIDE the app
+      // and returns a Promise that resolves when user finishes watching
+      await showFn();
+
+      // Promise resolved → user watched the ad fully inside the app
+      this.isShowing = false;
+      await this.claimReward('monetag', onSuccess, onError);
+
+    } catch (err) {
+      // Promise rejected → user skipped, closed, or ad failed to load
+      this.isShowing = false;
+      console.warn("[AdManager] Monetag ad not completed:", err);
+      window.hub?.showToast("Ad closed before completion. No reward.");
+      if (onError) onError("Monetag ad closed/failed");
+    }
   },
 
-  // --- 3. Gigapub (Telegram Mini App Rewarded SDK) ---
-  showGigapub(onSuccess, onError) {
-    const projectId = this.settings.gigapub_project_id || '';
+  // =========================================================
+  //  3. GIGAPUB — In-App Rewarded Ad
+  //  SDK: window.show_PROJECT_ID() → Promise
+  //  OR window.Gigapub.showRewarded() → Promise
+  // =========================================================
+
+  async _showGigapub(onSuccess, onError) {
+    const projectId = (this.settings.gigapub_project_id || '').toString().trim();
     if (!projectId) {
       this.isShowing = false;
-      window.hub?.showToast("⚠️ Gigapub Project ID is not configured in Admin panel.");
+      window.hub?.showToast("⚠️ Gigapub Project ID not configured.");
       if (onError) onError("Gigapub Project ID missing");
       return;
     }
 
-    // Try Native Gigapub SDK
-    if (window.GigaPub) {
+    // Try Method 1: Global show_PROJECT_ID() function (like Monetag pattern)
+    const showFnName = `show_${projectId}`;
+    const showFn = window[showFnName];
+
+    if (typeof showFn === 'function') {
       try {
-        if (typeof window.GigaPub.showRewardedVideo === 'function') {
-          window.GigaPub.showRewardedVideo({
-            onRewarded: async () => {
-              this.isShowing = false;
-              await this.claimReward('gigapub', onSuccess, onError);
-            },
-            onError: (err) => {
-              this.isShowing = false;
-              window.hub?.showToast("Gigapub ad closed before completion.");
-              if (onError) onError("Gigapub ad closed");
-            }
-          });
-          return;
-        } else if (typeof window.GigaPub.show === 'function') {
-          window.GigaPub.show({
-            type: 'rewarded',
-            onSuccess: async () => {
-              this.isShowing = false;
-              await this.claimReward('gigapub', onSuccess, onError);
-            },
-            onError: () => {
-              this.isShowing = false;
-              if (onError) onError("Gigapub ad failed");
-            }
-          });
-          return;
-        }
-      } catch (e) {
-        console.warn("Gigapub SDK show error:", e);
+        await showFn();
+        this.isShowing = false;
+        await this.claimReward('gigapub', onSuccess, onError);
+        return;
+      } catch (err) {
+        this.isShowing = false;
+        console.warn("[AdManager] Gigapub ad not completed:", err);
+        window.hub?.showToast("Ad closed before completion. No reward.");
+        if (onError) onError("Gigapub ad closed/failed");
+        return;
       }
     }
 
-    // Fallback Sponsor Modal with verified 15s timer
-    const sponsorUrl = `https://sdk.gigapub.com/view/${projectId}`;
-    this.showSponsorCountdownModal('gigapub', sponsorUrl, onSuccess, onError);
+    // Try Method 2: window.Gigapub SDK object
+    if (window.Gigapub || window.GigaPub) {
+      const sdk = window.Gigapub || window.GigaPub;
+      try {
+        // Try showRewarded / showRewardedVideo / show
+        const showMethod = sdk.showRewarded || sdk.showRewardedVideo || sdk.show;
+        if (typeof showMethod === 'function') {
+          await new Promise((resolve, reject) => {
+            showMethod.call(sdk, {
+              onRewarded: resolve,
+              onReward: resolve,
+              onSuccess: resolve,
+              onError: reject,
+              onClose: reject
+            });
+          });
+          this.isShowing = false;
+          await this.claimReward('gigapub', onSuccess, onError);
+          return;
+        }
+      } catch (err) {
+        this.isShowing = false;
+        console.warn("[AdManager] Gigapub SDK ad not completed:", err);
+        window.hub?.showToast("Ad closed before completion. No reward.");
+        if (onError) onError("Gigapub ad closed/failed");
+        return;
+      }
+    }
+
+    // SDK not loaded yet
+    this.isShowing = false;
+    console.warn(`[AdManager] Gigapub function ${showFnName}() not found. SDK may still be loading.`);
+    window.hub?.showToast("⚠️ Gigapub ad is loading... Try again in a few seconds.");
+    if (onError) onError("Gigapub SDK not ready");
   },
 
-  // --- 4. Adsterra / Custom Sponsor ---
-  showAdsterra(onSuccess, onError) {
-    const key = this.settings.adsterra_key || '';
-    const sponsorUrl = key.startsWith('http') ? key : '';
-    this.showSponsorCountdownModal('adsterra', sponsorUrl, onSuccess, onError);
-  },
+  // =========================================================
+  //  4. ADSTERRA — In-App Ad (similar SDK pattern)
+  // =========================================================
 
-  // --- Full-Screen 15s Rewarded Ad Countdown Controller ---
-  showSponsorCountdownModal(network, sponsorUrl, onSuccess, onError) {
-    const modal = document.getElementById('rewarded-ad-modal');
-    const timerText = document.getElementById('ad-timer-countdown');
-    const progressFill = document.getElementById('ad-progress-fill');
-    const btnOpenLink = document.getElementById('btn-open-sponsor-link');
-    const btnClaim = document.getElementById('btn-claim-ad-reward');
-    const btnCancel = document.getElementById('btn-cancel-ad');
-    const titleEl = document.getElementById('ad-modal-title');
-    const descEl = document.getElementById('ad-modal-desc');
-
-    if (!modal) {
+  async _showAdsterra(onSuccess, onError) {
+    const key = (this.settings.adsterra_key || '').toString().trim();
+    if (!key) {
       this.isShowing = false;
+      window.hub?.showToast("⚠️ Adsterra Key not configured.");
+      if (onError) onError("Adsterra Key missing");
       return;
     }
 
-    const DURATION = 15;
-    this.adSecondsLeft = DURATION;
-
-    if (titleEl) titleEl.textContent = `📺 ${network.toUpperCase()} Sponsor Ad`;
-    if (descEl) descEl.innerHTML = `Please view the sponsor ad for <b>${DURATION}s</b> to receive <b>+1 ❤️ Life</b>.`;
-    if (timerText) timerText.textContent = `${DURATION}s`;
-    if (progressFill) progressFill.style.width = '0%';
-    if (btnClaim) btnClaim.style.display = 'none';
-    if (btnCancel) btnCancel.style.display = 'block';
-
-    // Configure Sponsor Link Button
-    if (sponsorUrl && btnOpenLink) {
-      btnOpenLink.style.display = 'block';
-      btnOpenLink.textContent = `🔗 Open ${network.toUpperCase()} Sponsor Ad`;
-      btnOpenLink.onclick = () => {
-        if (window.Telegram?.WebApp?.openLink) {
-          window.Telegram.WebApp.openLink(sponsorUrl);
-        } else {
-          window.open(sponsorUrl, '_blank');
-        }
-      };
-
-      // Auto-trigger open link once on start
-      setTimeout(() => {
-        if (window.Telegram?.WebApp?.openLink) {
-          window.Telegram.WebApp.openLink(sponsorUrl);
-        }
-      }, 200);
-    } else if (btnOpenLink) {
-      btnOpenLink.style.display = 'none';
+    // Try show_KEY() pattern
+    const showFn = window[`show_${key}`];
+    if (typeof showFn === 'function') {
+      try {
+        await showFn();
+        this.isShowing = false;
+        await this.claimReward('adsterra', onSuccess, onError);
+        return;
+      } catch (err) {
+        this.isShowing = false;
+        window.hub?.showToast("Ad closed before completion. No reward.");
+        if (onError) onError("Adsterra ad closed/failed");
+        return;
+      }
     }
 
-    modal.classList.add('active');
-
-    // Cancel Button Handler (Early exit = STRICTLY NO REWARD)
-    btnCancel.onclick = () => {
-      if (this.adCountdownTimer) clearInterval(this.adCountdownTimer);
-      modal.classList.remove('active');
-      this.isShowing = false;
-      window.hub?.showToast("⚠️ Ad closed early. No life awarded.");
-      if (onError) onError("Ad closed early");
-    };
-
-    // 15s Countdown Interval
-    if (this.adCountdownTimer) clearInterval(this.adCountdownTimer);
-
-    this.adCountdownTimer = setInterval(() => {
-      this.adSecondsLeft--;
-
-      if (timerText) timerText.textContent = `${this.adSecondsLeft}s`;
-      if (progressFill) {
-        const percent = Math.floor(((DURATION - this.adSecondsLeft) / DURATION) * 100);
-        progressFill.style.width = `${percent}%`;
-      }
-
-      if (this.adSecondsLeft <= 0) {
-        clearInterval(this.adCountdownTimer);
-        if (timerText) timerText.textContent = '🎉 Completed!';
-        if (descEl) descEl.innerHTML = 'Ad watched successfully! Click below to claim your <b>+1 ❤️ Life</b>.';
-        if (btnClaim) btnClaim.style.display = 'block';
-        if (btnCancel) btnCancel.style.display = 'none';
-
-        window.soundManager?.playScore();
-        window.tgApp?.hapticNotification('success');
-
-        // Claim Button Click
-        btnClaim.onclick = async () => {
-          modal.classList.remove('active');
-          this.isShowing = false;
-          await this.claimReward(network, onSuccess, onError);
-        };
-      }
-    }, 1000);
+    this.isShowing = false;
+    window.hub?.showToast("⚠️ Adsterra ad is loading... Try again.");
+    if (onError) onError("Adsterra SDK not ready");
   },
+
+  // =========================================================
+  //  Server-Side Reward Claim (Anti-Cheat Verified)
+  // =========================================================
 
   async claimReward(network, onSuccess, onError) {
     try {
@@ -344,7 +349,7 @@ const adManager = {
       if (rewardRes.success) {
         window.soundManager?.playVictory();
         window.tgApp?.hapticNotification('success');
-        window.hub?.showToast(rewardRes.message);
+        window.hub?.showToast(rewardRes.message || "+1 ❤️ Life awarded!");
         if (onSuccess) onSuccess(rewardRes);
       } else {
         window.soundManager?.playGameOver();
@@ -353,6 +358,7 @@ const adManager = {
         if (onError) onError(rewardRes.message);
       }
     } catch (e) {
+      console.error("[AdManager] Reward claim network error:", e);
       if (onError) onError("Network error claiming reward");
     }
   }
