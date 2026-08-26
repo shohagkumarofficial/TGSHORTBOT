@@ -4,7 +4,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>TGSHORT Tasks</title>
+<meta name="description" content="TGSHORT Tasks — ছোট টাস্ক সম্পন্ন করে, প্রতিদিন চেক-ইন করে এবং অ্যাড দেখে কয়েন ইনকাম করুন এবং bKash/Nagad এ উইথড্র করুন।" />
+<title>TGSHORT Tasks — টাস্ক করে কয়েন ইনকাম করুন</title>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -52,16 +53,72 @@
     </button>
   </header>
 
-  <!-- ===== Loading state ===== -->
-  <div id="loadingState" class="state-screen">
+  <!-- ===== Loading state (শুধু ভ্যালিড Telegram সেশন কনফার্ম হলে দেখানো হয়) ===== -->
+  <div id="loadingState" class="state-screen hidden">
     <div class="spinner"></div>
     <p>লোড হচ্ছে…</p>
   </div>
 
-  <!-- ===== Error state (not opened inside Telegram) ===== -->
-  <div id="errorState" class="state-screen hidden">
-    <p class="error-title">এই অ্যাপটি Telegram এর ভেতর থেকে খুলুন</p>
-    <p class="error-sub">বটের মেনু বাটন থেকে TGSHORT Tasks ওপেন করুন।</p>
+  <!-- ===== ব্র্যান্ডেড ল্যান্ডিং / ফলব্যাক পেজ =====
+       ডিফল্টভাবে দৃশ্যমান — Telegram এর বাইরে সাধারণ ব্রাউজার/মডারেশন বট থেকে
+       ভিজিট করলে (JS ছাড়াই) একটা বাস্তব, ব্র্যান্ডেড পেজ দেখায়, যাতে অ্যাড
+       নেটওয়ার্ক (Monetag/GigaPub) রিভিউ করার সময় খালি/এরর পেজ না দেখে। -->
+  <div id="errorState" class="state-screen fallback-state">
+    <div class="fallback-inner">
+      <div class="fallback-brand">
+        <span class="brand-mark">TG</span>
+        <span class="brand-name">SHORT <em>Tasks</em></span>
+      </div>
+
+      <h1 class="fallback-title">ছোট টাস্ক করে ও অ্যাড দেখে কয়েন ইনকাম করুন</h1>
+      <p class="fallback-sub">
+        TGSHORT Tasks একটি Telegram Mini App। ছোট ছোট টাস্ক সম্পন্ন করে,
+        প্রতিদিন চেক-ইন করে এবং শর্ট অ্যাড দেখে কয়েন জমান — তারপর সরাসরি
+        bKash/Nagad এ উইথড্র করুন।
+      </p>
+
+      <div class="fallback-features">
+        <div class="fallback-feature">
+          <span class="icon-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><path d="m5.5 7.5 1.2 1.2L9 6.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><path d="m5.5 16.5 1.2 1.2L9 15.5"/><path d="M14 6h6M14 10h6M14 15.5h6M14 19.5h6"/></svg>
+          </span>
+          <b>টাস্ক করুন</b>
+          <span>লিংক ভিজিট বা চ্যানেল জয়েন করে কয়েন নিন</span>
+        </div>
+        <div class="fallback-feature">
+          <span class="icon-badge icon-fire">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.3c.4 3.1-2.1 4.2-2.6 6.6-.2 1.1.2 1.9.5 2.4-1.1-.2-2.2-1.1-2.6-2.5-1.2 1.6-1.7 3.4-1.7 4.8 0 3.9 3 6.9 6.4 6.9s6.4-3 6.4-6.9c0-2.7-1.4-4.6-2.4-6-.1 1.5-.7 2.4-1.5 3 .5-2.9-1.4-5.9-2.5-8.3Z"/></svg>
+          </span>
+          <b>ডেইলি চেক-ইন</b>
+          <span>রোজ চেক-ইন করে বাড়তি বোনাস কয়েন</span>
+        </div>
+        <div class="fallback-feature">
+          <span class="icon-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="13" rx="2.2"/><path d="M10.3 9.2v5.6l4.6-2.8-4.6-2.8Z" fill="currentColor" stroke="none"/></svg>
+          </span>
+          <b>অ্যাড দেখুন</b>
+          <span>শর্ট অ্যাড দেখে ফ্রি কয়েন জমান</span>
+        </div>
+        <div class="fallback-feature">
+          <span class="icon-badge">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v2"/><path d="M3 8v9a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-4"/><path d="M15 12.5h4a1 1 0 0 1 1 1V15a1 1 0 0 1-1 1h-4a2 2 0 0 1 0-4Z"/></svg>
+          </span>
+          <b>উইথড্র</b>
+          <span>জমানো কয়েন bKash/Nagad এ ক্যাশ আউট</span>
+        </div>
+      </div>
+
+      {% if bot_username %}
+      <a class="btn btn-primary fallback-cta" href="https://t.me/{{ bot_username }}" target="_blank" rel="noopener">
+        Telegram এ খুলুন
+      </a>
+      {% else %}
+      <a class="btn btn-primary fallback-cta" href="https://telegram.org/" target="_blank" rel="noopener">
+        Telegram অ্যাপ পান
+      </a>
+      {% endif %}
+      <p class="fallback-note">অ্যাপটি সম্পূর্ণভাবে ব্যবহার করতে Telegram এর ভেতর থেকে খুলতে হবে।</p>
+    </div>
   </div>
 
   <!-- ===== Main content ===== -->
