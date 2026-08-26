@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: tgshort-tasks
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt && python manage.py collectstatic --noinput"
+    startCommand: "gunicorn tgshort_tasks.wsgi --log-file -"
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: OWNER_TELEGRAM_ID
+        sync: false
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+      - key: DEBUG
+        value: "False"
+      - key: MONETAG_ZONE_ID
+        value: "11646009"
+      - key: GIGAPUB_PROJECT_ID
+        value: "7860"
