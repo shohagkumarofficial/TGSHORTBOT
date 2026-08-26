@@ -1,0 +1,207 @@
+/* ============ Design tokens ============ */
+:root{
+  --ink:        #0B0F1A;
+  --surface:    #141B2E;
+  --surface-2:  #1B2440;
+  --border:     #2A3556;
+  --gold:       #FFC94A;
+  --gold-dim:   #8A6B23;
+  --teal:       #35D0BA;
+  --danger:     #FF6B6B;
+  --text:       #F5F7FA;
+  --text-dim:   #8B93A7;
+  --radius:     16px;
+  --radius-sm:  10px;
+  --font-display: 'Sora', 'Inter', sans-serif;
+  --font-body: 'Inter', sans-serif;
+}
+
+*{ box-sizing: border-box; }
+
+html, body{
+  margin:0; padding:0;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app{
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  padding-bottom: 84px;
+  position: relative;
+}
+
+.hidden{ display:none !important; }
+
+/* ============ Topbar ============ */
+.topbar{
+  position: sticky; top:0; z-index: 10;
+  display:flex; align-items:center; justify-content:space-between;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, var(--ink) 70%, rgba(11,15,26,0));
+  backdrop-filter: blur(6px);
+}
+.brand{ display:flex; align-items:center; gap:8px; font-family: var(--font-display); }
+.brand-mark{
+  background: var(--gold); color:#1A1400;
+  font-weight:800; font-size:13px; letter-spacing:.5px;
+  padding: 4px 7px; border-radius: 8px;
+}
+.brand-name{ font-weight:700; font-size:16px; }
+.brand-name em{ font-style:normal; color: var(--text-dim); font-weight:500; }
+
+.coin-pill{
+  display:flex; align-items:center; gap:6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--gold);
+  font-family: var(--font-display); font-weight:700; font-size:14px;
+  padding: 7px 12px; border-radius: 999px;
+  cursor:pointer;
+}
+.coin-icon{
+  width:16px; height:16px; border-radius:50%;
+  background: radial-gradient(circle at 35% 30%, #FFE29A, var(--gold) 60%, var(--gold-dim));
+  display:inline-block;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.15) inset;
+  animation: coinspin 3.2s linear infinite;
+}
+.coin-icon.lg{ width:28px; height:28px; }
+@keyframes coinspin{
+  0%,100%{ transform: scaleX(1); }
+  50%{ transform: scaleX(0.15); }
+}
+
+/* ============ States ============ */
+.state-screen{
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  min-height: 70vh; text-align:center; padding: 0 24px; gap: 10px;
+  color: var(--text-dim);
+}
+.spinner{
+  width:34px; height:34px; border-radius:50%;
+  border: 3px solid var(--border); border-top-color: var(--gold);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin{ to{ transform: rotate(360deg); } }
+.error-title{ color: var(--text); font-weight:700; font-size:16px; }
+
+/* ============ Sections ============ */
+.tab-panel{ display:none; padding: 4px 16px 16px; animation: fadein .25s ease; }
+.tab-panel.active{ display:block; }
+@keyframes fadein{ from{ opacity:0; transform: translateY(6px);} to{opacity:1; transform:none;} }
+
+.section-head{ margin: 12px 0 14px; }
+.section-head.compact{ margin: 20px 0 10px; }
+.section-head h2{ font-family: var(--font-display); font-size:19px; margin:0 0 2px; }
+.section-head h3{ font-family: var(--font-display); font-size:15px; margin:0; color: var(--text-dim); }
+.section-sub{ color: var(--text-dim); font-size:13px; }
+
+/* ============ Task cards ============ */
+.task-list{ display:flex; flex-direction:column; gap:10px; }
+.task-card{
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  display:flex; align-items:center; gap:12px;
+}
+.task-icon{
+  width:40px; height:40px; border-radius:12px;
+  display:flex; align-items:center; justify-content:center;
+  font-size:18px; flex-shrink:0;
+  background: var(--surface-2);
+}
+.task-body{ flex:1; min-width:0; }
+.task-title{ font-weight:600; font-size:14px; margin:0 0 2px; }
+.task-desc{ color: var(--text-dim); font-size:12px; margin:0 0 6px; }
+.task-reward{
+  display:inline-flex; align-items:center; gap:4px;
+  font-family: var(--font-display); font-weight:700; font-size:12px;
+  color: var(--gold);
+}
+.task-action{ flex-shrink:0; }
+
+.btn{
+  border:none; border-radius: 999px; padding: 9px 16px;
+  font-family: var(--font-body); font-weight:600; font-size:13px;
+  cursor:pointer; transition: transform .1s ease, opacity .2s ease;
+}
+.btn:active{ transform: scale(0.96); }
+.btn-primary{ background: var(--gold); color:#1A1400; }
+.btn-secondary{ background: var(--surface-2); color: var(--text); border:1px solid var(--border); }
+.btn-teal{ background: var(--teal); color:#062622; }
+.btn-danger{ background: var(--danger); color:#2B0000; }
+.btn[disabled]{ opacity:.5; cursor:default; }
+.btn-row{ display:flex; gap:10px; flex-wrap:wrap; }
+.file-btn{ display:inline-flex; align-items:center; justify-content:center; }
+
+.empty-note{ color: var(--text-dim); font-size:13px; text-align:center; padding: 30px 0; }
+
+/* ============ Wallet ============ */
+.wallet-hero{
+  background: linear-gradient(145deg, var(--surface-2), var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px; text-align:center; margin: 6px 0 18px;
+}
+.wallet-label{ color: var(--text-dim); font-size:13px; }
+.wallet-amount{
+  font-family: var(--font-display); font-weight:800; font-size:32px;
+  display:flex; align-items:center; justify-content:center; gap:8px; margin-top:6px;
+  color: var(--gold);
+}
+
+.card-form{
+  background: var(--surface); border:1px solid var(--border);
+  border-radius: var(--radius); padding:16px; margin-bottom:16px;
+  display:flex; flex-direction:column; gap:10px;
+}
+.card-form h3{ margin:0 0 4px; font-family: var(--font-display); font-size:15px; }
+.card-form label{ display:flex; flex-direction:column; gap:5px; font-size:12px; color: var(--text-dim); }
+.card-form input, .card-form select{
+  background: var(--surface-2); border:1px solid var(--border); color: var(--text);
+  padding: 10px 12px; border-radius: var(--radius-sm); font-size:14px; font-family: var(--font-body);
+}
+.form-msg{ font-size:12px; margin:0; min-height:14px; }
+.form-msg.ok{ color: var(--teal); }
+.form-msg.err{ color: var(--danger); }
+
+.withdraw-list{ display:flex; flex-direction:column; gap:8px; }
+.withdraw-item{
+  background: var(--surface); border:1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px 12px; display:flex; justify-content:space-between; align-items:center; font-size:13px;
+}
+.status-pill{ font-size:11px; font-weight:700; padding:3px 9px; border-radius:999px; }
+.status-pending{ background:#3A3312; color:#F0C94A; }
+.status-approved{ background:#123A2A; color:#35D0BA; }
+.status-rejected{ background:#3A1414; color:#FF6B6B; }
+
+/* ============ Admin ============ */
+.stats-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:16px; }
+.stat-box{
+  background: var(--surface); border:1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 12px; text-align:center;
+}
+.stat-box .num{ font-family: var(--font-display); font-weight:800; font-size:20px; color: var(--gold); }
+.stat-box .label{ font-size:11px; color: var(--text-dim); }
+
+/* ============ Bottom nav ============ */
+.bottom-nav{
+  position: fixed; bottom:0; left:50%; transform: translateX(-50%);
+  width:100%; max-width:480px;
+  display:flex; background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom));
+  z-index: 20;
+}
+.nav-btn{
+  flex:1; background:none; border:none; color: var(--text-dim);
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  font-size:11px; font-family: var(--font-body); padding:6px 0; cursor:pointer;
+}
+.nav-btn .nav-icon{ font-size:18px; }
+.nav-btn.active{ color: var(--gold); }
