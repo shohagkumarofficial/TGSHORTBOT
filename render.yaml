@@ -20,3 +20,5 @@ services:
         value: "11646009"
       - key: GIGAPUB_PROJECT_ID
         value: "7860"
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
