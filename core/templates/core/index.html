@@ -23,6 +23,17 @@
 </head>
 <body>
 
+<!-- SVG আইকনগুলোর শেয়ার্ড gradient — একবারই ডিফাইন করা হয়েছে -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <radialGradient id="coinGrad" cx="35%" cy="30%" r="75%">
+      <stop offset="0%" stop-color="#FFE29A"/>
+      <stop offset="60%" stop-color="#FFC94A"/>
+      <stop offset="100%" stop-color="#8A6B23"/>
+    </radialGradient>
+  </defs>
+</svg>
+
 <div id="app">
 
   <!-- ===== Header ===== -->
@@ -32,7 +43,11 @@
       <span class="brand-name">SHORT <em>Tasks</em></span>
     </div>
     <button class="coin-pill" id="coinPill" type="button">
-      <span class="coin-icon" aria-hidden="true"></span>
+      <svg class="coin-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="10" fill="url(#coinGrad)"/>
+        <circle cx="12" cy="12" r="7" fill="none" stroke="#8A6B23" stroke-width="1" opacity=".55"/>
+        <path d="M12 7.2v9.6M9.4 9.3c0-1 .9-1.8 2.6-1.8s2.6.7 2.6 1.6c0 2.2-5.2 1-5.2 3.2 0 .9 1 1.7 2.6 1.7s2.6-.8 2.6-1.8" stroke="#7A5A15" stroke-width="1.1" fill="none" stroke-linecap="round"/>
+      </svg>
       <span id="coinBalance">0</span>
     </button>
   </header>
@@ -52,8 +67,58 @@
   <!-- ===== Main content ===== -->
   <main id="mainContent" class="hidden">
 
+    <!-- ---- DASHBOARD TAB ---- -->
+    <section id="tab-dashboard" class="tab-panel active">
+      <div class="section-head">
+        <h2>ড্যাশবোর্ড</h2>
+        <span class="section-sub">আপনার ইনকাম এক নজরে</span>
+      </div>
+
+      <div class="hero-card">
+        <span class="hero-label">আপনার ব্যালেন্স</span>
+        <div class="hero-amount">
+          <svg class="coin-icon lg" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" fill="url(#coinGrad)"/>
+            <circle cx="12" cy="12" r="7" fill="none" stroke="#8A6B23" stroke-width="1" opacity=".55"/>
+            <path d="M12 7.2v9.6M9.4 9.3c0-1 .9-1.8 2.6-1.8s2.6.7 2.6 1.6c0 2.2-5.2 1-5.2 3.2 0 .9 1 1.7 2.6 1.7s2.6-.8 2.6-1.8" stroke="#7A5A15" stroke-width="1.1" fill="none" stroke-linecap="round"/>
+          </svg>
+          <span id="dashBalance">0</span>
+        </div>
+        <button class="btn btn-secondary hero-btn" type="button" data-jump="wallet">
+          উইথড্র করুন
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+
+      <div class="checkin-card">
+        <div class="checkin-top">
+          <div class="checkin-streak">
+            <span class="icon-badge icon-fire">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2.3c.4 3.1-2.1 4.2-2.6 6.6-.2 1.1.2 1.9.5 2.4-1.1-.2-2.2-1.1-2.6-2.5-1.2 1.6-1.7 3.4-1.7 4.8 0 3.9 3 6.9 6.4 6.9s6.4-3 6.4-6.9c0-2.7-1.4-4.6-2.4-6-.1 1.5-.7 2.4-1.5 3 .5-2.9-1.4-5.9-2.5-8.3Z"/></svg>
+            </span>
+            <div>
+              <div class="streak-num"><span id="streakNum">0</span> দিন</div>
+              <div class="streak-label">চলতি স্ট্রিক</div>
+            </div>
+          </div>
+          <div class="checkin-meta">মোট চেক-ইন <b id="totalCheckins">0</b></div>
+        </div>
+
+        <div class="streak-strip" id="streakStrip"></div>
+
+        <button id="checkinBtn" class="btn btn-primary btn-block" type="button">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.2"/><path d="m8 12.3 2.6 2.6L16.3 9"/></svg>
+          <span id="checkinBtnText">আজকের চেক-ইন করুন (+<span id="nextReward">10</span>)</span>
+        </button>
+        <p id="checkinMsg" class="form-msg"></p>
+      </div>
+
+      <div class="section-head compact"><h3>আপনার পরিসংখ্যান</h3></div>
+      <div class="stats-grid" id="dashStats"></div>
+    </section>
+
     <!-- ---- TASKS TAB ---- -->
-    <section id="tab-tasks" class="tab-panel active">
+    <section id="tab-tasks" class="tab-panel">
       <div class="section-head">
         <h2>ছোট টাস্ক করুন</h2>
         <span class="section-sub">প্রতিটি টাস্ক শেষ করে কয়েন জিতুন</span>
@@ -66,7 +131,14 @@
     <section id="tab-wallet" class="tab-panel">
       <div class="wallet-hero">
         <span class="wallet-label">আপনার ব্যালেন্স</span>
-        <div class="wallet-amount"><span class="coin-icon lg" aria-hidden="true"></span><span id="walletBalance">0</span></div>
+        <div class="wallet-amount">
+          <svg class="coin-icon lg" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" fill="url(#coinGrad)"/>
+            <circle cx="12" cy="12" r="7" fill="none" stroke="#8A6B23" stroke-width="1" opacity=".55"/>
+            <path d="M12 7.2v9.6M9.4 9.3c0-1 .9-1.8 2.6-1.8s2.6.7 2.6 1.6c0 2.2-5.2 1-5.2 3.2 0 .9 1 1.7 2.6 1.7s2.6-.8 2.6-1.8" stroke="#7A5A15" stroke-width="1.1" fill="none" stroke-linecap="round"/>
+          </svg>
+          <span id="walletBalance">0</span>
+        </div>
       </div>
 
       <form id="withdrawForm" class="card-form">
@@ -99,9 +171,13 @@
       <div class="card-form">
         <h3>ব্যাকআপ / রিস্টোর</h3>
         <div class="btn-row">
-          <button id="backupBtn" type="button" class="btn btn-secondary">📥 ব্যাকআপ ডাউনলোড</button>
+          <button id="backupBtn" type="button" class="btn btn-secondary">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5v11.4M8 11.5l4 4 4-4"/><path d="M4.5 17v2.3a1.7 1.7 0 0 0 1.7 1.7h11.6a1.7 1.7 0 0 0 1.7-1.7V17"/></svg>
+            ব্যাকআপ ডাউনলোড
+          </button>
           <label class="btn btn-secondary file-btn">
-            📤 রিস্টোর আপলোড
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5V9.1M8 13l4-4 4 4"/><path d="M4.5 17v2.3a1.7 1.7 0 0 0 1.7 1.7h11.6a1.7 1.7 0 0 0 1.7-1.7V17"/></svg>
+            রিস্টোর আপলোড
             <input type="file" id="restoreFile" accept="application/json" hidden />
           </label>
         </div>
@@ -138,6 +214,10 @@
             <option value="gigapub">GigaPub</option>
           </select>
         </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="taskDaily" />
+          <span>ডেইলি টাস্ক (প্রতি ২৪ ঘন্টায় আবার claim করা যাবে)</span>
+        </label>
         <button type="submit" class="btn btn-primary">টাস্ক তৈরি করুন</button>
         <p id="taskFormMsg" class="form-msg"></p>
       </form>
@@ -153,14 +233,29 @@
 
   <!-- ===== Bottom nav ===== -->
   <nav id="bottomNav" class="bottom-nav hidden">
-    <button class="nav-btn active" data-tab="tasks">
-      <span class="nav-icon">✅</span><span>টাস্ক</span>
+    <button class="nav-btn active" data-tab="dashboard">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 10v9a1 1 0 0 0 1 1H9a1 1 0 0 0 1-1v-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v4a1 1 0 0 0 1 1h2.5a1 1 0 0 0 1-1v-9"/></svg>
+      </span>
+      <span>হোম</span>
+    </button>
+    <button class="nav-btn" data-tab="tasks">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><path d="m5.5 7.5 1.2 1.2L9 6.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><path d="m5.5 16.5 1.2 1.2L9 15.5"/><path d="M14 6h6M14 10h6M14 15.5h6M14 19.5h6"/></svg>
+      </span>
+      <span>টাস্ক</span>
     </button>
     <button class="nav-btn" data-tab="wallet">
-      <span class="nav-icon">👛</span><span>ওয়ালেট</span>
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8a2 2 0 0 1 2-2h13a1 1 0 0 1 1 1v2"/><path d="M3 8v9a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-4"/><path d="M15 12.5h4a1 1 0 0 1 1 1V15a1 1 0 0 1-1 1h-4a2 2 0 0 1 0-4Z"/></svg>
+      </span>
+      <span>ওয়ালেট</span>
     </button>
     <button class="nav-btn hidden" data-tab="admin" id="adminNavBtn">
-      <span class="nav-icon">⚙️</span><span>অ্যাডমিন</span>
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2.4M12 19.1v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7"/></svg>
+      </span>
+      <span>অ্যাডমিন</span>
     </button>
   </nav>
 
