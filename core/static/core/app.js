@@ -14,11 +14,13 @@
   // ---------------------------------------------------------------------
   // Telegram bootstrap
   // ---------------------------------------------------------------------
+  // নোট: #errorState (ল্যান্ডিং পেজ) ডিফল্টভাবেই দৃশ্যমান (HTML দেখুন), যাতে
+  // Telegram এর বাইরে সাধারণ ব্রাউজার/অ্যাড-নেটওয়ার্ক মডারেশন বট থেকে ভিজিট
+  // করলে (JS না চললেও) একটা বাস্তব ব্র্যান্ডেড পেজ দেখা যায়। ভ্যালিড Telegram
+  // সেশন কনফার্ম হলেই কেবল সেটা লুকিয়ে অ্যাপ লোড করা হয়।
   function bootstrap() {
-    if (!tg) {
-      showError();
-      return;
-    }
+    if (!tg) return; // Telegram SDK নেই — ল্যান্ডিং পেজ যেমন আছে তেমনই থাকবে
+
     tg.ready();
     tg.expand();
     try {
@@ -27,15 +29,21 @@
     } catch (e) { /* পুরনো ক্লায়েন্টে সাপোর্ট নাও থাকতে পারে */ }
 
     INIT_DATA = tg.initData || "";
-    if (!INIT_DATA) {
-      showError();
-      return;
-    }
+    if (!INIT_DATA) return; // Telegram এর বাইরে থেকে খোলা — ল্যান্ডিং পেজ থাকবে
+
+    enterApp();
+  }
+
+  function enterApp() {
+    el("errorState").classList.add("hidden");
+    el("loadingState").classList.remove("hidden");
     authenticate();
   }
 
-  function showError() {
+  function showFallback() {
     el("loadingState").classList.add("hidden");
+    el("mainContent").classList.add("hidden");
+    el("bottomNav").classList.add("hidden");
     el("errorState").classList.remove("hidden");
   }
 
@@ -85,7 +93,7 @@
   async function authenticate() {
     const res = await api("/api/auth/", { method: "POST" });
     if (!res.ok) {
-      showError();
+      showFallback();
       return;
     }
     CURRENT_USER = res.user;
