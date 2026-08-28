@@ -278,6 +278,19 @@ class CPMSetting(BaseModel):
     admin_cpm: Optional[float] = None
     sub_admin_cpm: Optional[float] = None
 
+    # Platform-wide default `Admin.link_auto_delete_months` applied
+    # automatically to a Viewer the moment they're promoted to Sub Admin
+    # (storage.add_traffic_source) — so the Owner doesn't have to
+    # remember to open every new Sub Admin's profile and set it by hand.
+    # None/0 means "don't auto-set anything" (a fresh Sub Admin keeps
+    # the same 'never' default as before this setting existed). Changing
+    # this later is never retroactive: it only affects Sub Admins
+    # promoted from now on, exactly like a CPM-rate change never
+    # re-prices views that already happened. The Owner can still
+    # override any individual Sub Admin's value afterward from their
+    # profile — that per-person value always wins from then on.
+    default_sub_admin_auto_delete_months: Optional[int] = None
+
     updated_at: str = Field(default_factory=now_iso)
     updated_by: Optional[int] = None
 

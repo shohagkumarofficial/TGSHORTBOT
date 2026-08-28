@@ -656,6 +656,24 @@ async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner))
             if sub_admin_cpm < 0:
                 raise HTTPException(status_code=400, detail="sub_admin_cpm must be >= 0 or null")
         extra["sub_admin_cpm"] = sub_admin_cpm
+    if "default_sub_admin_auto_delete_months" in payload:
+        months = payload.get("default_sub_admin_auto_delete_months")
+        if months:
+            try:
+                months = int(months)
+            except (TypeError, ValueError):
+                raise HTTPException(
+                    status_code=400, detail="default_sub_admin_auto_delete_months must be a whole number or null"
+                )
+            if months not in Storage.SUB_ADMIN_AUTO_DELETE_CHOICES:
+                valid = ", ".join(str(m) for m in Storage.SUB_ADMIN_AUTO_DELETE_CHOICES)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"default_sub_admin_auto_delete_months must be null/0 (never) or one of: {valid}",
+                )
+        else:
+            months = None
+        extra["default_sub_admin_auto_delete_months"] = months
 
     cs = await storage.update_cpm_setting(
         mode=mode_enum,

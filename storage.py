@@ -374,6 +374,13 @@ class Storage:
             admin.traffic_sources.append(source)
             if admin.role == Role.VIEWER:
                 admin.role = Role.SUB_ADMIN
+                # Pre-fill this new Sub Admin's link auto-delete window
+                # from the Owner's platform-wide default, if one is set,
+                # so it doesn't sit on "never" until someone remembers to
+                # open their profile — see CPMSetting.
+                # default_sub_admin_auto_delete_months's docstring.
+                if self.cpm_setting.default_sub_admin_auto_delete_months:
+                    admin.link_auto_delete_months = self.cpm_setting.default_sub_admin_auto_delete_months
                 self.cpm_history.append(
                     CPMHistoryEntry(
                         event="role_change",
@@ -680,6 +687,7 @@ class Storage:
         max_daily_views_per_admin: Optional[int] = None,
         admin_cpm=_UNSET,
         sub_admin_cpm=_UNSET,
+        default_sub_admin_auto_delete_months=_UNSET,
         updated_by: Optional[int] = None,
     ) -> CPMSetting:
         async with self._lock:
@@ -732,6 +740,15 @@ class Storage:
             if sub_admin_cpm is not _UNSET and sub_admin_cpm != cs.sub_admin_cpm:
                 detail["sub_admin_cpm"] = {"from": cs.sub_admin_cpm, "to": sub_admin_cpm}
                 cs.sub_admin_cpm = sub_admin_cpm
+            if (
+                default_sub_admin_auto_delete_months is not _UNSET
+                and default_sub_admin_auto_delete_months != cs.default_sub_admin_auto_delete_months
+            ):
+                detail["default_sub_admin_auto_delete_months"] = {
+                    "from": cs.default_sub_admin_auto_delete_months,
+                    "to": default_sub_admin_auto_delete_months,
+                }
+                cs.default_sub_admin_auto_delete_months = default_sub_admin_auto_delete_months
 
             if reset_cycle:
                 cs.cycle_started_at = now_iso()

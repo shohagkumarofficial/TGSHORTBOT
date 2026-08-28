@@ -370,14 +370,18 @@ alter table links
 
 alter table cpm_settings
   add column if not exists admin_cpm double precision,
-  add column if not exists sub_admin_cpm double precision;
+  add column if not exists sub_admin_cpm double precision,
+  add column if not exists default_sub_admin_auto_delete_months integer;
 ```
 
 (The `cpm_settings` columns power the CPM tab's "Per-role CPM" card —
 platform-wide rates for the Admin and Sub Admin roles, separate from the
-per-Sub-Admin override on the Admins tab. Writes still work without this
-migration — `_safe_upsert` drops unknown columns and logs a warning — but
-the rate won't actually persist until it's run.)
+per-Sub-Admin override on the Admins tab — and the "default for new Sub
+Admins" auto-delete card, which pre-fills a Viewer's link auto-delete
+window the moment they're promoted to Sub Admin, so the Owner doesn't
+have to open every new Sub Admin's profile by hand. Writes still work
+without this migration — `_safe_upsert` drops unknown columns and logs a
+warning — but the values won't actually persist until it's run.)
 
 If your `admins.role` column has a `CHECK` constraint limiting it to
 specific values (e.g. only `'owner'`/`'admin'`), widen it to also allow
