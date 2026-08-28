@@ -1753,6 +1753,21 @@
         <div class="btn-row"><button class="btn btn-primary btn-block" id="roleCpmSave">Save per-role CPM</button></div>
       </div>
       <div class="card">
+        <h3>${icon("clock", 15)} Sub Admin link auto-delete — default for new Sub Admins</h3>
+        <div class="meta">${cs.default_sub_admin_auto_delete_months
+          ? `Every Viewer promoted to Sub Admin from now on starts with links auto-deleting after <b style="color:var(--text)">${cs.default_sub_admin_auto_delete_months} months</b>.`
+          : "Every Viewer promoted to Sub Admin from now on starts with links that never auto-delete (the same as before this setting existed)."}
+        This only pre-fills a brand new Sub Admin's own setting at the moment they're promoted — it never changes
+        anyone's setting retroactively, and the Owner can still override any individual Sub Admin from their
+        profile on the Admins tab afterward.</div>
+        <label>Default auto-delete window for new Sub Admins</label>
+        <select id="defaultAutoDeleteSelect">
+          <option value="0"${!cs.default_sub_admin_auto_delete_months ? " selected" : ""}>Never</option>
+          ${SUB_ADMIN_AUTO_DELETE_CHOICES.map((m) => `<option value="${m}"${cs.default_sub_admin_auto_delete_months === m ? " selected" : ""}>${m} months</option>`).join("")}
+        </select>
+        <div class="btn-row"><button class="btn btn-outline btn-block" id="defaultAutoDeleteSave">Save default</button></div>
+      </div>
+      <div class="card">
         <h3>${icon("clock", 15)} Ad view delay</h3>
         <div class="meta">Adsgram needs a short gap before the next reward ad is ready — the viewer sees a
         counting-down button for this many seconds between ad 1→2 and ad 2→3. Default is 7s; 5–8s is the
@@ -1816,6 +1831,20 @@
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Save per-role CPM";
+      }
+    });
+    el.querySelector("#defaultAutoDeleteSave").addEventListener("click", async () => {
+      const btn = el.querySelector("#defaultAutoDeleteSave");
+      const months = parseInt(el.querySelector("#defaultAutoDeleteSelect").value, 10) || null;
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ default_sub_admin_auto_delete_months: months }) });
+        toast("Default updated for future Sub Admins", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save default";
       }
     });
     el.querySelector("#adDelaySave").addEventListener("click", async () => {
