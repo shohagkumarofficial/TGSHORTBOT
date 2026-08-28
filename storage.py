@@ -210,7 +210,9 @@ class Storage:
                 return _Empty()
             raise
 
-    async def _safe_upsert(self, table: str, rows: list[dict], on_conflict: str) -> None:
+    async def _safe_upsert(
+        self, table: str, rows: list[dict], on_conflict: str, tolerate_missing_table: bool = False
+    ) -> None:
         """Upserts `rows` into `table`, tolerating a field that exists on
         the Python model but not yet as a real column in Supabase — i.e.
         a pending `alter table` migration from README.md. Without this,
@@ -222,6 +224,19 @@ class Storage:
         logging a warning each time so the pending migration is still
         very visible in the logs — the request itself just succeeds
         without persisting that one field until the migration is run.
+
+        `tolerate_missing_table=True` additionally self-heals a *whole
+        table* not existing yet (mirrors `_select_or_empty`'s tolerance
+        at load time) — used only for genuinely optional, newer-feature
+        tables like `api_keys` (see README.md's schema notes). Those
+        rows are simply not persisted for now; the in-memory state this
+        call was writing from (e.g. `self.api_keys`) already has them,
+        so the feature still works for the life of this process, it
+        just won't survive a restart until the migration is run. Left
+        False (the default) for every other table — those are core data
+        (balances, links, views...) where silently swallowing a failed
+        write would risk masking real data loss, so a missing core table
+        should keep raising loudly instead.
         """
         if not rows:
             return
@@ -231,6 +246,14 @@ class Storage:
                 await self.client.table(table).upsert(remaining, on_conflict=on_conflict).execute()
                 return
             except Exception as exc:
+                if tolerate_missing_table and ("PGRST205" in str(exc) or "Could not find the table" in str(exc)):
+                    logger.warning(
+                        "Supabase table '%s' doesn't exist yet (pending migration — see "
+                        "README.md's schema notes). This write's rows are kept in memory "
+                        "for now but won't be persisted until the table is created.",
+                        table,
+                    )
+                    return
                 match = _MISSING_COLUMN_RE.search(str(exc))
                 if not match:
                     raise
@@ -275,7 +298,7 @@ class Storage:
         await self._safe_upsert("policy_settings", [policy_setting_row], on_conflict="id")
         await self._safe_upsert("ad_network_settings", [ad_network_setting_row], on_conflict="id")
         await self._safe_upsert("cpm_history", cpm_history_rows, on_conflict="entry_id")
-        await self._safe_upsert("api_keys", api_key_rows, on_conflict="key_id")
+        await self._safe_upsert("api_keys", api_key_rows, on_conflict="key_id", tolerate_missing_table=True)
 
     async def save(self) -> None:
         async with self._lock:
