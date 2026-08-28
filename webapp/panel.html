@@ -547,6 +547,23 @@
     return ROLE_META[role] || ROLE_META.viewer;
   }
 
+  // Mirrors models.effective_cpm()'s priority order client-side, for
+  // showing a Sub Admin/Admin their own actual rate on their home card
+  // — not the platform base rate, which per-role/per-Sub-Admin overrides
+  // (Owner's CPM tab / Admins tab) may no longer match.
+  function myEffectiveCpm() {
+    const cs = state.cpm;
+    const me = state.me;
+    if (!cs || !me) return null;
+    if (me.role === "sub_admin") {
+      if (me.sub_admin_cpm != null) return me.sub_admin_cpm;
+      if (cs.sub_admin_cpm != null) return cs.sub_admin_cpm;
+    } else if (me.role === "admin" && cs.admin_cpm != null) {
+      return cs.admin_cpm;
+    }
+    return cs.current_cpm;
+  }
+
   function openRolePermissionsModal(role) {
     const meta = roleMeta(role);
     openModal(`
@@ -1105,7 +1122,7 @@
       if (state.cpm && state.cpm.mode === "scheduled") {
         cycleNote = `${icon("clock", 13)} Next payout in <b>${secondsToClock(state.cpm.seconds_to_payout)}</b> — rate is set at payout time.`;
       } else if (state.cpm) {
-        cycleNote = `${icon("trendingUp", 13)} Real-time CPM active — currently <b>${fmt(state.cpm.current_cpm)}</b> per view.`;
+        cycleNote = `${icon("trendingUp", 13)} Real-time CPM active — currently <b>${fmt(myEffectiveCpm())}</b> per view.`;
       }
       card.innerHTML = `
         <div class="balance-row">
