@@ -917,6 +917,11 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     async def withdraw_cmd(message: Message, state: FSMContext) -> None:
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
         cpm_setting = await storage.get_cpm_setting()
+        if cpm_setting.withdrawals_paused:
+            await message.answer(
+                "⏸ " + (cpm_setting.withdrawals_paused_message or "Owner এখন উইথড্র সিস্টেম সাময়িকভাবে বন্ধ রেখেছেন। একটু পরে আবার চেষ্টা করুন।")
+            )
+            return
         if admin.balance_confirmed <= 0:
             await message.answer("তোলার মতো কোনো নিশ্চিত ব্যালেন্স নেই।")
             return
@@ -968,6 +973,12 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     async def withdraw_amount(message: Message, state: FSMContext) -> None:
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
         cpm_setting = await storage.get_cpm_setting()
+        if cpm_setting.withdrawals_paused:
+            await state.clear()
+            await message.answer(
+                "⏸ " + (cpm_setting.withdrawals_paused_message or "Owner এখন উইথড্র সিস্টেম সাময়িকভাবে বন্ধ রেখেছেন। একটু পরে আবার চেষ্টা করুন।")
+            )
+            return
         try:
             amount = float((message.text or "").strip())
         except ValueError:

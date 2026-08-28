@@ -127,6 +127,15 @@ committed, so there's nothing to conflict with in version control.
   a profit or a loss. Derived from each view's own `credited_amount`
   (never from `balance_confirmed`), so a manual balance correction via
   `set_admin_balance` never skews it.
+- **Withdrawal pause** (`CPMSetting.withdrawals_paused` /
+  `storage.set_withdrawals_paused`, Owner-only, set from the panel's CPM
+  Settings screen): a kill switch for new withdrawal requests, meant for
+  when the Owner is busy or on leave. `POST /api/withdraw` and the bot's
+  `/withdraw` flow both reject a new request outright while paused
+  (with an optional Owner-set message), but anything already `PENDING`
+  when the pause is turned on is untouched and still resolvable
+  normally — this only stops new requests from being created, it's not
+  a freeze on the existing queue.
 - **CPM engine** (4.5 / 9.5): `cpm_engine.py` handles both modes.
   Real-time credits `balance_confirmed` the instant a view is logged.
   Scheduled holds views as `pending_payout`; a background watcher

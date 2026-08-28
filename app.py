@@ -745,6 +745,20 @@ async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner))
     return cs.model_dump()
 
 
+@app.post("/api/admin/withdrawals/pause")
+async def set_withdrawals_paused(payload: dict, owner: Admin = Depends(require_owner)):
+    """Owner-only kill switch: while paused, POST /api/withdraw (and the
+    bot's /withdraw flow) reject every new request outright — meant for
+    when the Owner is busy or on leave. See CPMSetting.withdrawals_paused's
+    docstring for exactly what is and isn't affected."""
+    paused = bool(payload.get("paused"))
+    message = (payload.get("message") or "").strip() or None
+    if message and len(message) > 300:
+        raise HTTPException(status_code=400, detail="message must be 300 characters or fewer")
+    cs = await storage.set_withdrawals_paused(paused, message, changed_by=owner.telegram_id)
+    return cs.model_dump()
+
+
 # ---------------------------------------------------------------------------
 # Ad networks — Adsgram / Monetag / GigaPub credentials + the Ad1/Ad2/Ad3...
 # network sequence, both Owner-only (see webapp/panel.html's Ad Networks tab
@@ -830,6 +844,13 @@ async def admin_update_policy(payload: dict, owner: Admin = Depends(require_owne
 
 @app.post("/api/withdraw")
 async def request_withdrawal(payload: dict, admin: Admin = Depends(require_admin)):
+    cs = await storage.get_cpm_setting()
+    if cs.withdrawals_paused:
+        raise HTTPException(
+            status_code=403,
+            detail=cs.withdrawals_paused_message or "Withdrawals are temporarily paused by the Owner. Please try again later.",
+        )
+
     try:
         amount = float(payload.get("amount"))
     except (TypeError, ValueError):
@@ -848,7 +869,6 @@ async def request_withdrawal(payload: dict, admin: Admin = Depends(require_admin
     if amount > admin.balance_confirmed:
         raise HTTPException(status_code=400, detail="amount exceeds confirmed balance")
 
-    cs = await storage.get_cpm_setting()
     if amount < cs.min_withdraw_amount:
         raise HTTPException(
             status_code=400,

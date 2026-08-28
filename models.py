@@ -365,6 +365,21 @@ class CPMSetting(BaseModel):
     # profile — that per-person value always wins from then on.
     default_sub_admin_auto_delete_months: Optional[int] = None
 
+    # Owner-only kill switch for POST /api/withdraw (storage.
+    # set_withdrawals_paused) — meant for when the Owner is busy or on
+    # leave and can't review/pay out withdrawal requests promptly.
+    # `False` (default) is normal operation. While `True`, every Admin/
+    # Sub Admin's withdrawal *request* is rejected outright (400, with
+    # `withdrawals_paused_message` as the detail if set) before a
+    # WithdrawRequest row is even created — nothing queues up invisibly
+    # to be dealt with later, the Admin just tries again once the Owner
+    # flips it back. This only blocks *new* requests: any withdrawal
+    # already PENDING when the pause is turned on stays exactly as
+    # pending, and the Owner can still resolve it normally — pausing
+    # is not the same as freezing the whole withdrawal queue.
+    withdrawals_paused: bool = False
+    withdrawals_paused_message: Optional[str] = None
+
     updated_at: str = Field(default_factory=now_iso)
     updated_by: Optional[int] = None
 

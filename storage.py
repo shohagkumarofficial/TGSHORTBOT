@@ -863,6 +863,31 @@ class Storage:
             await self._save_locked()
             return cs
 
+    async def set_withdrawals_paused(
+        self, paused: bool, message: Optional[str], changed_by: int
+    ) -> CPMSetting:
+        """Owner-only kill switch for new withdrawal requests — see
+        `CPMSetting.withdrawals_paused`'s docstring for the exact
+        semantics (only blocks new requests; anything already PENDING
+        is untouched and still resolvable normally).
+        """
+        async with self._lock:
+            cs = self.cpm_setting
+            if cs.withdrawals_paused == paused and cs.withdrawals_paused_message == message:
+                return cs
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="withdrawals_paused_change",
+                    detail={"from": cs.withdrawals_paused, "to": paused, "message": message, "by": changed_by},
+                )
+            )
+            cs.withdrawals_paused = paused
+            cs.withdrawals_paused_message = message
+            cs.updated_at = now_iso()
+            cs.updated_by = changed_by
+            await self._save_locked()
+            return cs
+
     async def append_history(self, event: str, detail: dict) -> None:
         async with self._lock:
             self.cpm_history.append(CPMHistoryEntry(event=event, detail=detail))
