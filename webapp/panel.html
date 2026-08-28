@@ -1724,6 +1724,18 @@
           Whatever rate is set at that moment applies to every view accumulated this cycle.</div>
         </div>` : ""}
       <div class="card">
+        <h3>${icon("users", 15)} Per-role CPM</h3>
+        <div class="meta">Give every Admin and every Sub Admin their own platform-wide rate, separate from the base
+        CPM above. Leave a field blank to fall back to the base rate for that role. This is different from the
+        per-Sub-Admin override on the Admins tab, which — if set — always wins over both of these for that one
+        person.</div>
+        <label>Admin CPM (blank = base rate, ${fmt(cs.current_cpm)})</label>
+        <input type="number" id="roleAdminCpmInput" min="0" step="0.0001" value="${cs.admin_cpm != null ? cs.admin_cpm : ""}" placeholder="Base rate" />
+        <label>Sub Admin CPM (blank = base rate, ${fmt(cs.current_cpm)})</label>
+        <input type="number" id="roleSubAdminCpmInput" min="0" step="0.0001" value="${cs.sub_admin_cpm != null ? cs.sub_admin_cpm : ""}" placeholder="Base rate" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="roleCpmSave">Save per-role CPM</button></div>
+      </div>
+      <div class="card">
         <h3>${icon("clock", 15)} Ad view delay</h3>
         <div class="meta">Adsgram needs a short gap before the next reward ad is ready — the viewer sees a
         counting-down button for this many seconds between ad 1→2 and ad 2→3. Default is 7s; 5–8s is the
@@ -1768,6 +1780,25 @@
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Save CPM settings";
+      }
+    });
+    el.querySelector("#roleCpmSave").addEventListener("click", async () => {
+      const btn = el.querySelector("#roleCpmSave");
+      const adminRaw = el.querySelector("#roleAdminCpmInput").value.trim();
+      const subAdminRaw = el.querySelector("#roleSubAdminCpmInput").value.trim();
+      const admin_cpm = adminRaw === "" ? null : parseFloat(adminRaw);
+      const sub_admin_cpm = subAdminRaw === "" ? null : parseFloat(subAdminRaw);
+      if (admin_cpm !== null && !(admin_cpm >= 0)) { toast("Enter a valid Admin CPM (0 or more), or leave it blank", "err"); return; }
+      if (sub_admin_cpm !== null && !(sub_admin_cpm >= 0)) { toast("Enter a valid Sub Admin CPM (0 or more), or leave it blank", "err"); return; }
+      btn.disabled = true; btn.textContent = "Saving…";
+      try {
+        await api("/api/admin/cpm", { method: "POST", body: JSON.stringify({ admin_cpm, sub_admin_cpm }) });
+        toast("Per-role CPM updated", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+      } finally {
+        btn.disabled = false; btn.textContent = "Save per-role CPM";
       }
     });
     el.querySelector("#adDelaySave").addEventListener("click", async () => {
