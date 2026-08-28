@@ -578,7 +578,7 @@
 
   // Mirrors storage.Storage.MIN_AD_COUNT / MAX_AD_COUNT — client-side
   // bound so a bad value is caught before the round trip, not instead of
-  // the server-side check in POST /api/admin/links/{short_code}/ad-count.
+  // the server-side check in POST /api/admin/admins/{telegram_id}/ad-count.
   const AD_COUNT_MIN = 1;
   const AD_COUNT_MAX = 10;
 
@@ -614,48 +614,18 @@
     if (!links || !links.length) {
       return `<div class="card"><div class="empty">This Admin hasn't created any links yet.</div></div>`;
     }
+    // Read-only: ad count is now set once on this Admin/Sub Admin's
+    // profile (see the "Ad count override" card above) rather than per
+    // link — every row shows the same effective_ad_count for that
+    // reason, not a per-link value.
     return links.map((l) => `
       <div class="card" data-short-code="${esc(l.short_code)}">
         <div class="meta" style="color:var(--text); font-weight:600;">/${esc(l.short_code)}</div>
         <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(l.destination_url)}</div>
         <div class="meta">${l.view_count} views${l.daily_capped_views ? ` · ${l.daily_capped_views} missed` : ""}</div>
-        <label style="margin-top:8px;">Ads to unlock (legacy — actual count now follows Ad display order)</label>
-        <div class="btn-row" style="align-items:center;">
-          <input type="number" class="adCountInput" min="${AD_COUNT_MIN}" max="${AD_COUNT_MAX}" step="1" value="${l.ad_count}" style="max-width:90px;" />
-          <button class="btn btn-outline btn-sm saveAdCountBtn">Save</button>
-        </div>
+        <div class="meta">${icon("play", 12)} ${l.effective_ad_count} ad${l.effective_ad_count === 1 ? "" : "s"} to unlock</div>
       </div>
     `).join("");
-  }
-
-  function wireAdCountControls(container) {
-    container.querySelectorAll(".saveAdCountBtn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const card = btn.closest("[data-short-code]");
-        const code = card.getAttribute("data-short-code");
-        const input = card.querySelector(".adCountInput");
-        const value = parseInt(input.value, 10);
-        if (!Number.isFinite(value) || value < AD_COUNT_MIN || value > AD_COUNT_MAX) {
-          toast(`Ad count must be between ${AD_COUNT_MIN} and ${AD_COUNT_MAX}`, "err");
-          return;
-        }
-        btn.disabled = true;
-        const original = btn.textContent;
-        btn.textContent = "Saving…";
-        try {
-          await api(`/api/admin/links/${encodeURIComponent(code)}/ad-count`, {
-            method: "POST",
-            body: JSON.stringify({ ad_count: value }),
-          });
-          toast(`/${code} now shows ${value} ad${value === 1 ? "" : "s"}`, "ok");
-        } catch (e) {
-          toast(e.message, "err");
-        } finally {
-          btn.disabled = false;
-          btn.textContent = original;
-        }
-      });
-    });
   }
 
   function missedByLinkListHTML(rows, opts) {
@@ -2171,7 +2141,14 @@
         <div>${missedByLinkListHTML(d.missed_earnings_by_link, { showOwner: false })}</div>
       ` : ""}
 
-      <div class="section-title" style="margin-top:14px;">${icon("play", 14)} Ad count per link</div>
+      <div class="section-title" style="margin-top:14px;">${icon("play", 14)} Ad count override</div>
+      <div class="card">
+        <div class="meta">${a.ad_count != null ? `Currently showing <b style="color:var(--text)">${a.ad_count}</b> ad${a.ad_count === 1 ? "" : "s"} to unlock every link this ${esc(roleMeta(a.role).label)} owns.` : "Currently following the platform-wide ad display order (Ad Networks tab)."}</div>
+        <label>Custom ad count (leave blank to use the platform default)</label>
+        <input type="number" id="adminAdCountInput" min="${AD_COUNT_MIN}" max="${AD_COUNT_MAX}" step="1" value="${a.ad_count != null ? a.ad_count : ""}" placeholder="Platform default" />
+        <div class="meta" style="color:var(--text-faint);">Applies instantly to every link this ${esc(roleMeta(a.role).label)} already has, and every new one — no need to set it per link.</div>
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="adminAdCountSaveBtn">Save ad count</button></div>
+      </div>
       <div id="adminLinksList">${adminLinksListHTML(adminLinks)}</div>
 
       ${a.admin_request_status === "pending" ? `
@@ -2248,7 +2225,6 @@
     `;
 
     el.querySelector("#backToAdmins").addEventListener("click", () => renderAdmins(el));
-    wireAdCountControls(el.querySelector("#adminLinksList"));
 
     const detailReqEl = el.querySelector("#detailAdminRequest");
     if (detailReqEl) wireAdminRequestActions(detailReqEl, () => renderAdminDetail(el, telegramId));
@@ -2284,6 +2260,27 @@
         } catch (e) {
           toast(e.message, "err");
           cpmSaveBtn.disabled = false; cpmSaveBtn.textContent = "Save CPM";
+        }
+      });
+    }
+
+    const adCountSaveBtn = el.querySelector("#adminAdCountSaveBtn");
+    if (adCountSaveBtn) {
+      adCountSaveBtn.addEventListener("click", async () => {
+        const raw = el.querySelector("#adminAdCountInput").value.trim();
+        const ad_count = raw === "" ? null : parseInt(raw, 10);
+        if (ad_count !== null && (!Number.isFinite(ad_count) || ad_count < AD_COUNT_MIN || ad_count > AD_COUNT_MAX)) {
+          toast(`Ad count must be between ${AD_COUNT_MIN} and ${AD_COUNT_MAX}, or left blank`, "err");
+          return;
+        }
+        adCountSaveBtn.disabled = true; adCountSaveBtn.textContent = "Saving…";
+        try {
+          await api(`/api/admin/admins/${telegramId}/ad-count`, { method: "POST", body: JSON.stringify({ ad_count }) });
+          toast("Ad count updated — they've been notified", "ok");
+          renderAdminDetail(el, telegramId);
+        } catch (e) {
+          toast(e.message, "err");
+          adCountSaveBtn.disabled = false; adCountSaveBtn.textContent = "Save ad count";
         }
       });
     }
