@@ -612,6 +612,35 @@
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
   }
 
+  // Generic amount-per-day bar chart — used for the platform income and
+  // withdrawal trends on the Owner's Stats tab (reconciling against
+  // Adsgram's own dashboard). Same layout/sizing as missedTrendChartSVG
+  // above, just keyed off `amount` (a currency value) instead of a
+  // capped-view count, and always drawn in `color` rather than a
+  // conditional red/gray.
+  function amountTrendChartSVG(trend, color) {
+    if (!trend || !trend.length) return `<div class="empty">No history yet.</div>`;
+    const W = 320, H = 110, padL = 3, padR = 3, padB = 16, padT = 6;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    const n = trend.length;
+    const gap = 2.5;
+    const barW = Math.max(2, (plotW - gap * (n - 1)) / n);
+    const maxVal = Math.max(0.01, ...trend.map((d) => d.amount));
+    const bars = trend.map((d, i) => {
+      const x = padL + i * (barW + gap);
+      const h = d.amount > 0 ? Math.max(2, (d.amount / maxVal) * plotH) : 1;
+      const y = padT + (plotH - h);
+      const shortLabel = (d.date || "").slice(5).replace("-", "/");
+      const showLabel = i === 0 || i === n - 1 || i === Math.floor(n / 2);
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"
+          fill="${color}" opacity="${d.amount > 0 ? "0.88" : "0.35"}">
+          <title>${esc(shortLabel)} — ${fmt(d.amount)}</title>
+        </rect>${showLabel ? `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>` : ""}`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
+  }
+
   function adminLinksListHTML(links) {
     if (!links || !links.length) {
       return `<div class="card"><div class="empty">This Admin hasn't created any links yet.</div></div>`;
@@ -2469,7 +2498,29 @@
         <div class="stat-box"><div class="n">${s.pending_payout_views}</div><div class="l">Pending views</div></div>
         <div class="stat-box"><div class="n">${s.daily_capped_views}</div><div class="l">Daily-capped views</div></div>
         <div class="stat-box"><div class="n">${fmt(s.total_confirmed_liability)}</div><div class="l">Confirmed liability</div></div>
-        <div class="stat-box"><div class="n">${fmt(s.total_paid_out)}</div><div class="l">Total paid out</div></div>
+      </div>
+
+      <div class="section-title" style="margin-top:14px;">${icon("trendingUp", 14)} Income (all admins combined)</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="n">${fmt(s.today_income)}</div><div class="l">Today</div></div>
+        <div class="stat-box"><div class="n">${fmt(s.income_last_7_days)}</div><div class="l">Last 7 days</div></div>
+        <div class="stat-box"><div class="n">${fmt(s.income_last_30_days)}</div><div class="l">Last 30 days</div></div>
+        <div class="stat-box"><div class="n">${fmt(s.lifetime_income)}</div><div class="l">Lifetime</div></div>
+      </div>
+      <div class="card">
+        <div class="meta" style="margin-bottom:6px;">Total credited to every Admin/Sub Admin, day by day — the CPM side of the ledger. Compare this against your Adsgram dashboard's revenue for the same days to see profit or loss.</div>
+        ${amountTrendChartSVG(s.income_trend, "var(--emerald)")}
+      </div>
+
+      <div class="section-title" style="margin-top:14px;">${icon("banknote", 14)} Withdrawn (all admins combined)</div>
+      <div class="stat-grid stat-grid-3">
+        <div class="stat-box"><div class="n">${fmt(s.withdrawn_last_7_days)}</div><div class="l">Last 7 days</div></div>
+        <div class="stat-box"><div class="n">${fmt(s.withdrawn_last_30_days)}</div><div class="l">Last 30 days</div></div>
+        <div class="stat-box"><div class="n">${fmt(s.total_paid_out)}</div><div class="l">Lifetime paid out</div></div>
+      </div>
+      <div class="card">
+        <div class="meta" style="margin-bottom:6px;">Money actually paid out (status: Paid), grouped by the day it was marked paid — not the day it was requested.</div>
+        ${amountTrendChartSVG(s.withdrawn_trend, "var(--brass)")}
       </div>
 
       <div class="section-title" style="margin-top:14px;">${icon("alertTriangle", 14)} Missed earnings trend (last 14 days)</div>
