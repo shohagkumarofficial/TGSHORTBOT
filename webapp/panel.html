@@ -58,8 +58,12 @@
     padding: 5px 10px; border-radius: 999px;
     background: var(--panel-raised); color: var(--text-dim);
     border: 1px solid var(--hairline);
+    cursor: pointer;
   }
   .role-badge.owner{ color: var(--violet); border-color: rgba(156,140,242,.35); background: var(--violet-soft); }
+  .role-badge.admin{ color: var(--brass); border-color: rgba(217,164,65,.35); background: var(--brass-soft); }
+  .role-badge.sub_admin{ color: var(--emerald); border-color: rgba(63,191,127,.35); background: var(--emerald-soft); }
+  .role-badge.viewer{ color: var(--text-dim); border-color: var(--hairline); background: var(--panel-raised); }
 
   .menu-btn{
     width:34px; height:34px; border-radius:10px; border:1px solid var(--hairline);
@@ -163,6 +167,9 @@
   .pill.active{ background: var(--emerald-soft); color: var(--emerald); }
   .pill.banned{ background: var(--red-soft); color: var(--red); }
   .pill.owner{ background: var(--violet-soft); color: var(--violet); }
+  .pill.admin{ background: var(--brass-soft); color: var(--brass); }
+  .pill.sub_admin{ background: var(--emerald-soft); color: var(--emerald); }
+  .pill.viewer{ background: var(--panel-raised); color: var(--text-dim); }
 
   code.short-url{
     display:block; font-size: 12.5px; color: var(--text); background: var(--panel-raised);
@@ -439,6 +446,7 @@
     cpm: null,
     adNetworks: null,
     withdrawalsPending: [],
+    adminRequestsPending: [],
     admins: [],
     stats: null,
     drawerOpen: false,
@@ -489,6 +497,66 @@
 
   function isOwner() {
     return !!(state.me && state.me.role === "owner");
+  }
+
+  // ---- Role tiers: Owner > Admin > Sub Admin > Viewer -------------------
+  // Shared metadata for the role badge (top card + Admins list) and the
+  // "what can I do" modal it opens when tapped.
+
+  const ROLE_META = {
+    owner: {
+      label: "Owner",
+      powers: [
+        "প্ল্যাটফর্মের সম্পূর্ণ নিয়ন্ত্রণ — CPM, Ad Networks, User Policy",
+        "সকল Admin / Sub Admin ম্যানেজ, প্রমোট/ডিমোট এবং সাসপেন্ড করা",
+        "যেকোনো Sub Admin-এর জন্য আলাদা CPM ও লিংক অটো-ডিলেট সময় নির্ধারণ",
+        "Admin রিকোয়েস্ট রিভিউ করে গ্রহণ বা প্রত্যাখ্যান করা",
+        "উইথড্র রিকোয়েস্ট রিভিউ ও পেমেন্ট করা",
+      ],
+    },
+    admin: {
+      label: "Admin",
+      powers: [
+        "লিংক তৈরি, ট্রাফিক সোর্স ম্যানেজ ও উইথড্র আবেদন",
+        "প্ল্যাটফর্মের সাধারণ CPM রেটে আয়",
+        "লিংকে কোনো অটো-ডিলেট সময়সীমা নেই",
+      ],
+    },
+    sub_admin: {
+      label: "Sub Admin",
+      powers: [
+        "লিংক তৈরি, ট্রাফিক সোর্স ম্যানেজ ও উইথড্র আবেদন",
+        "Owner চাইলে আপনার জন্য আলাদা CPM রেট নির্ধারণ করতে পারেন",
+        "Owner আপনার লিংকের জন্য একটি অটো-ডিলেট সময়সীমা (১/৩/৬/১২ মাস) সেট করতে পারেন",
+        "শক্তিশালী ট্রাফিক সোর্স ও নিয়মিত কাজের মাধ্যমে Admin হওয়ার আবেদন করা যায়",
+      ],
+    },
+    viewer: {
+      label: "Viewer",
+      powers: [
+        "এখনো কোনো Traffic Source যোগ করা হয়নি",
+        "একটি Traffic Source যোগ করলেই স্বয়ংক্রিয়ভাবে Sub Admin হয়ে যাবেন",
+        "Sub Admin হওয়ার পর লিংক তৈরি করে আয় শুরু করা যাবে",
+      ],
+    },
+  };
+
+  const SUB_ADMIN_AUTO_DELETE_CHOICES = [1, 3, 6, 12];
+
+  function roleMeta(role) {
+    return ROLE_META[role] || ROLE_META.viewer;
+  }
+
+  function openRolePermissionsModal(role) {
+    const meta = roleMeta(role);
+    openModal(`
+      <h3>${esc(meta.label)} — আপনার পাওয়ার</h3>
+      <div class="card" style="padding:12px 14px;">
+        ${meta.powers.map((p) => `<div class="meta" style="margin:6px 0;">• ${esc(p)}</div>`).join("")}
+      </div>
+      <div class="btn-row"><button class="btn btn-outline btn-block" id="rolePermClose">Close</button></div>
+    `);
+    document.getElementById("rolePermClose").addEventListener("click", closeModal);
   }
 
   // Mirrors storage.Storage.MIN_AD_COUNT / MAX_AD_COUNT — client-side
@@ -725,6 +793,50 @@
   // `prefix` namespaces element ids so this can be dropped into more than
   // one tab (the dedicated "traffic" tab and the Profile tab) without id
   // collisions, since only one of those is ever on screen at a time.
+  // ---- Sub Admin -> Admin promotion request (self-service side) --------
+
+  function requestAdminSectionHTML() {
+    if (!state.me || state.me.role !== "sub_admin") return "";
+    const status = state.me.admin_request_status;
+    let body;
+    if (status === "pending") {
+      body = `<div class="meta">${icon("clock", 13)} আপনার Admin রিকোয়েস্ট পর্যালোচনাধীন — Owner সিদ্ধান্ত নিলে জানানো হবে।</div>`;
+    } else {
+      const rejectedNote = status === "rejected"
+        ? `<div class="meta" style="color:var(--red); margin-bottom:8px;">${icon("alertTriangle", 13)} আগের আবেদন প্রত্যাখ্যাত হয়েছে। কারণ: ${esc(state.me.admin_request_reason || "—")}</div>`
+        : "";
+      body = `
+        ${rejectedNote}
+        <div class="meta">শক্তিশালী ট্রাফিক সোর্স ও নিয়মিত কাজের ভিত্তিতে Admin হওয়ার আবেদন করতে পারেন।</div>
+        <label>বার্তা (ঐচ্ছিক)</label>
+        <input type="text" id="reqAdminNote" placeholder="আপনার ট্রাফিক সোর্স সম্পর্কে সংক্ষেপে লিখুন" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="reqAdminBtn">${status === "rejected" ? "আবার আবেদন করুন" : "Admin হওয়ার আবেদন করুন"}</button></div>
+      `;
+    }
+    return `
+      <div class="section-title" style="margin-top:18px;">${icon("trendingUp", 14)} Admin হওয়ার আবেদন</div>
+      <div class="card">${body}</div>
+    `;
+  }
+
+  function wireRequestAdminSection(el) {
+    const btn = el.querySelector("#reqAdminBtn");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+      const note = (el.querySelector("#reqAdminNote") || {}).value || "";
+      btn.disabled = true; btn.textContent = "পাঠানো হচ্ছে…";
+      try {
+        await api("/api/admin-request", { method: "POST", body: JSON.stringify({ note: note.trim() || null }) });
+        toast("আবেদন পাঠানো হয়েছে — Owner-কে জানানো হয়েছে", "ok");
+        await loadMe();
+        renderProfile(el);
+      } catch (e) {
+        toast(e.message, "err");
+        btn.disabled = false; btn.textContent = "Admin হওয়ার আবেদন করুন";
+      }
+    });
+  }
+
   function trafficSourceSectionHTML(prefix, sources) {
     const listHtml = (sources && sources.length)
       ? sources.map((s) => `
@@ -836,6 +948,7 @@
     return [
       ["overview", "Overview", 0],
       ["payouts", "Withdrawals", state.withdrawalsPending.length],
+      ["adminrequests", "Admin Requests", state.adminRequestsPending.length],
       ["admins", "Admins", 0],
     ];
   }
@@ -962,8 +1075,10 @@
     const badge = document.getElementById("roleBadge");
     if (!state.me) { card.innerHTML = `<div class="skel" style="height:60px;"></div>`; return; }
 
-    badge.textContent = isOwner() ? "Owner" : "Admin";
-    badge.className = "role-badge" + (isOwner() ? " owner" : "");
+    const myRole = state.me.role || "viewer";
+    badge.textContent = roleMeta(myRole).label;
+    badge.className = "role-badge " + myRole;
+    badge.onclick = () => openRolePermissionsModal(myRole);
 
     if (isOwner()) {
       const pendingCount = state.withdrawalsPending.length;
@@ -1016,6 +1131,7 @@
       else if (state.tab === "traffic") await renderTraffic(el);
       else if (state.tab === "withdraw") await renderWithdraw(el);
       else if (state.tab === "payouts") await renderPayouts(el);
+      else if (state.tab === "adminrequests") await renderAdminRequests(el);
       else if (state.tab === "cpm") await renderCpm(el);
       else if (state.tab === "adnetworks") await renderAdNetworks(el);
       else if (state.tab === "policy") await renderPolicy(el);
@@ -1343,7 +1459,7 @@
         <div class="profile-avatar">${esc((state.me.username || "A").slice(0, 1).toUpperCase())}</div>
         <div>
           <div class="profile-name">${state.me.username ? "@" + esc(state.me.username) : "id " + state.me.telegram_id}</div>
-          <div class="profile-sub">Admin</div>
+          <div class="profile-sub">${esc(roleMeta(state.me.role).label)}</div>
         </div>
       </div>
 
@@ -1352,6 +1468,8 @@
         <div class="stat-box"><div class="n">${fmt(totalIncome)}</div><div class="l">Total income</div></div>
         <div class="stat-box"><div class="n">${fmt(paidTotal)}</div><div class="l">Withdrawn</div></div>
       </div>
+
+      ${requestAdminSectionHTML()}
 
       <div class="section-title" style="margin-top:18px;">Traffic Sources</div>
       ${trafficSourceSectionHTML("pTs", state.me.traffic_sources)}
@@ -1382,6 +1500,7 @@
     `;
 
     wireTrafficSourceSection(el, "pTs", () => { renderTopCard(); renderProfile(el); });
+    wireRequestAdminSection(el);
 
     el.querySelector("#pViewPolicy").addEventListener("click", () => {
       state.tab = "policyview";
@@ -1497,6 +1616,86 @@
         } catch (e) { toast(e.message, "err"); btn.disabled = false; }
       });
     });
+  }
+
+  // ---- Owner: Admin requests (Sub Admin -> Admin promotion queue) ------
+
+  function adminRequestCardHTML(r) {
+    const a = r.admin;
+    const who = a.username ? "@" + esc(a.username) : "id " + a.telegram_id;
+    return `
+      <div class="card" data-req-id="${a.telegram_id}">
+        <div class="row-between">
+          <h3>${who}</h3>
+          <span class="pill sub_admin">sub admin</span>
+        </div>
+        <div class="meta">Member since ${esc((a.created_at || "").slice(0, 10))}</div>
+        <div class="meta">Links: <b style="color:var(--text)">${r.total_links}</b> · Views: <b style="color:var(--text)">${r.total_views}</b> · Lifetime income: <b style="color:var(--text)">${fmt(r.lifetime_income)}</b></div>
+        ${(a.traffic_sources && a.traffic_sources.length)
+          ? a.traffic_sources.map((s) => `<div class="meta">Traffic Source: <a href="${esc(s.url)}" target="_blank" style="color:var(--brass);">${esc(s.platform)} — view ↗</a></div>`).join("")
+          : `<div class="meta" style="color:var(--red);">No Traffic Source on file</div>`}
+        ${a.admin_request_note ? `<div class="meta">Note: ${esc(a.admin_request_note)}</div>` : ""}
+        <div class="meta" style="color:var(--text-faint);">Requested ${esc(new Date(a.admin_request_at).toLocaleString())}</div>
+        <div class="btn-row">
+          <button class="btn btn-success btn-sm reqApproveBtn" data-id="${a.telegram_id}">${icon("checkCircle", 14)} Approve</button>
+          <button class="btn btn-danger btn-sm reqRejectBtn" data-id="${a.telegram_id}">Reject</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function wireAdminRequestActions(container, afterResolve) {
+    container.querySelectorAll(".reqApproveBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await api(`/api/admin/admin-requests/${btn.dataset.id}/resolve`, { method: "POST", body: JSON.stringify({ decision: "approve" }) });
+          toast("Approved — now an Admin", "ok");
+          afterResolve();
+        } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+      });
+    });
+    container.querySelectorAll(".reqRejectBtn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        openModal(`
+          <h3>Reject Admin request</h3>
+          <div class="meta" style="margin-bottom:8px;">A reason is required — it's sent to the Sub Admin.</div>
+          <label>Reason</label>
+          <input type="text" id="reqRejectReason" placeholder="e.g. traffic source too small, needs more consistent activity" autocomplete="off" />
+          <div class="btn-row"><button class="btn btn-danger btn-block" id="reqRejectConfirm">Reject request</button></div>
+          <div class="btn-row"><button class="btn btn-outline btn-block" id="reqRejectCancel">Cancel</button></div>
+        `);
+        document.getElementById("reqRejectCancel").addEventListener("click", closeModal);
+        const reasonInput = document.getElementById("reqRejectReason");
+        document.getElementById("reqRejectConfirm").addEventListener("click", async () => {
+          const reason = reasonInput.value.trim();
+          if (!reason) { toast("A reason is required", "err"); reasonInput.focus(); return; }
+          const confirmBtn = document.getElementById("reqRejectConfirm");
+          confirmBtn.disabled = true; confirmBtn.textContent = "Rejecting…";
+          try {
+            await api(`/api/admin/admin-requests/${btn.dataset.id}/resolve`, { method: "POST", body: JSON.stringify({ decision: "reject", reason }) });
+            closeModal();
+            toast("Request rejected", "ok");
+            afterResolve();
+          } catch (e) {
+            toast(e.message, "err");
+            confirmBtn.disabled = false; confirmBtn.textContent = "Reject request";
+          }
+        });
+        reasonInput.focus();
+      });
+    });
+  }
+
+  async function renderAdminRequests(el) {
+    await loadAdminRequests();
+    renderTabs();
+    if (state.adminRequestsPending.length === 0) {
+      el.innerHTML = `<div class="card"><div class="empty">No pending Admin requests.</div></div>`;
+      return;
+    }
+    el.innerHTML = state.adminRequestsPending.map(adminRequestCardHTML).join("");
+    wireAdminRequestActions(el, () => renderTab());
   }
 
   // ---- Owner: CPM -------------------------------------------------------
@@ -1803,7 +2002,11 @@
           <h3>${esc(a.username ? "@" + a.username : "id " + a.telegram_id)}</h3>
           <span class="pill ${a.role === "owner" ? "owner" : a.status}">${a.role === "owner" ? "owner" : a.status}</span>
         </div>
-        <div class="meta">${a.role === "owner" ? "Owner" : "Admin"} · <code>${a.telegram_id}</code></div>
+        <div class="meta">
+          <span class="pill ${a.role}" style="margin-right:6px;">${esc(roleMeta(a.role).label)}</span>
+          <code>${a.telegram_id}</code>
+          ${a.role === "sub_admin" && a.admin_request_status === "pending" ? `<span class="pill pending" style="margin-left:6px;">admin requested</span>` : ""}
+        </div>
         <div class="meta">Confirmed: ${fmt(a.balance_confirmed)}</div>
         ${(a.traffic_sources && a.traffic_sources.length)
           ? a.traffic_sources.map((s) => `<div class="meta">Traffic Source: <a href="${esc(s.url)}" target="_blank" style="color:var(--brass);">${esc(s.platform)} — view ↗</a></div>`).join("")
@@ -1864,7 +2067,7 @@
         <div class="profile-avatar">${esc((a.username || "A").slice(0, 1).toUpperCase())}</div>
         <div>
           <div class="profile-name">${a.username ? "@" + esc(a.username) : "id " + a.telegram_id}</div>
-          <div class="profile-sub">Admin since ${esc((a.created_at || "").slice(0, 10))} · <span class="pill ${a.status}" style="margin-left:4px;">${a.status}</span></div>
+          <div class="profile-sub">${esc(roleMeta(a.role).label)} since ${esc((a.created_at || "").slice(0, 10))} · <span class="pill ${a.status}" style="margin-left:4px;">${a.status}</span></div>
         </div>
       </div>
 
@@ -1893,6 +2096,48 @@
 
       <div class="section-title" style="margin-top:14px;">${icon("play", 14)} Ad count per link</div>
       <div id="adminLinksList">${adminLinksListHTML(adminLinks)}</div>
+
+      ${a.admin_request_status === "pending" ? `
+        <div class="section-title" style="margin-top:14px;">${icon("trendingUp", 14)} Pending Admin request</div>
+        <div id="detailAdminRequest">${adminRequestCardHTML({ admin: a, total_links: d.total_links, total_views: d.total_views, lifetime_income: d.lifetime_income })}</div>
+      ` : a.admin_request_status === "rejected" ? `
+        <div class="section-title" style="margin-top:14px;">${icon("trendingUp", 14)} Admin request</div>
+        <div class="card"><div class="meta" style="color:var(--red);">Last request was rejected. Reason: ${esc(a.admin_request_reason || "—")}</div></div>
+      ` : ""}
+
+      <div class="section-title" style="margin-top:14px;">${icon("users", 14)} Role</div>
+      <div class="card">
+        <div class="meta">Current: <span class="pill ${a.role}">${esc(roleMeta(a.role).label)}</span></div>
+        <label>Change role</label>
+        <select id="roleSelect">
+          <option value="admin"${a.role === "admin" ? " selected" : ""}>Admin</option>
+          <option value="sub_admin"${a.role === "sub_admin" ? " selected" : ""}>Sub Admin</option>
+          <option value="viewer"${a.role === "viewer" ? " selected" : ""}>Viewer</option>
+        </select>
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="roleSaveBtn">Update role</button></div>
+        ${a.role === "sub_admin" ? "" : `<div class="meta" style="margin-top:6px; color:var(--text-faint);">Demoting out of Sub Admin clears any custom CPM/auto-delete setting below.</div>`}
+      </div>
+
+      ${a.role === "sub_admin" ? `
+        <div class="section-title" style="margin-top:14px;">${icon("trendingUp", 14)} Sub Admin CPM override</div>
+        <div class="card">
+          <div class="meta">${a.sub_admin_cpm != null ? `Currently using a custom rate: <b style="color:var(--text)">${fmt(a.sub_admin_cpm)}</b> per view.` : "Currently using the platform-wide CPM rate."}</div>
+          <label>Custom CPM (leave blank to use the platform rate)</label>
+          <input type="number" id="subAdminCpmInput" min="0" step="0.0001" value="${a.sub_admin_cpm != null ? a.sub_admin_cpm : ""}" placeholder="Platform rate" />
+          <div class="btn-row"><button class="btn btn-primary btn-block" id="subAdminCpmSaveBtn">Save CPM</button></div>
+        </div>
+
+        <div class="section-title" style="margin-top:14px;">${icon("clock", 14)} Link auto-delete</div>
+        <div class="card">
+          <div class="meta">${a.link_auto_delete_months ? `New links auto-delete after <b style="color:var(--text)">${a.link_auto_delete_months} months</b>.` : "New links never auto-delete."} Applies to new links only, not existing ones. The Sub Admin is DM'd about any change.</div>
+          <label>Auto-delete window</label>
+          <select id="autoDeleteSelect">
+            <option value="0"${!a.link_auto_delete_months ? " selected" : ""}>Never</option>
+            ${SUB_ADMIN_AUTO_DELETE_CHOICES.map((m) => `<option value="${m}"${a.link_auto_delete_months === m ? " selected" : ""}>${m} months</option>`).join("")}
+          </select>
+          <div class="btn-row"><button class="btn btn-primary btn-block" id="autoDeleteSaveBtn">Save auto-delete</button></div>
+        </div>
+      ` : ""}
 
       <div class="card">
         <h3>Traffic Sources</h3>
@@ -1927,6 +2172,60 @@
 
     el.querySelector("#backToAdmins").addEventListener("click", () => renderAdmins(el));
     wireAdCountControls(el.querySelector("#adminLinksList"));
+
+    const detailReqEl = el.querySelector("#detailAdminRequest");
+    if (detailReqEl) wireAdminRequestActions(detailReqEl, () => renderAdminDetail(el, telegramId));
+
+    const roleSaveBtn = el.querySelector("#roleSaveBtn");
+    if (roleSaveBtn) {
+      roleSaveBtn.addEventListener("click", async () => {
+        const newRole = el.querySelector("#roleSelect").value;
+        if (newRole === a.role) { toast("That's already their role", "err"); return; }
+        roleSaveBtn.disabled = true; roleSaveBtn.textContent = "Updating…";
+        try {
+          await api(`/api/admin/admins/${telegramId}/role`, { method: "POST", body: JSON.stringify({ role: newRole }) });
+          toast("Role updated", "ok");
+          renderAdminDetail(el, telegramId);
+        } catch (e) {
+          toast(e.message, "err");
+          roleSaveBtn.disabled = false; roleSaveBtn.textContent = "Update role";
+        }
+      });
+    }
+
+    const cpmSaveBtn = el.querySelector("#subAdminCpmSaveBtn");
+    if (cpmSaveBtn) {
+      cpmSaveBtn.addEventListener("click", async () => {
+        const raw = el.querySelector("#subAdminCpmInput").value.trim();
+        const cpm = raw === "" ? null : parseFloat(raw);
+        if (cpm !== null && !(cpm >= 0)) { toast("Enter a valid CPM (0 or more), or leave it blank", "err"); return; }
+        cpmSaveBtn.disabled = true; cpmSaveBtn.textContent = "Saving…";
+        try {
+          await api(`/api/admin/admins/${telegramId}/sub-admin-cpm`, { method: "POST", body: JSON.stringify({ cpm }) });
+          toast("CPM updated — they've been notified", "ok");
+          renderAdminDetail(el, telegramId);
+        } catch (e) {
+          toast(e.message, "err");
+          cpmSaveBtn.disabled = false; cpmSaveBtn.textContent = "Save CPM";
+        }
+      });
+    }
+
+    const autoDeleteSaveBtn = el.querySelector("#autoDeleteSaveBtn");
+    if (autoDeleteSaveBtn) {
+      autoDeleteSaveBtn.addEventListener("click", async () => {
+        const months = parseInt(el.querySelector("#autoDeleteSelect").value, 10) || null;
+        autoDeleteSaveBtn.disabled = true; autoDeleteSaveBtn.textContent = "Saving…";
+        try {
+          await api(`/api/admin/admins/${telegramId}/auto-delete`, { method: "POST", body: JSON.stringify({ months }) });
+          toast("Auto-delete setting updated — they've been notified", "ok");
+          renderAdminDetail(el, telegramId);
+        } catch (e) {
+          toast(e.message, "err");
+          autoDeleteSaveBtn.disabled = false; autoDeleteSaveBtn.textContent = "Save auto-delete";
+        }
+      });
+    }
 
     el.querySelector("#editBalanceBtn").addEventListener("click", () => {
       const newBalanceRaw = el.querySelector("#editBalanceInput").value;
@@ -2053,6 +2352,7 @@
   async function loadMyWithdrawals() { const d = await api("/api/withdrawals/mine"); state.withdrawals = d.withdrawals; }
   async function loadCpm() { state.cpm = await api("/api/cpm"); }
   async function loadOwnerWithdrawals() { const d = await api("/api/admin/withdrawals"); state.withdrawalsPending = d.withdrawals; }
+  async function loadAdminRequests() { const d = await api("/api/admin/admin-requests"); state.adminRequestsPending = d.requests; }
   async function loadStats() { state.stats = await api("/api/admin/stats"); }
 
   async function init() {
@@ -2069,7 +2369,7 @@
     try {
       await loadMe();
       if (isOwner()) {
-        await Promise.all([loadCpm(), loadOwnerWithdrawals(), loadStats()]);
+        await Promise.all([loadCpm(), loadOwnerWithdrawals(), loadStats(), loadAdminRequests()]);
       } else {
         await Promise.all([loadLinks(), loadCpm()]);
       }
