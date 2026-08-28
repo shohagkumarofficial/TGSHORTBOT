@@ -59,6 +59,7 @@ from models import (
     AdNetwork,
     AdNetworkSetting,
     ApiKey,
+    CountedStatus,
     CPMHistoryEntry,
     CPMSetting,
     Link,
@@ -1145,6 +1146,91 @@ class Storage:
     # load()/_save_locked() — no direct Supabase calls needed, so this
     # section is unchanged from the original JSON-backed version.
 
+    async def platform_income_summary(self, days: int = 30) -> dict:
+        """Platform-wide income and payout numbers for the Owner's Stats
+        tab — reconciling against Adsgram's own dashboard is the whole
+        point, so every figure here is derived straight from `views`'
+        own `credited_amount` (same source `admin_stats`' per-Admin
+        lifetime/today figures use), never from `balance_confirmed` —
+        a manual balance correction (`set_admin_balance`) would then
+        silently skew what's supposed to be "real ad revenue credited".
+
+        `lifetime_income` is every CONFIRMED view's credited_amount,
+        summed across every Admin — genuinely all money ever credited to
+        anyone on the platform, not just what's still sitting
+        unwithdrawn (`total_confirmed_liability` on platform_stats is
+        that different, narrower number).
+
+        `income_trend`/`withdrawn_trend` are day-by-day buckets over the
+        trailing `days` calendar days (UTC) — `income_last_7_days` /
+        `_30_days` and their withdrawn counterparts are just those same
+        buckets summed, computed once here so the two never drift apart.
+        A capped view earns `credited_amount = 0` (see
+        cpm_engine.credit_new_view), so excluding `daily_capped` views
+        below is a no-op for the totals but keeps this consistent with
+        every other income/view figure in this module.
+        """
+        today = datetime.now(timezone.utc).date()
+        earliest = today - timedelta(days=days - 1)
+        income_buckets: Dict[object, float] = {earliest + timedelta(days=i): 0.0 for i in range(days)}
+        withdrawn_buckets: Dict[object, float] = {earliest + timedelta(days=i): 0.0 for i in range(days)}
+
+        lifetime_income = 0.0
+        for v in self.views.values():
+            if v.daily_capped or v.counted_status != CountedStatus.CONFIRMED:
+                continue
+            amount = v.credited_amount or 0.0
+            lifetime_income += amount
+            try:
+                created = datetime.fromisoformat(v.created_at)
+            except ValueError:
+                continue
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            bucket = income_buckets.get(created.astimezone(timezone.utc).date())
+            if bucket is not None:
+                income_buckets[created.astimezone(timezone.utc).date()] += amount
+
+        withdrawn_lifetime = 0.0
+        for w in self.withdrawals.values():
+            if w.status != WithdrawStatus.PAID:
+                continue
+            withdrawn_lifetime += w.amount
+            if not w.resolved_at:
+                continue
+            try:
+                resolved = datetime.fromisoformat(w.resolved_at)
+            except ValueError:
+                continue
+            if resolved.tzinfo is None:
+                resolved = resolved.replace(tzinfo=timezone.utc)
+            bucket = withdrawn_buckets.get(resolved.astimezone(timezone.utc).date())
+            if bucket is not None:
+                withdrawn_buckets[resolved.astimezone(timezone.utc).date()] += w.amount
+
+        today_income = income_buckets.get(today, 0.0)
+        last_7 = today - timedelta(days=6)
+        income_7d = sum(v for d, v in income_buckets.items() if d >= last_7)
+        withdrawn_7d = sum(v for d, v in withdrawn_buckets.items() if d >= last_7)
+        income_30d = sum(income_buckets.values())
+        withdrawn_30d = sum(withdrawn_buckets.values())
+
+        return {
+            "lifetime_income": round(lifetime_income, 4),
+            "lifetime_withdrawn": round(withdrawn_lifetime, 4),
+            "today_income": round(today_income, 4),
+            "income_last_7_days": round(income_7d, 4),
+            "income_last_30_days": round(income_30d, 4),
+            "withdrawn_last_7_days": round(withdrawn_7d, 4),
+            "withdrawn_last_30_days": round(withdrawn_30d, 4),
+            "income_trend": [
+                {"date": d.isoformat(), "amount": round(income_buckets[d], 4)} for d in sorted(income_buckets)
+            ],
+            "withdrawn_trend": [
+                {"date": d.isoformat(), "amount": round(withdrawn_buckets[d], 4)} for d in sorted(withdrawn_buckets)
+            ],
+        }
+
     async def platform_stats(self) -> dict:
         """Platform-wide numbers for the Owner's Stats tab.
 
@@ -1154,9 +1240,12 @@ class Storage:
         just via the separate `daily_capped_views` counter and the
         `missed_earnings_*` breakdowns below, never folded into
         `total_views` itself.
-        """
-        from models import CountedStatus  # local import avoids a cycle at module load
 
+        Income/withdrawal figures (lifetime, today, last 7/30 days, plus
+        their daily trends) come from `platform_income_summary()` — kept
+        as its own method since it's also independently useful, and to
+        keep this method's own docstring focused on the view-count side.
+        """
         genuine_views = [v for v in self.views.values() if not v.daily_capped]
         pending_payout_views = len(
             [v for v in genuine_views if v.counted_status == CountedStatus.PENDING_PAYOUT]
@@ -1172,6 +1261,7 @@ class Storage:
             "daily_capped_views": daily_capped_views,
             "total_confirmed_liability": round(total_confirmed_liability, 4),
             "total_paid_out": round(total_paid_out, 4),
+            **await self.platform_income_summary(),
             "missed_earnings_trend": await self.missed_earnings_trend(),
             "missed_earnings_by_link": await self.missed_earnings_by_link(),
             "suggested_daily_limit": await self.suggested_daily_limit(),
@@ -1195,8 +1285,6 @@ class Storage:
         dedicated window onto missed views, kept separate from
         `total_views` rather than folded into it.
         """
-        from models import CountedStatus  # local import avoids a cycle at module load
-
         admin = self.admins.get(telegram_id)
         if not admin:
             return None

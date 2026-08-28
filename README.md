@@ -118,6 +118,15 @@ committed, so there's nothing to conflict with in version control.
   simply isn't there. Only the Owner-only endpoints
   (`/api/admin/stats`, `/api/admin/admins/{id}`) expose
   `daily_capped_views` and the Missed Earnings breakdowns.
+- **Platform income reconciliation** (`storage.platform_income_summary`,
+  surfaced on `/api/admin/stats` and the panel's Stats tab): today's /
+  last-7-day / last-30-day / lifetime income across every Admin combined,
+  plus the same breakdown for money actually paid out, each with a
+  30-day daily bar chart — meant to be checked against Adsgram's own
+  dashboard for the same days to see whether the platform is running at
+  a profit or a loss. Derived from each view's own `credited_amount`
+  (never from `balance_confirmed`), so a manual balance correction via
+  `set_admin_balance` never skews it.
 - **CPM engine** (4.5 / 9.5): `cpm_engine.py` handles both modes.
   Real-time credits `balance_confirmed` the instant a view is logged.
   Scheduled holds views as `pending_payout`; a background watcher
