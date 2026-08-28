@@ -73,6 +73,12 @@ logger = logging.getLogger("tgshortbot.storage")
 # Supabase project yet.
 _MISSING_COLUMN_RE = re.compile(r"Could not find the '([a-zA-Z_][a-zA-Z0-9_]*)' column")
 
+# Sentinel default for update_cpm_setting's admin_cpm/sub_admin_cpm kwargs,
+# so the caller can tell "leave this alone" (omit the kwarg) apart from
+# "clear it back to the platform base rate" (pass cpm=None explicitly) —
+# the same distinction set_sub_admin_cpm already makes for a single Admin.
+_UNSET = object()
+
 
 class Storage:
     def __init__(self, supabase_url: str, supabase_key: str):
@@ -672,6 +678,8 @@ class Storage:
         ad_view_delay_seconds: Optional[float] = None,
         min_withdraw_amount: Optional[float] = None,
         max_daily_views_per_admin: Optional[int] = None,
+        admin_cpm=_UNSET,
+        sub_admin_cpm=_UNSET,
         updated_by: Optional[int] = None,
     ) -> CPMSetting:
         async with self._lock:
@@ -714,6 +722,16 @@ class Storage:
                     "to": max_daily_views_per_admin,
                 }
                 cs.max_daily_views_per_admin = max_daily_views_per_admin
+            # admin_cpm/sub_admin_cpm use the _UNSET sentinel (not None)
+            # as their "don't touch" default, since None is itself a
+            # meaningful value here — it means "clear the role override,
+            # fall back to current_cpm" (see effective_cpm).
+            if admin_cpm is not _UNSET and admin_cpm != cs.admin_cpm:
+                detail["admin_cpm"] = {"from": cs.admin_cpm, "to": admin_cpm}
+                cs.admin_cpm = admin_cpm
+            if sub_admin_cpm is not _UNSET and sub_admin_cpm != cs.sub_admin_cpm:
+                detail["sub_admin_cpm"] = {"from": cs.sub_admin_cpm, "to": sub_admin_cpm}
+                cs.sub_admin_cpm = sub_admin_cpm
 
             if reset_cycle:
                 cs.cycle_started_at = now_iso()
@@ -1073,7 +1091,7 @@ class Storage:
             "pending_views": len(pending_views),
             "daily_capped_views": daily_capped_views,
             "estimated_pending_amount": round(
-                len(pending_views) * effective_cpm(admin, self.cpm_setting.current_cpm), 6
+                len(pending_views) * effective_cpm(admin, self.cpm_setting), 6
             ),
             "missed_earnings_trend": await self.missed_earnings_trend(admin_telegram_id=telegram_id),
             "missed_earnings_by_link": await self.missed_earnings_by_link(admin_telegram_id=telegram_id),

@@ -367,7 +367,17 @@ alter table admins
 
 alter table links
   add column if not exists expires_at text;
+
+alter table cpm_settings
+  add column if not exists admin_cpm double precision,
+  add column if not exists sub_admin_cpm double precision;
 ```
+
+(The `cpm_settings` columns power the CPM tab's "Per-role CPM" card —
+platform-wide rates for the Admin and Sub Admin roles, separate from the
+per-Sub-Admin override on the Admins tab. Writes still work without this
+migration — `_safe_upsert` drops unknown columns and logs a warning — but
+the rate won't actually persist until it's run.)
 
 If your `admins.role` column has a `CHECK` constraint limiting it to
 specific values (e.g. only `'owner'`/`'admin'`), widen it to also allow

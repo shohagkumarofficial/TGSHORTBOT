@@ -78,7 +78,7 @@ async def credit_new_view(storage: Storage, view: View, link: Link) -> None:
             view.daily_capped = True
         elif cpm_setting.mode == CPMMode.REALTIME:
             admin = storage.admins.get(link.owner_telegram_id)
-            rate = effective_cpm(admin, cpm_setting.current_cpm) if admin else cpm_setting.current_cpm
+            rate = effective_cpm(admin, cpm_setting) if admin else cpm_setting.current_cpm
             if admin:
                 admin.balance_confirmed = round(admin.balance_confirmed + rate, 6)
             view.counted_status = CountedStatus.CONFIRMED
@@ -134,11 +134,11 @@ async def maybe_close_cycle(storage: Storage) -> bool:
                 continue
             admin = storage.admins.get(link.owner_telegram_id)
             # Each view is priced at whatever rate is active *for that
-            # Admin* right now — their own Sub Admin CPM override if the
-            # Owner set one, otherwise the platform-wide rate — never a
-            # per-day split of rates that changed mid-cycle, per the
+            # Admin* right now — their own Sub Admin CPM override, then
+            # their role's platform-wide rate, then the base rate — never
+            # a per-day split of rates that changed mid-cycle, per the
             # PRD's no-retroactive-rate-splitting rule.
-            rate = effective_cpm(admin, platform_rate) if admin else platform_rate
+            rate = effective_cpm(admin, cs) if admin else platform_rate
             if admin:
                 # Per Section 9.5: credit to balance_pending, then move to
                 # balance_confirmed. Written as two explicit steps (rather

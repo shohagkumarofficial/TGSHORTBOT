@@ -586,7 +586,10 @@ async def get_cpm(admin: Admin = Depends(require_admin)):
         if admin.role != Role.OWNER:
             # Sub-admins see the countdown and pending-view count, but not
             # a pre-calculated rate, since it isn't final until payout (Section 4.5).
+            # That includes the per-role overrides below, not just the base rate.
             data.pop("current_cpm", None)
+            data.pop("admin_cpm", None)
+            data.pop("sub_admin_cpm", None)
     return data
 
 
@@ -632,6 +635,28 @@ async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner))
         if max_daily_views_per_admin < 0:
             raise HTTPException(status_code=400, detail="max_daily_views_per_admin must be >= 0")
 
+    # admin_cpm / sub_admin_cpm are per-role platform-wide CPM overrides
+    # (distinct from the per-Sub-Admin override on the Admins tab). Unlike
+    # the fields above, a blank field here means "clear it back to the
+    # base current_cpm rate", not "leave it unchanged" — so, unlike them,
+    # we only touch storage's value when the key is actually present in
+    # the payload at all (present-but-null clears it; absent leaves it).
+    extra: dict = {}
+    if "admin_cpm" in payload:
+        admin_cpm = payload.get("admin_cpm")
+        if admin_cpm is not None:
+            admin_cpm = float(admin_cpm)
+            if admin_cpm < 0:
+                raise HTTPException(status_code=400, detail="admin_cpm must be >= 0 or null")
+        extra["admin_cpm"] = admin_cpm
+    if "sub_admin_cpm" in payload:
+        sub_admin_cpm = payload.get("sub_admin_cpm")
+        if sub_admin_cpm is not None:
+            sub_admin_cpm = float(sub_admin_cpm)
+            if sub_admin_cpm < 0:
+                raise HTTPException(status_code=400, detail="sub_admin_cpm must be >= 0 or null")
+        extra["sub_admin_cpm"] = sub_admin_cpm
+
     cs = await storage.update_cpm_setting(
         mode=mode_enum,
         current_cpm=current_cpm,
@@ -640,6 +665,7 @@ async def admin_update_cpm(payload: dict, owner: Admin = Depends(require_owner))
         min_withdraw_amount=min_withdraw_amount,
         max_daily_views_per_admin=max_daily_views_per_admin,
         updated_by=owner.telegram_id,
+        **extra,
     )
     return cs.model_dump()
 

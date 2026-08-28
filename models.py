@@ -18,17 +18,32 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def effective_cpm(admin: "Admin", platform_cpm: float) -> float:
+def effective_cpm(admin: "Admin", cpm_setting: "CPMSetting") -> float:
     """The CPM rate that actually applies when crediting one of this
-    Admin's views: their own override if they're a Sub Admin with one
-    set, otherwise the platform-wide rate. Shared by cpm_engine.py
-    (crediting) and storage.admin_stats (the Owner's pending-earnings
-    estimate) so the two can never disagree about which rate is "the"
-    rate for a given Sub Admin.
+    Admin's views, checked in priority order:
+
+      1. `Admin.sub_admin_cpm` — this specific Sub Admin's own override
+         (storage.set_sub_admin_cpm), if the Owner set one for them
+         individually.
+      2. `CPMSetting.admin_cpm` / `CPMSetting.sub_admin_cpm` — the
+         platform-wide rate for their *role*, if the Owner set one on
+         the CPM Settings screen (storage.update_cpm_setting).
+      3. `CPMSetting.current_cpm` — the platform's base rate, used for
+         any role with nothing more specific configured (including the
+         Owner's own links, if any).
+
+    Shared by cpm_engine.py (crediting) and storage.admin_stats (the
+    Owner's pending-earnings estimate) so the two can never disagree
+    about which rate is "the" rate for a given Admin.
     """
-    if admin.role == Role.SUB_ADMIN and admin.sub_admin_cpm is not None:
-        return admin.sub_admin_cpm
-    return platform_cpm
+    if admin.role == Role.SUB_ADMIN:
+        if admin.sub_admin_cpm is not None:
+            return admin.sub_admin_cpm
+        if cpm_setting.sub_admin_cpm is not None:
+            return cpm_setting.sub_admin_cpm
+    elif admin.role == Role.ADMIN and cpm_setting.admin_cpm is not None:
+        return cpm_setting.admin_cpm
+    return cpm_setting.current_cpm
 
 
 class Role(str, Enum):
@@ -255,6 +270,14 @@ class CPMSetting(BaseModel):
     ad_view_delay_seconds: float = 7
     min_withdraw_amount: float = 0
     max_daily_views_per_admin: int = 0
+
+    # Platform-wide, per-*role* CPM overrides (Owner's CPM Settings
+    # screen) — distinct from Admin.sub_admin_cpm, which overrides the
+    # rate for one specific Sub Admin. None means "use current_cpm" for
+    # that role. See effective_cpm() for the full priority order.
+    admin_cpm: Optional[float] = None
+    sub_admin_cpm: Optional[float] = None
+
     updated_at: str = Field(default_factory=now_iso)
     updated_by: Optional[int] = None
 
