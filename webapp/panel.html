@@ -465,6 +465,18 @@
     }[c]));
   }
 
+  function withdrawalsPaused() {
+    return !!(state.cpm && state.cpm.withdrawals_paused);
+  }
+
+  function withdrawPausedBannerHTML() {
+    if (!withdrawalsPaused()) return "";
+    return `<div class="card" style="border-color: var(--red); background: var(--red-soft);">
+      <div class="meta" style="color: var(--text);">⏸ ${icon("alertTriangle", 13)} Withdrawals are temporarily paused${isOwner() ? " by you" : ""}.</div>
+      ${state.cpm.withdrawals_paused_message ? `<div class="meta" style="margin-top:4px;">${esc(state.cpm.withdrawals_paused_message)}</div>` : ""}
+    </div>`;
+  }
+
   // ---- SVG icons (stroke-based, feather-style — replaces emoji glyphs
   // everywhere in this dashboard for a cleaner, more consistent look) ---
 
@@ -490,6 +502,7 @@
     eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle>',
     layers: '<polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline>',
     key: '<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>',
+    pause: '<rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect>',
   };
 
   function icon(name, size) {
@@ -1479,21 +1492,22 @@
   async function renderWithdraw(el) {
     await loadMyWithdrawals();
     el.innerHTML = `
+      ${withdrawPausedBannerHTML()}
       <div class="card">
         <h3>Request a withdrawal</h3>
         <div class="meta">Confirmed balance: <b style="color:var(--text)">${fmt(state.me.balance_confirmed)}</b></div>
         ${state.cpm && state.cpm.min_withdraw_amount > 0 ? `<div class="meta">Minimum withdrawal: <b style="color:var(--text)">${fmt(state.cpm.min_withdraw_amount)}</b></div>` : ""}
         <label>Method</label>
-        <select id="wMethod">
+        <select id="wMethod" ${withdrawalsPaused() ? "disabled" : ""}>
           <option value="bkash">bKash</option>
           <option value="nagad">Nagad</option>
         </select>
         <label>Account number</label>
-        <input type="text" id="wAccount" inputmode="numeric" placeholder="01XXXXXXXXX (11 digits)" />
+        <input type="text" id="wAccount" inputmode="numeric" placeholder="01XXXXXXXXX (11 digits)" ${withdrawalsPaused() ? "disabled" : ""} />
         <div class="field-error" id="wAccountErr"></div>
         <label>Amount</label>
-        <input type="number" id="wAmount" min="0" step="0.01" placeholder="0.00" />
-        <div class="btn-row"><button class="btn btn-primary btn-block" id="wSubmit">Submit request</button></div>
+        <input type="number" id="wAmount" min="0" step="0.01" placeholder="0.00" ${withdrawalsPaused() ? "disabled" : ""} />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="wSubmit" ${withdrawalsPaused() ? "disabled" : ""}>Submit request</button></div>
       </div>
       <div class="section-title">History</div>
       <div id="wHistory"></div>
@@ -1586,20 +1600,21 @@
       ${trafficSourceSectionHTML("pTs", state.me.traffic_sources)}
 
       <div class="section-title" style="margin-top:18px;">Withdraw</div>
+      ${withdrawPausedBannerHTML()}
       <div class="card">
         <div class="meta">Confirmed balance: <b style="color:var(--text)">${fmt(state.me.balance_confirmed)}</b></div>
         ${state.cpm && state.cpm.min_withdraw_amount > 0 ? `<div class="meta">Minimum withdrawal: <b style="color:var(--text)">${fmt(state.cpm.min_withdraw_amount)}</b></div>` : ""}
         <label>Method</label>
-        <select id="pWMethod">
+        <select id="pWMethod" ${withdrawalsPaused() ? "disabled" : ""}>
           <option value="bkash">bKash</option>
           <option value="nagad">Nagad</option>
         </select>
         <label>Account number</label>
-        <input type="text" id="pWAccount" inputmode="numeric" placeholder="01XXXXXXXXX (11 digits)" />
+        <input type="text" id="pWAccount" inputmode="numeric" placeholder="01XXXXXXXXX (11 digits)" ${withdrawalsPaused() ? "disabled" : ""} />
         <div class="field-error" id="pWAccountErr"></div>
         <label>Amount</label>
-        <input type="number" id="pWAmount" min="0" step="0.01" placeholder="0.00" />
-        <div class="btn-row"><button class="btn btn-primary btn-block" id="pWSubmit">Submit request</button></div>
+        <input type="number" id="pWAmount" min="0" step="0.01" placeholder="0.00" ${withdrawalsPaused() ? "disabled" : ""} />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="pWSubmit" ${withdrawalsPaused() ? "disabled" : ""}>Submit request</button></div>
       </div>
       <div class="section-title">Withdrawal history</div>
       <div id="pWHistory"></div>
@@ -1882,6 +1897,21 @@
         <div class="btn-row"><button class="btn btn-outline btn-block" id="minWithdrawSave">Save minimum</button></div>
       </div>
       <div class="card">
+        <h3>${icon("pause", 15)} Withdrawal system</h3>
+        <div class="meta">${cs.withdrawals_paused
+          ? "Withdrawals are currently <b style=\"color:var(--red)\">paused</b> — no Admin or Sub Admin (or you) can submit a new withdrawal request right now."
+          : "Withdrawals are currently running normally."}
+        Useful when you're busy or on leave and can't review requests promptly. This only blocks brand-new
+        requests — anything already pending stays pending and you can still resolve it as usual.</div>
+        <label>Message shown to Admins while paused (optional)</label>
+        <textarea id="withdrawPauseMessage" rows="2" placeholder="e.g. Withdrawals will resume on Monday." style="width:100%; resize:vertical; font-family:inherit; font-size:13.5px; line-height:1.5; background:var(--bg); color:var(--text); border:1px solid var(--hairline); border-radius:10px; padding:10px;">${esc(cs.withdrawals_paused_message || "")}</textarea>
+        <div class="btn-row">
+          <button class="btn ${cs.withdrawals_paused ? "btn-primary" : "btn-outline"} btn-block" id="withdrawPauseToggle">
+            ${cs.withdrawals_paused ? "▶ Resume withdrawals" : "⏸ Pause withdrawals"}
+          </button>
+        </div>
+      </div>
+      <div class="card">
         <h3>${icon("alertTriangle", 15)} Anti-abuse: daily view limit</h3>
         <div class="meta">The most views a single viewer can earn against one Admin's links per day.
         Once a viewer crosses this on an Admin's links, they still see ads as normal and still reach the
@@ -1973,6 +2003,25 @@
         toast(e.message, "err");
       } finally {
         btn.disabled = false; btn.textContent = "Save minimum";
+      }
+    });
+    el.querySelector("#withdrawPauseToggle").addEventListener("click", async () => {
+      const btn = el.querySelector("#withdrawPauseToggle");
+      const paused = !cs.withdrawals_paused;
+      const message = el.querySelector("#withdrawPauseMessage").value.trim();
+      btn.disabled = true; btn.textContent = paused ? "Pausing…" : "Resuming…";
+      try {
+        const updated = await api("/api/admin/withdrawals/pause", {
+          method: "POST",
+          body: JSON.stringify({ paused, message: message || null }),
+        });
+        state.cpm.withdrawals_paused = updated.withdrawals_paused;
+        state.cpm.withdrawals_paused_message = updated.withdrawals_paused_message;
+        toast(paused ? "Withdrawals paused" : "Withdrawals resumed", "ok");
+        renderTab();
+      } catch (e) {
+        toast(e.message, "err");
+        btn.disabled = false; btn.textContent = paused ? "⏸ Pause withdrawals" : "▶ Resume withdrawals";
       }
     });
     el.querySelector("#maxDailyViewsSave").addEventListener("click", async () => {
