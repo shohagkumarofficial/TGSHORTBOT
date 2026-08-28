@@ -896,7 +896,7 @@
           });
         } catch (e) {
           toast(e.message, "err");
-          createBtn.disabled = false; createBtn.textContent = `${icon("key", 14)} Generate key`;
+          createBtn.disabled = false; createBtn.innerHTML = `${icon("key", 14)} Generate key`;
         }
       });
     }
