@@ -32,7 +32,15 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from models import AdminRequestStatus, CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
+from models import (
+    AdminRequestStatus,
+    CountedStatus,
+    CPMMode,
+    Role,
+    WithdrawMethod,
+    WithdrawStatus,
+    effective_ad_count,
+)
 from validators import bd_mobile_validation_error, normalize_bd_mobile_number
 
 logger = logging.getLogger("bot")
@@ -457,6 +465,26 @@ async def notify_sub_admin_of_cpm_change(bot: Bot, admin, cpm: float | None) -> 
         logger.exception("failed to notify sub admin about cpm change")
 
 
+async def notify_admin_of_ad_count_change(bot: Bot, admin, ad_count: int | None) -> None:
+    """Owner-only per-Admin/Sub-Admin ad count override changed from the
+    panel. Sent to either role — this override isn't tier-restricted
+    like the CPM one is."""
+    if ad_count is None:
+        text = (
+            "ℹ️ আপনার জন্য নির্ধারিত আলাদা বিজ্ঞাপন সংখ্যা সরিয়ে ফেলা হয়েছে — এখন থেকে প্ল্যাটফর্মের "
+            "সাধারণ বিজ্ঞাপন সংখ্যা প্রযোজ্য হবে।"
+        )
+    else:
+        text = (
+            f"ℹ️ Owner আপনার সব লিংকের জন্য বিজ্ঞাপন সংখ্যা নির্ধারণ করেছেন: <b>{ad_count}টি</b>। "
+            "এটি এখন থেকে আপনার সব লিংকে (নতুন ও আগের) সাথে সাথে প্রযোজ্য হবে।"
+        )
+    try:
+        await bot.send_message(admin.telegram_id, text)
+    except Exception:
+        logger.exception("failed to notify admin about ad count change")
+
+
 async def notify_sub_admin_of_auto_delete_change(bot: Bot, admin, months: int | None) -> None:
     """Owner-only per-Sub-Admin link auto-delete window changed from the
     panel — this is the "ম্যাসেজ" the Owner sends about it, per the
@@ -490,14 +518,19 @@ def _bot_short_url_for(code: str, settings) -> str:
     return f"https://t.me/{settings.BOT_USERNAME}?start={code}"
 
 
-async def _effective_ad_count(storage) -> int:
-    """How many ads a viewer actually watches to unlock any link on the
-    platform right now — see AdNetworkSetting.slot_sequence's docstring
-    in models.py. Used only for the human-readable count in bot
-    messages; the real enforcement lives in app.py/webapp/viewer.html.
+async def _effective_ad_count(storage, link_owner_telegram_id: int | None = None) -> int:
+    """How many ads a viewer actually watches to unlock a given link
+    right now — the owning Admin/Sub Admin's own `Admin.ad_count`
+    profile override if the Owner set one, otherwise the platform-wide
+    `AdNetworkSetting.slot_sequence` length — see
+    models.effective_ad_count()'s docstring. Used only for the
+    human-readable count in bot messages; the real enforcement lives in
+    app.py/webapp/viewer.html. `link_owner_telegram_id=None` (e.g. no
+    link context yet) always falls back to the platform default.
     """
     ans = await storage.get_ad_network_setting()
-    return max(1, len(ans.slot_sequence or []))
+    owner = await storage.get_admin(link_owner_telegram_id) if link_owner_telegram_id else None
+    return effective_ad_count(owner, ans)
 
 
 def register_handlers(dp: Dispatcher, storage, settings) -> None:
@@ -516,7 +549,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             code = _gen_short_code()
         link = await storage.create_link(code, admin.telegram_id, url)
         short_url = _bot_short_url_for(code, settings)
-        ad_count = await _effective_ad_count(storage)
+        ad_count = await _effective_ad_count(storage, admin.telegram_id)
         panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
         await message.answer(
             f"✅ শর্ট লিংক তৈরি হয়েছে:\n<code>{short_url}</code>\n\n"
@@ -578,7 +611,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         if not link:
             await message.answer("এই শর্ট লিংকটি খুঁজে পাওয়া যায়নি বা মেয়াদোত্তীর্ণ।")
             return
-        ad_count = await _effective_ad_count(storage)
+        ad_count = await _effective_ad_count(storage, link.owner_telegram_id)
         view_url = f"{settings.WEBAPP_BASE_URL}/r/{code}"
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -619,7 +652,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         if resume_code and resume_code != _NO_RESUME:
             link = await storage.get_link(resume_code)
             if link:
-                ad_count = await _effective_ad_count(storage)
+                ad_count = await _effective_ad_count(storage, link.owner_telegram_id)
                 view_url = f"{settings.WEBAPP_BASE_URL}/r/{resume_code}"
                 kb = InlineKeyboardMarkup(
                     inline_keyboard=[

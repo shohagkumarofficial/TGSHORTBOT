@@ -46,6 +46,33 @@ def effective_cpm(admin: "Admin", cpm_setting: "CPMSetting") -> float:
     return cpm_setting.current_cpm
 
 
+def effective_ad_count(admin: Optional["Admin"], ad_network_setting: "AdNetworkSetting") -> int:
+    """How many sequential ads a viewer must watch to unlock any link
+    owned by `admin`, checked in priority order:
+
+      1. `Admin.ad_count` — this specific Admin/Sub Admin's own
+         profile-level override (storage.set_admin_ad_count /
+         POST /api/admin/admins/{telegram_id}/ad-count), if the Owner
+         set one for them individually. Unlike the old per-link
+         control, this is read fresh on every view rather than baked
+         into a Link at creation time, so setting it once on an
+         Admin/Sub Admin's profile applies instantly to every link they
+         already have and every new one — no per-link action needed.
+      2. `len(AdNetworkSetting.slot_sequence)` — the platform-wide
+         default (Owner's "Ad display order" screen), used for any
+         Admin/Sub Admin with no override, and for `admin=None`.
+
+    Mirrors effective_cpm()'s per-Admin-override-over-platform-default
+    shape, but is available to Role.ADMIN as well as Role.SUB_ADMIN —
+    the ad-count override isn't tier-restricted the way CPM overrides
+    are. `Link.ad_count` is never consulted here; see its docstring.
+    """
+    base_count = max(1, len(ad_network_setting.slot_sequence or []))
+    if admin is not None and admin.ad_count is not None:
+        return admin.ad_count
+    return base_count
+
+
 class Role(str, Enum):
     """Power ranks from highest to lowest: OWNER > ADMIN > SUB_ADMIN >
     VIEWER. A brand new bot user starts as VIEWER; adding their first
@@ -161,6 +188,19 @@ class Admin(BaseModel):
     # re-prices views that already happened.
     link_auto_delete_months: Optional[int] = None
 
+    # -- Ad count override (applies to both Admin and Sub Admin) --------
+
+    # Owner-only, per-Admin/Sub-Admin override for how many sequential
+    # ads a viewer watches to unlock ANY link this person owns
+    # (storage.set_admin_ad_count / storage.MIN_AD_COUNT..MAX_AD_COUNT).
+    # None means "use the platform-wide AdNetworkSetting.slot_sequence
+    # length" — see effective_ad_count() above for the full priority
+    # order. Unlike sub_admin_cpm/link_auto_delete_months, this is not
+    # cleared on a role change between Admin and Sub Admin — it applies
+    # to both tiers and simply carries over across a promotion/demotion
+    # between them.
+    ad_count: Optional[int] = None
+
     # -- Sub Admin -> Admin promotion request -----------------------------
     # A Sub Admin can ask the Owner to be promoted to Admin
     # (storage.submit_admin_request); the Owner approves or rejects
@@ -175,15 +215,49 @@ class Admin(BaseModel):
     admin_request_resolved_at: Optional[str] = None
 
 
+class ApiKey(BaseModel):
+    """A long-lived credential an Owner or Admin generates from the
+    panel's API tab to call the public REST API (see API_DOCS.md) from
+    their own site/server, instead of the Telegram-initData auth every
+    Mini App call uses.
+
+    The raw secret (`storage.create_api_key`'s return value) is shown to
+    its creator exactly once, at creation time, and is never persisted
+    or shown again — only its SHA-256 hash (`key_hash`) is stored, the
+    same principle as a password. `key_prefix` (the first 12 characters
+    of the raw key) is kept in the clear purely so the owner can tell
+    their keys apart in a list without re-seeing the secret.
+
+    A key authenticates as whichever Admin generated it, at that Admin's
+    *current* role and permissions — it is not a separate identity or a
+    fixed snapshot of permissions. So demoting, banning, or role-changing
+    that Admin instantly changes what any of their keys can do too, and
+    every key an Admin holds stops working the moment that Admin is
+    banned (see app.py's `require_api_key`).
+    """
+
+    key_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_telegram_id: int
+    name: str
+    key_hash: str
+    key_prefix: str
+    created_at: str = Field(default_factory=now_iso)
+    last_used_at: Optional[str] = None
+    revoked_at: Optional[str] = None
+
+
 class Link(BaseModel):
     """`ad_count` used to independently control how many ads a viewer
-    watched (cycling through AdNetworkSetting.slot_sequence to fill it).
-    It's kept here for backward compatibility and historical stats, but
-    the actual number of ads shown to a viewer is now simply
-    `len(AdNetworkSetting.slot_sequence)` — see that field's docstring.
-    The Owner-only per-link override (storage.set_link_ad_count / POST
+    watched. It's kept here for backward compatibility and historical
+    stats only — the actual number of ads shown to a viewer is now
+    `effective_ad_count()`'s result: the owning Admin/Sub Admin's own
+    `Admin.ad_count` profile override if the Owner set one, otherwise
+    `len(AdNetworkSetting.slot_sequence)`. The old Owner-only per-link
+    override (storage.set_link_ad_count / POST
     /api/admin/links/{short_code}/ad-count) still exists but no longer
-    changes what a viewer experiences.
+    changes what a viewer experiences — set the ad count on the
+    Admin/Sub Admin's profile instead (storage.set_admin_ad_count) to
+    affect every link they own at once, in real time.
     """
 
     short_code: str
@@ -316,13 +390,17 @@ class AdNetworkSetting(BaseModel):
     could default to (see README's "Ad networks" section).
 
     `slot_sequence` is an ordered list of AdNetwork values, one per ad
-    position (Ad 1, Ad 2, Ad 3, ...). This list's length *is* how many
-    ads every link on the platform makes a viewer watch — Ad1, then
-    Ad2, and so on down to the last slot the Owner has added, with no
-    padding or repeating. A single-entry sequence means every link is a
-    one-ad unlock; a three-entry sequence means every link is a
-    three-ad unlock. Defaults to three Adsgram slots, matching the
-    platform's original fixed single-network behavior.
+    position (Ad 1, Ad 2, Ad 3, ...). This list's length is the
+    platform-wide *default* ad count — Ad1, then Ad2, and so on down to
+    the last slot the Owner has added, with no padding or repeating —
+    used for any Admin/Sub Admin with no ad_count override of their own
+    (see effective_ad_count()). When an Admin/Sub Admin's link needs a
+    different-length sequence than this base pattern (their own
+    `Admin.ad_count` is set), the pattern is cycled to fill that length
+    rather than padded with a fixed network, so every slot still points
+    at a real, Owner-configured network. Defaults to three Adsgram
+    slots, matching the platform's original fixed single-network
+    behavior.
     """
 
     adsgram_block_id: str = ""

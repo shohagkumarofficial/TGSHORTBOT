@@ -28,6 +28,7 @@ from fastapi.staticfiles import StaticFiles
 import cpm_engine
 from bot import (
     build_bot_and_dispatcher,
+    notify_admin_of_ad_count_change,
     notify_admin_of_withdrawal_resolution,
     notify_owner_of_admin_request,
     notify_owner_of_withdrawal,
@@ -50,6 +51,7 @@ from models import (
     Role,
     WithdrawMethod,
     WithdrawStatus,
+    effective_ad_count,
 )
 from storage import Storage
 from telegram_auth import InitDataError, validate_init_data
@@ -175,6 +177,51 @@ async def require_owner(admin: Admin = Depends(require_admin)) -> Admin:
     return admin
 
 
+async def require_owner_or_admin(admin: Admin = Depends(require_admin)) -> Admin:
+    """Gate for the API-key management endpoints (/api/apikeys/*) — only
+    Owner and Admin can generate keys for the public REST API; a Sub
+    Admin or Viewer never gets one, matching the panel's own "Owner/Admin
+    only" framing for this feature.
+    """
+    if admin.role not in (Role.OWNER, Role.ADMIN):
+        raise HTTPException(status_code=403, detail="owner/admin only")
+    return admin
+
+
+# ---------------------------------------------------------------------------
+# Public REST API auth (/api/v1/*) — a long-lived API key instead of a
+# Telegram-signed initData header, for calling the API from the Owner's or
+# an Admin's own site/server. See API_DOCS.md.
+# ---------------------------------------------------------------------------
+
+async def require_api_key(
+    authorization: Optional[str] = Header(default=None),
+    x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
+) -> Admin:
+    raw_key = None
+    if x_api_key:
+        raw_key = x_api_key.strip()
+    elif authorization and authorization.lower().startswith("bearer "):
+        raw_key = authorization[7:].strip()
+    if not raw_key:
+        raise HTTPException(
+            status_code=401,
+            detail="missing API key — send it as 'X-API-Key: <key>' or 'Authorization: Bearer <key>'",
+        )
+    admin = await storage.get_admin_by_api_key(raw_key)
+    if not admin:
+        raise HTTPException(status_code=401, detail="invalid or revoked API key")
+    if admin.status == AdminStatus.BANNED:
+        raise HTTPException(status_code=403, detail="account suspended")
+    return admin
+
+
+async def require_api_key_owner(admin: Admin = Depends(require_api_key)) -> Admin:
+    if admin.role != Role.OWNER:
+        raise HTTPException(status_code=403, detail="owner only")
+    return admin
+
+
 # ---------------------------------------------------------------------------
 # Health & webhook
 # ---------------------------------------------------------------------------
@@ -269,25 +316,28 @@ async def telegram_webhook(
 # Short-link entrypoint — serves the ad-lock Mini App page (Section 4.2)
 # ---------------------------------------------------------------------------
 
-def _ad_slot_sequence(ans: AdNetworkSetting) -> list[str]:
-    """Returns the Owner's configured Ad1/Ad2/Ad3... pattern exactly as
-    listed — one ad per slot, in order, no padding or repeating back to
-    the start. The number of ads a viewer must watch to unlock any link
-    is simply `len(ans.slot_sequence)` — see AdNetworkSetting's
-    docstring in models.py.
+def _ad_slot_sequence(ans: AdNetworkSetting, count: int) -> list[str]:
+    """Returns the Owner's configured Ad1/Ad2/Ad3... network pattern,
+    cycled to exactly `count` entries — `count` is whatever
+    models.effective_ad_count() decided for this link's owner (their
+    own Admin/Sub-Admin profile override, or the platform default).
+    Cycling (rather than padding with a fixed network, or truncating
+    silently) keeps every slot pointing at a real, Owner-configured
+    network even when an Admin's override is longer or shorter than the
+    base pattern.
     """
     seq = ans.slot_sequence or [AdNetwork.ADSGRAM]
-    return [n.value for n in seq]
+    return [seq[i % len(seq)].value for i in range(count)]
 
 
-def _build_ad_config(ans: AdNetworkSetting, cs: CPMSetting) -> dict:
+def _build_ad_config(ans: AdNetworkSetting, cs: CPMSetting, count: int) -> dict:
     return {
         "networks": {
             "adsgram": {"block_id": ans.adsgram_block_id},
             "monetag": {"zone_id": ans.monetag_zone_id, "sdk_url": ans.monetag_sdk_url},
             "gigapub": {"project_id": ans.gigapub_project_id},
         },
-        "sequence": _ad_slot_sequence(ans),
+        "sequence": _ad_slot_sequence(ans, count),
         "ad_view_delay_seconds": cs.ad_view_delay_seconds,
     }
 
@@ -308,7 +358,8 @@ async def redirect_entry(short_code: str):
         raise HTTPException(status_code=404, detail="link not found")
     cs = await storage.get_cpm_setting()
     ans = await storage.get_ad_network_setting()
-    ad_config = _build_ad_config(ans, cs)
+    owner = await storage.get_admin(link.owner_telegram_id)
+    ad_config = _build_ad_config(ans, cs, effective_ad_count(owner, ans))
     with open("webapp/viewer.html", "r", encoding="utf-8") as f:
         html = f.read()
     html = (
@@ -354,7 +405,8 @@ async def get_ad_config(short_code: str):
         raise HTTPException(status_code=404, detail="link not found")
     cs = await storage.get_cpm_setting()
     ans = await storage.get_ad_network_setting()
-    return _build_ad_config(ans, cs)
+    owner = await storage.get_admin(link.owner_telegram_id)
+    return _build_ad_config(ans, cs, effective_ad_count(owner, ans))
 
 
 @app.get("/panel", response_class=HTMLResponse)
@@ -537,15 +589,17 @@ async def my_links(admin: Admin = Depends(require_admin)):
     from this endpoint entirely rather than being labelled and shown.
 
     `ad_count` comes through in `**l.model_dump()` below, so an Admin
-    can see the old per-link value — but read-only: no endpoint
-    reachable with `require_admin` can change it, only
-    `require_owner`'s POST /api/admin/links/{short_code}/ad-count.
-    `effective_ad_count` is the number that actually matters now: how
-    many ads a viewer of this link really watches, i.e.
-    len(AdNetworkSetting.slot_sequence) — see that field's docstring.
+    can see the old per-link value — it's legacy and read-only either
+    way (see Link.ad_count's docstring). `effective_ad_count` is the
+    number that actually matters now: how many ads a viewer of this
+    link really watches, i.e. this Admin's own `Admin.ad_count`
+    profile override if the Owner set one for them, otherwise
+    len(AdNetworkSetting.slot_sequence) — see effective_ad_count()'s
+    docstring in models.py. It's the same value for every link in this
+    list, since it's a per-Admin setting, not a per-link one.
     """
     ans = await storage.get_ad_network_setting()
-    effective_ad_count = len(_ad_slot_sequence(ans))
+    my_ad_count = effective_ad_count(admin, ans)
     links = await storage.list_links_by_owner(admin.telegram_id)
     out = []
     for l in links:
@@ -555,7 +609,7 @@ async def my_links(admin: Admin = Depends(require_admin)):
             {
                 **l.model_dump(),
                 "short_url": _short_url_for(l.short_code),
-                "effective_ad_count": effective_ad_count,
+                "effective_ad_count": my_ad_count,
                 "view_count": len(genuine_views),
                 "confirmed_views": len(
                     [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]
@@ -887,13 +941,21 @@ async def admin_detail(telegram_id: int, owner: Admin = Depends(require_owner)):
 
 @app.get("/api/admin/admins/{telegram_id}/links")
 async def admin_links(telegram_id: int, owner: Admin = Depends(require_owner)):
-    """Every link this Admin owns, with its own ad_count — the list the
-    Owner's per-Admin detail page renders to review and adjust how many
-    ads each individual link requires (see
-    POST /api/admin/links/{short_code}/ad-count)."""
-    if not await storage.admin_stats(telegram_id):
+    """Every link this Admin/Sub Admin owns — the list the Owner's
+    per-Admin detail page shows alongside their profile-level ad count
+    control (see POST /api/admin/admins/{telegram_id}/ad-count).
+    `effective_ad_count` is the same value repeated on every row (a
+    per-Admin setting, not a per-link one), included per-link only so
+    the panel doesn't need a second round trip."""
+    target = await storage.get_admin(telegram_id)
+    if not target or not await storage.admin_stats(telegram_id):
         raise HTTPException(status_code=404, detail="admin not found")
-    return {"links": await storage.admin_links_detail(telegram_id)}
+    ans = await storage.get_ad_network_setting()
+    my_ad_count = effective_ad_count(target, ans)
+    links = await storage.admin_links_detail(telegram_id)
+    for l in links:
+        l["effective_ad_count"] = my_ad_count
+    return {"links": links}
 
 
 @app.post("/api/admin/links/{short_code}/ad-count")
@@ -1050,6 +1112,31 @@ async def set_sub_admin_cpm(telegram_id: int, payload: dict, owner: Admin = Depe
     return updated.model_dump()
 
 
+@app.post("/api/admin/admins/{telegram_id}/ad-count")
+async def set_admin_ad_count(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
+    """Owner-only per-Admin/Sub-Admin ad count override — set once on
+    this person's profile, it applies in real time to every link they
+    own (existing and future), replacing the old per-link
+    POST /api/admin/links/{short_code}/ad-count control."""
+    raw = payload.get("ad_count")
+    ad_count = None
+    if raw is not None and raw != "":
+        try:
+            ad_count = int(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="ad_count must be a whole number or null")
+        if not (Storage.MIN_AD_COUNT <= ad_count <= Storage.MAX_AD_COUNT):
+            raise HTTPException(
+                status_code=400,
+                detail=f"ad_count must be between {Storage.MIN_AD_COUNT} and {Storage.MAX_AD_COUNT}",
+            )
+    updated = await storage.set_admin_ad_count(telegram_id, ad_count, changed_by=owner.telegram_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="admin not found")
+    await notify_admin_of_ad_count_change(bot, updated, ad_count)
+    return updated.model_dump()
+
+
 @app.post("/api/admin/admins/{telegram_id}/auto-delete")
 async def set_link_auto_delete(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
     months_raw = payload.get("months")
@@ -1067,3 +1154,195 @@ async def set_link_auto_delete(telegram_id: int, payload: dict, owner: Admin = D
         raise HTTPException(status_code=404, detail="admin not found")
     await notify_sub_admin_of_auto_delete_change(bot, updated, months)
     return updated.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# API keys (Owner/Admin only) — generate/list/revoke credentials for the
+# public REST API below. Management itself still goes through the panel,
+# so it's authenticated with the normal Telegram initData header, not an
+# API key (you need to already be in the panel to mint your first key).
+# ---------------------------------------------------------------------------
+
+@app.post("/api/apikeys")
+async def create_api_key(payload: dict, admin: Admin = Depends(require_owner_or_admin)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required (e.g. 'My site', 'Zapier')")
+    if len(name) > 60:
+        raise HTTPException(status_code=400, detail="name must be 60 characters or fewer")
+    key, raw_key = await storage.create_api_key(admin.telegram_id, name)
+    return {
+        # `api_key` is the ONLY time this raw secret is ever returned —
+        # store it now, it can't be shown again (only key_prefix, below,
+        # is kept for future reference).
+        "api_key": raw_key,
+        "key_id": key.key_id,
+        "name": key.name,
+        "key_prefix": key.key_prefix,
+        "created_at": key.created_at,
+    }
+
+
+@app.get("/api/apikeys")
+async def list_api_keys(admin: Admin = Depends(require_owner_or_admin)):
+    keys = await storage.list_api_keys(admin.telegram_id)
+    return {
+        "api_keys": [
+            {
+                "key_id": k.key_id,
+                "name": k.name,
+                "key_prefix": k.key_prefix,
+                "created_at": k.created_at,
+                "last_used_at": k.last_used_at,
+                "revoked_at": k.revoked_at,
+            }
+            for k in keys
+        ]
+    }
+
+
+@app.delete("/api/apikeys/{key_id}")
+async def revoke_api_key(key_id: str, admin: Admin = Depends(require_owner_or_admin)):
+    ok = await storage.revoke_api_key(key_id, admin.telegram_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="api key not found (or already revoked)")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Public REST API (/api/v1) — everything here uses `require_api_key`
+# instead of Telegram initData, so it can be called from an Owner's or
+# Admin's own site/server with a key from POST /api/apikeys above.
+# Endpoints mirror the Mini App's own /api/* routes 1:1 in behavior; see
+# API_DOCS.md for the full reference and curl examples.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/v1/me")
+async def v1_me(admin: Admin = Depends(require_api_key)):
+    return admin.model_dump(exclude={"traffic_sources"})
+
+
+@app.post("/api/v1/links")
+async def v1_create_link(payload: dict, admin: Admin = Depends(require_api_key)):
+    if not admin.traffic_sources:
+        raise HTTPException(
+            status_code=400,
+            detail="Add at least one Traffic Source from the panel before creating links",
+        )
+    destination_url = (payload.get("destination_url") or "").strip()
+    if not destination_url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
+
+    code = _gen_short_code()
+    while await storage.get_link(code):
+        code = _gen_short_code()
+    link = await storage.create_link(code, admin.telegram_id, destination_url)
+    return {"short_code": link.short_code, "short_url": _short_url_for(link.short_code), "ad_count": link.ad_count}
+
+
+@app.get("/api/v1/links")
+async def v1_my_links(admin: Admin = Depends(require_api_key)):
+    ans = await storage.get_ad_network_setting()
+    my_ad_count = effective_ad_count(admin, ans)
+    links = await storage.list_links_by_owner(admin.telegram_id)
+    out = []
+    for l in links:
+        views = await storage.list_views_by_short_code(l.short_code)
+        genuine_views = [v for v in views if not v.daily_capped]
+        out.append(
+            {
+                **l.model_dump(),
+                "short_url": _short_url_for(l.short_code),
+                "effective_ad_count": my_ad_count,
+                "view_count": len(genuine_views),
+                "confirmed_views": len(
+                    [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]
+                ),
+                "pending_views": len(
+                    [v for v in genuine_views if v.counted_status == CountedStatus.PENDING_PAYOUT]
+                ),
+            }
+        )
+    out.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"links": out}
+
+
+@app.delete("/api/v1/links/{short_code}")
+async def v1_delete_link(short_code: str, admin: Admin = Depends(require_api_key)):
+    ok = await storage.delete_link(short_code, admin.telegram_id, admin.role == Role.OWNER)
+    if not ok:
+        raise HTTPException(status_code=404, detail="link not found")
+    return {"ok": True}
+
+
+@app.get("/api/v1/cpm")
+async def v1_get_cpm(admin: Admin = Depends(require_api_key)):
+    cs = await storage.get_cpm_setting()
+    data = cs.model_dump()
+    if cs.mode == CPMMode.SCHEDULED:
+        started = datetime.fromisoformat(cs.cycle_started_at)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        deadline = started + timedelta(hours=cs.cycle_duration_hours)
+        data["seconds_to_payout"] = max(0, int((deadline - datetime.now(timezone.utc)).total_seconds()))
+        if admin.role != Role.OWNER:
+            data.pop("current_cpm", None)
+            data.pop("admin_cpm", None)
+            data.pop("sub_admin_cpm", None)
+    return data
+
+
+@app.post("/api/v1/withdraw")
+async def v1_request_withdrawal(payload: dict, admin: Admin = Depends(require_api_key)):
+    try:
+        amount = float(payload.get("amount"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="amount must be a number")
+    method = payload.get("method")
+    account_number_raw = (payload.get("account_number") or "").strip()
+
+    if method not in ("bkash", "nagad"):
+        raise HTTPException(status_code=400, detail="method must be 'bkash' or 'nagad'")
+    validation_error = bd_mobile_validation_error(account_number_raw)
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
+    account_number = normalize_bd_mobile_number(account_number_raw)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+    if amount > admin.balance_confirmed:
+        raise HTTPException(status_code=400, detail="amount exceeds confirmed balance")
+
+    cs = await storage.get_cpm_setting()
+    if amount < cs.min_withdraw_amount:
+        raise HTTPException(
+            status_code=400,
+            detail=f"amount is below the minimum withdrawal amount ({cs.min_withdraw_amount:.2f})",
+        )
+
+    req = await storage.create_withdrawal(admin.telegram_id, amount, WithdrawMethod(method), account_number)
+    await notify_owner_of_withdrawal(bot, settings, admin, req)
+    return req.model_dump()
+
+
+@app.get("/api/v1/withdrawals")
+async def v1_my_withdrawals(admin: Admin = Depends(require_api_key)):
+    all_w = await storage.list_withdrawals()
+    mine = sorted(
+        (w.model_dump() for w in all_w if w.admin_telegram_id == admin.telegram_id),
+        key=lambda w: w["created_at"],
+        reverse=True,
+    )
+    return {"withdrawals": mine}
+
+
+# -- Owner-only public API endpoints ----------------------------------------
+
+@app.get("/api/v1/admins")
+async def v1_list_all_admins(owner: Admin = Depends(require_api_key_owner)):
+    admins = await storage.list_admins()
+    return {"admins": [a.model_dump() for a in admins]}
+
+
+@app.get("/api/v1/stats")
+async def v1_platform_stats(owner: Admin = Depends(require_api_key_owner)):
+    return await storage.platform_stats()

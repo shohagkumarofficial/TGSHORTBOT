@@ -36,8 +36,10 @@ upsert/update per call site.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
@@ -50,6 +52,7 @@ from models import (
     AdminStatus,
     AdNetwork,
     AdNetworkSetting,
+    ApiKey,
     CPMHistoryEntry,
     CPMSetting,
     Link,
@@ -95,8 +98,13 @@ class Storage:
         self.policy_setting: PolicySetting = PolicySetting()
         self.ad_network_setting: AdNetworkSetting = AdNetworkSetting()
         self.cpm_history: List[CPMHistoryEntry] = []
+        self.api_keys: Dict[str, ApiKey] = {}
 
         self._view_index: Dict[Tuple[str, int], str] = {}
+        # raw-key SHA-256 hash -> key_id, so require_api_key can resolve a
+        # request's Authorization header without scanning every ApiKey on
+        # every single API call.
+        self._api_key_hash_index: Dict[str, str] = {}
         self._loaded = False
 
     # ------------------------------------------------------------------
@@ -117,6 +125,7 @@ class Storage:
         policy_setting_res = await self.client.table("policy_settings").select("*").eq("id", 1).execute()
         ad_network_setting_res = await self.client.table("ad_network_settings").select("*").eq("id", 1).execute()
         cpm_history_res = await self.client.table("cpm_history").select("*").execute()
+        api_keys_res = await self._select_or_empty("api_keys")
 
         traffic_by_admin: Dict[int, List[TrafficSource]] = {}
         for row in traffic_res.data:
@@ -163,14 +172,41 @@ class Storage:
             self.ad_network_setting = AdNetworkSetting()
 
         self.cpm_history = [CPMHistoryEntry(**row) for row in cpm_history_res.data]
+        self.api_keys = {row["key_id"]: ApiKey(**row) for row in api_keys_res.data}
 
         self._view_index = {
             (v.short_code, v.viewer_telegram_id): v.view_id for v in self.views.values()
         }
+        self._api_key_hash_index = {k.key_hash: k.key_id for k in self.api_keys.values()}
 
         async with self._lock:
             await self._save_locked()
         self._loaded = True
+
+    async def _select_or_empty(self, table: str):
+        """Like `self.client.table(table).select("*").execute()`, but
+        self-heals to an empty result instead of crash-looping the whole
+        `load()` if `table` doesn't exist yet — i.e. the `create table`
+        migration for a newer feature (e.g. `api_keys`, see README.md)
+        hasn't been run against this Supabase project yet. Mirrors the
+        same self-heal philosophy `_safe_upsert` already applies to a
+        single missing *column*, just one level up, for a missing table.
+        """
+        try:
+            return await self.client.table(table).select("*").execute()
+        except Exception as exc:
+            if "PGRST205" in str(exc) or "Could not find the table" in str(exc):
+                logger.warning(
+                    "Supabase table '%s' doesn't exist yet (pending migration — "
+                    "see README.md's schema notes). Starting empty until it's created.",
+                    table,
+                )
+
+                class _Empty:
+                    data = []
+
+                return _Empty()
+            raise
 
     async def _safe_upsert(self, table: str, rows: list[dict], on_conflict: str) -> None:
         """Upserts `rows` into `table`, tolerating a field that exists on
@@ -226,6 +262,7 @@ class Storage:
         policy_setting_row = {"id": 1, **self.policy_setting.model_dump(mode="json")}
         ad_network_setting_row = {"id": 1, **self.ad_network_setting.model_dump(mode="json")}
         cpm_history_rows = [e.model_dump(mode="json") for e in self.cpm_history]
+        api_key_rows = [k.model_dump(mode="json") for k in self.api_keys.values()]
 
         await self._safe_upsert("admins", admin_rows, on_conflict="telegram_id")
         await self._safe_upsert("traffic_sources", traffic_rows, on_conflict="id")
@@ -236,6 +273,7 @@ class Storage:
         await self._safe_upsert("policy_settings", [policy_setting_row], on_conflict="id")
         await self._safe_upsert("ad_network_settings", [ad_network_setting_row], on_conflict="id")
         await self._safe_upsert("cpm_history", cpm_history_rows, on_conflict="entry_id")
+        await self._safe_upsert("api_keys", api_key_rows, on_conflict="key_id")
 
     async def save(self) -> None:
         async with self._lock:
@@ -479,13 +517,33 @@ class Storage:
             return link
 
     async def purge_expired_links(self) -> int:
-        """Deletes every Link whose `expires_at` has passed (Sub Admin
-        auto-delete feature). Intended to be called periodically from a
-        background loop (see app.py's lifespan, alongside the CPM cycle
-        watcher) — not from any request path. Leaves that link's View
-        rows alone, same reasoning as delete_link: they've already been
-        credited, so removing them would only make old earnings harder
-        to audit without changing anyone's balance.
+        """Removes every Link whose `expires_at` has passed from memory
+        (Sub Admin auto-delete feature) — so it stops resolving, stops
+        showing up in `list_links_by_owner`/the panel, and stops counting
+        toward anyone's link total. Intended to be called periodically
+        from a background loop (see app.py's lifespan, alongside the CPM
+        cycle watcher) — not from any request path.
+
+        Deliberately does NOT delete the Supabase `links` row (this used
+        to also run a matching `.delete()` against Supabase; that was
+        removed after it caused a production incident — see below). That
+        link's View rows are left alone either way, same reasoning as
+        delete_link: they've already been credited, so removing them
+        would only make old earnings harder to audit without changing
+        anyone's balance. But `views.short_code` has a foreign-key
+        constraint on `links.short_code`, so hard-deleting the Link row
+        while its Views survive left those Views permanently orphaned —
+        and since `_save_locked()` re-upserts the *entire* views table on
+        every single mutation (see its docstring), one orphaned row was
+        then enough to make every future write to *any* table fail with a
+        `views_short_code_fkey` violation, not just writes touching that
+        link. Leaving the Supabase `links` row in place keeps the foreign
+        key satisfied forever, at the cost of an inert row lingering in
+        Postgres for an expired link — a fine trade, since nothing in the
+        app ever reads `links` from Supabase again after `load()` rebuilds
+        `self.links` at startup, and `load()`'s own call to this method
+        (via app.py's periodic watcher) purges it from memory again before
+        it could ever look like an active link.
         """
         async with self._lock:
             now = datetime.now(timezone.utc)
@@ -503,9 +561,6 @@ class Storage:
                     expired_codes.append(code)
             for code in expired_codes:
                 del self.links[code]
-                await self.client.table("links").delete().eq("short_code", code).execute()
-            if expired_codes:
-                await self._save_locked()
             return len(expired_codes)
 
     async def get_link(self, short_code: str) -> Optional[Link]:
@@ -523,7 +578,18 @@ class Storage:
         already fed into the owning Admin's stored balance_confirmed /
         balance_pending (see Admin's docstring), so deleting them here
         wouldn't change anyone's balance, it'd just make old earnings
-        harder to audit later.
+        harder to audit later. For that reason this only removes the
+        Link from memory and does NOT delete the Supabase `links` row
+        (used to also run a matching `.delete()` there; removed after it
+        caused a production incident — same one purge_expired_links hit
+        and explains in more detail): `views.short_code` has a foreign
+        key on `links.short_code`, so hard-deleting a Link while its
+        Views survive leaves those Views permanently orphaned, and
+        `_save_locked()`'s blanket views upsert then fails on every
+        future write anywhere in the app, not just ones touching this
+        link. Leaving the inert Supabase row behind costs nothing —
+        nothing reads `links` from Supabase again after `load()` builds
+        `self.links` at startup.
         """
         async with self._lock:
             link = self.links.get(short_code)
@@ -532,11 +598,6 @@ class Storage:
             if not is_owner and link.owner_telegram_id != requester_telegram_id:
                 return False
             del self.links[short_code]
-            # A blanket upsert alone would never remove this row from
-            # Supabase (upsert only adds/updates), so it needs an
-            # explicit delete before the usual full-state save.
-            await self.client.table("links").delete().eq("short_code", short_code).execute()
-            await self._save_locked()
             return True
 
     async def set_link_ad_count(self, short_code: str, ad_count: int) -> Optional[Link]:
@@ -797,6 +858,44 @@ class Storage:
                 CPMHistoryEntry(
                     event="sub_admin_cpm_change",
                     detail={"telegram_id": telegram_id, "from": old, "to": cpm, "by": changed_by},
+                )
+            )
+            await self._save_locked()
+            return admin
+
+    async def set_admin_ad_count(
+        self, telegram_id: int, ad_count: Optional[int], changed_by: int
+    ) -> Optional[Admin]:
+        """Owner-only per-Admin/Sub-Admin ad count override.
+        `ad_count=None` clears it, falling back to the platform-wide
+        `len(AdNetworkSetting.slot_sequence)` — see
+        models.effective_ad_count() for the full priority order. Bounds
+        (MIN_AD_COUNT..MAX_AD_COUNT) are enforced by the caller
+        (app.py), same as set_sub_admin_cpm leaves its own >= 0 check to
+        the caller. Unlike set_sub_admin_cpm/set_link_auto_delete, this
+        applies to Role.ADMIN as well as Role.SUB_ADMIN, and is
+        therefore never cleared by set_role/resolve_admin_request on a
+        promotion or demotion between those two tiers — it simply
+        carries over.
+
+        Real-time by construction: nothing here touches any existing
+        Link row. `effective_ad_count()` is computed fresh from this
+        Admin's current `ad_count` on every `/r/{short_code}` and
+        `/api/ad-config/{short_code}` call, so the change is visible on
+        every link this Admin/Sub Admin owns the instant it's saved.
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            old = admin.ad_count
+            if old == ad_count:
+                return admin
+            admin.ad_count = ad_count
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="admin_ad_count_change",
+                    detail={"telegram_id": telegram_id, "from": old, "to": ad_count, "by": changed_by},
                 )
             )
             await self._save_locked()
@@ -1293,6 +1392,77 @@ class Storage:
             "suggested_limit": max(percentile(0.90), 1),
             "current_limit": cpm_setting.max_daily_views_per_admin,
         }
+
+    # ------------------------------------------------------------------
+    # API keys (Owner/Admin public REST API access — see API_DOCS.md)
+    # ------------------------------------------------------------------
+
+    _API_KEY_PREFIX = "tgs_"
+
+    @staticmethod
+    def _hash_api_key(raw_key: str) -> str:
+        return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+    async def create_api_key(self, telegram_id: int, name: str) -> Tuple[ApiKey, str]:
+        """Generates a brand-new key for `telegram_id`, stores only its
+        hash, and returns `(record, raw_key)` — the *only* moment the raw
+        secret ever exists outside the caller's own hands, so app.py must
+        hand it back to the requester in that same response and never log
+        or re-return it afterward.
+        """
+        raw_key = self._API_KEY_PREFIX + secrets.token_hex(24)
+        async with self._lock:
+            key = ApiKey(
+                owner_telegram_id=telegram_id,
+                name=name,
+                key_hash=self._hash_api_key(raw_key),
+                key_prefix=raw_key[:12],
+            )
+            self.api_keys[key.key_id] = key
+            self._api_key_hash_index[key.key_hash] = key.key_id
+            await self._save_locked()
+            return key, raw_key
+
+    async def list_api_keys(self, telegram_id: int) -> List[ApiKey]:
+        keys = [k for k in self.api_keys.values() if k.owner_telegram_id == telegram_id]
+        keys.sort(key=lambda k: k.created_at, reverse=True)
+        return keys
+
+    async def revoke_api_key(self, key_id: str, telegram_id: int) -> bool:
+        """Only the Admin who generated a key can revoke it — an Owner
+        revoking someone else's key isn't supported here; banning that
+        Admin (which `require_api_key` already checks) is the platform-
+        level way to cut off all of their keys at once instead.
+        """
+        async with self._lock:
+            key = self.api_keys.get(key_id)
+            if not key or key.owner_telegram_id != telegram_id or key.revoked_at:
+                return False
+            key.revoked_at = now_iso()
+            await self._save_locked()
+            return True
+
+    async def get_admin_by_api_key(self, raw_key: str) -> Optional[Admin]:
+        """Resolves a raw `Authorization`/`X-API-Key` header value back to
+        the Admin who generated it — None if the key is unknown, malformed,
+        or revoked. Best-effort bumps `last_used_at` (not lock-guarded
+        against a concurrent revoke/rotate racing it — acceptable, since
+        the worst case is a slightly stale timestamp, never a security
+        issue) so the panel's API tab can show "last used" per key.
+        """
+        key_id = self._api_key_hash_index.get(self._hash_api_key(raw_key))
+        if not key_id:
+            return None
+        key = self.api_keys.get(key_id)
+        if not key or key.revoked_at:
+            return None
+        admin = self.admins.get(key.owner_telegram_id)
+        if not admin:
+            return None
+        async with self._lock:
+            key.last_used_at = now_iso()
+            await self._save_locked()
+        return admin
 
     async def list_balance_adjustments(self, telegram_id: int, limit: int = 20) -> List[dict]:
         entries = [

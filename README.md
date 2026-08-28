@@ -28,6 +28,7 @@ tgshortbot/
 ├── requirements.txt
 ├── render.yaml
 ├── .env.example
+├── API_DOCS.md            # public REST API reference (Owner/Admin API keys)
 └── README.md
 ```
 
@@ -396,6 +397,47 @@ alter table admins add constraint admins_role_check
 (Skip this if `role` is a plain unconstrained `text` column — most setups
 following this README's earlier instructions will be.)
 
+## Public REST API
+
+Beyond the Mini App's own `/api/*` routes (Telegram-`initData`-authenticated,
+used by `webapp/panel.html`), the Owner and every Admin can generate an API
+key from the panel and call a small public API (`/api/v1/*`) from their own
+site or server — no Telegram context needed. Full endpoint reference, auth
+details, and curl examples: **[`API_DOCS.md`](API_DOCS.md)**.
+
+Quick summary:
+
+- **Generating a key** (panel-authenticated, Owner/Admin only):
+  `POST /api/apikeys` `{"name": "My site"}` → the raw key is returned
+  **once**, in that response, and never again — only its SHA-256 hash is
+  stored (`storage.create_api_key`). `GET /api/apikeys` lists your own keys
+  (name, prefix, last used) without ever re-exposing the secret;
+  `DELETE /api/apikeys/{key_id}` revokes one. Sub Admins and Viewers can't
+  generate keys.
+- **Using a key**: send it as `X-API-Key: <key>` (or
+  `Authorization: Bearer <key>`) on any `/api/v1/*` request. A key
+  authenticates as whichever Admin generated it, at their *current* role —
+  banning, demoting, or role-changing that Admin instantly changes (or cuts
+  off) what their keys can do too, same as their Mini App session would be.
+- **Required Supabase migration** — run once (safe to re-run):
+
+  ```sql
+  create table if not exists api_keys (
+    key_id text primary key,
+    owner_telegram_id bigint not null,
+    name text not null,
+    key_hash text not null unique,
+    key_prefix text not null,
+    created_at text not null,
+    last_used_at text,
+    revoked_at text
+  );
+  ```
+
+  The app self-heals to "no keys yet" if this table doesn't exist (mirroring
+  how `_safe_upsert` already tolerates a missing column elsewhere), but
+  `POST /api/apikeys` needs it to actually persist anything.
+
 ## Deploying to Render
 
 `render.yaml` is ready to use as-is:
@@ -425,6 +467,20 @@ following this README's earlier instructions will be.)
   `initData` HMAC signature server-side (`telegram_auth.py`) — the
   client-supplied Telegram ID is never trusted directly, per the PRD's
   explicit instruction in Section 9.4.
+- Every `/api/v1/*` public API call is authenticated by hashing the
+  presented key and looking it up against the stored SHA-256 hash
+  (`storage.get_admin_by_api_key`) — the raw key itself is never stored
+  anywhere after the one response that issues it (see "Public REST API"
+  above).
+- If your `views` table has a foreign key on `links.short_code` (as
+  README's earlier setup instructions have it), do **not** hard-delete a
+  row from `links` while `views` referencing it still exist — do what
+  `storage.delete_link`/`purge_expired_links` do and only remove it from
+  the in-memory `self.links`, leaving the Supabase row in place. Deleting
+  it directly orphans those Views, and since `storage._save_locked()`
+  re-upserts the *entire* `views` table on every mutation, one orphaned
+  row is enough to break every future write to any table until it's
+  cleaned up.
 - The `/webhook` endpoint checks Telegram's
   `X-Telegram-Bot-Api-Secret-Token` header against `WEBHOOK_SECRET`
   before processing any update.
