@@ -429,6 +429,13 @@ async def log_view(
     payload: dict,
     x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
 ):
+    """Logs one completed ad-watch. Repeat visits by the same viewer to
+    the same link each create their own View and are credited the same
+    as a first visit — see storage.create_view's docstring — the only
+    thing still capping repeat views is the Anti-Abuse System's daily
+    limit (`daily_capped` on the response), not a one-view-per-link
+    ceiling.
+    """
     user = await _extract_user(x_telegram_init_data)
     short_code = payload.get("short_code")
     if not short_code:
@@ -440,12 +447,8 @@ async def log_view(
 
     viewer_id = user["id"]
     view = await storage.create_view(short_code, viewer_id)
-    if view is None:
-        # Dedupe rule: only the first completed view per viewer per link counts.
-        return {"ok": True, "already_counted": True}
-
     await cpm_engine.credit_new_view(storage, view, link)
-    return {"ok": True, "already_counted": False}
+    return {"ok": True, "daily_capped": view.daily_capped}
 
 
 @app.get("/api/link/{short_code}")

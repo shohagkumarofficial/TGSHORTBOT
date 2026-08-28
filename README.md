@@ -81,18 +81,21 @@ committed, so there's nothing to conflict with in version control.
   ads (Adsgram, Monetag, and/or GigaPub, per the Owner's configured
   order — see **Ad networks**), then calls
   `POST /api/log-view`, then `GET /api/link/{code}`, then redirects.
-- **Fraud/dedupe** (4.3): one countable view per `(short_code, viewer)`
-  pair, enforced atomically in `storage.create_view`. On top of that, an
-  **Anti-Abuse System** caps how many views a single viewer can have
-  *credited* against one Admin's links per day
+- **Fraud/dedupe** (4.3, revised): a viewer revisiting the same link
+  repeatedly counts every time — each completed ad-watch creates its own
+  View row and credits the owning Admin, with no per-link,
+  once-per-viewer ceiling any more. The only thing still limiting repeat
+  views is the **Anti-Abuse System**'s daily cap
   (`CPMSetting.max_daily_views_per_admin`, Owner-only, set from the
-  panel's CPM Settings drawer, default `0` = no cap): once a viewer
-  crosses it, `cpm_engine.credit_new_view` still lets every further view
-  play its ads and reach the destination as normal, it just stops adding
+  panel's CPM Settings drawer, default `0` = no cap), which counts a
+  viewer's views against one Admin *across all of that Admin's links
+  combined*, same-link repeats included: once a viewer crosses it,
+  `cpm_engine.credit_new_view` still lets every further view play its
+  ads and reach the destination as normal, it just stops adding
   to that Admin's balance (the `View` row is flagged `daily_capped`
-  instead), so a viewer re-opening many of one Admin's links in a day
-  can't keep dragging that Admin's CPM down. **Missed Earnings
-  Analytics** (`storage.missed_earnings_trend` /
+  instead), so a viewer replaying one link (or several of one Admin's
+  links) all day can't keep dragging that Admin's CPM down. **Missed
+  Earnings Analytics** (`storage.missed_earnings_trend` /
   `missed_earnings_by_link` / `suggested_daily_limit`, folded into the
   existing `platform_stats`/`admin_stats` payloads) turns the raw
   `daily_capped_views` counter into something actionable: a 14-day daily
@@ -463,6 +466,18 @@ Quick summary:
 
 ## Security notes
 
+- **Required migration if you're upgrading from an earlier version**:
+  drop the old UNIQUE constraint on the `views` table so repeat views by
+  the same viewer on the same link can be inserted —
+  ```sql
+  ALTER TABLE views DROP CONSTRAINT IF EXISTS views_short_code_viewer_telegram_id_key;
+  ```
+  (the constraint name may differ if you named it explicitly when
+  creating the table — check with `\d views` in `psql` or the Supabase
+  Table Editor's constraints view if the command above finds nothing to
+  drop). Without this, `storage.create_view` fails on every repeat view
+  and logs a duplicate-key error instead of counting it — see that
+  method's docstring.
 - Every Mini App API call is authenticated by validating Telegram's
   `initData` HMAC signature server-side (`telegram_auth.py`) — the
   client-supplied Telegram ID is never trusted directly, per the PRD's
@@ -606,6 +621,6 @@ Quick summary:
 ## Out of scope (unchanged from the PRD)
 
 Database persistence beyond JSON, automated fraud detection beyond the
-per-viewer dedupe rule, per-admin CPM mode mixing, withdrawal methods
+daily Anti-Abuse view cap, per-admin CPM mode mixing, withdrawal methods
 beyond bKash/Nagad, and exact per-impression Adsgram revenue sync are all
 deliberately not implemented here — see Section 7 of the PRD.

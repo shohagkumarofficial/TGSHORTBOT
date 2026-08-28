@@ -19,11 +19,17 @@ Supabase's persistent Postgres database.
 
 An `asyncio.Lock` still serializes all mutations for the same reason as
 before: the whole app runs on a single asyncio event loop, so this alone
-is enough to make check-then-act sequences (e.g. the view dedupe check)
-atomic — no real concurrency bugs, no need for a DB transaction. The
-`views` table's `(short_code, viewer_telegram_id)` UNIQUE constraint is
-kept as a second, database-level safety net in `create_view` in case
-that assumption is ever wrong (e.g. two Render instances one day).
+is enough to make check-then-act sequences (e.g. the Anti-Abuse System's
+daily-cap check in cpm_engine._is_daily_capped) atomic — no real
+concurrency bugs, no need for a DB transaction.
+
+NOTE: the `views` table's old UNIQUE(short_code, viewer_telegram_id)
+constraint must be DROPPED in Supabase. Repeat visits by the same viewer
+to the same link now each create their own View row and count toward
+that link's owner's balance (see create_view's docstring) — the only
+thing still limiting a viewer's repeat views is the Anti-Abuse System's
+daily cap, not a one-view-per-link ceiling. With the old constraint
+still in place, every repeat-view insert fails outright.
 
 NOTE (known trade-off, fine for the current MVP scale): `_save_locked()`
 re-upserts every admin/link/view/withdrawal on every single mutation,
@@ -100,7 +106,6 @@ class Storage:
         self.cpm_history: List[CPMHistoryEntry] = []
         self.api_keys: Dict[str, ApiKey] = {}
 
-        self._view_index: Dict[Tuple[str, int], str] = {}
         # raw-key SHA-256 hash -> key_id, so require_api_key can resolve a
         # request's Authorization header without scanning every ApiKey on
         # every single API call.
@@ -174,9 +179,6 @@ class Storage:
         self.cpm_history = [CPMHistoryEntry(**row) for row in cpm_history_res.data]
         self.api_keys = {row["key_id"]: ApiKey(**row) for row in api_keys_res.data}
 
-        self._view_index = {
-            (v.short_code, v.viewer_telegram_id): v.view_id for v in self.views.values()
-        }
         self._api_key_hash_index = {k.key_hash: k.key_id for k in self.api_keys.values()}
 
         async with self._lock:
@@ -644,31 +646,43 @@ class Storage:
     # View
     # ------------------------------------------------------------------
 
-    async def find_view(self, short_code: str, viewer_telegram_id: int) -> Optional[View]:
-        vid = self._view_index.get((short_code, viewer_telegram_id))
-        return self.views.get(vid) if vid else None
+    async def create_view(self, short_code: str, viewer_telegram_id: int) -> View:
+        """Every completed ad-watch creates its own View row now — a
+        viewer revisiting the same link repeatedly all counts toward
+        that link owner's balance, there's no more one-view-per-viewer-
+        per-link ceiling (the old dedupe rule). The only thing still
+        limiting repeat views is the Anti-Abuse System's daily cap
+        (CPMSetting.max_daily_views_per_admin, enforced by
+        cpm_engine.credit_new_view/_is_daily_capped across *all* of an
+        Admin's links combined, same-link repeats included): once a
+        viewer crosses it for one Admin in a day, every further view —
+        on this link or any other of that Admin's links — is still
+        logged as watched but earns nothing (`daily_capped=True`),
+        rather than being silently dropped.
 
-    async def create_view(self, short_code: str, viewer_telegram_id: int) -> Optional[View]:
-        """Returns None if this (short_code, viewer) pair already has a
-        view — the dedupe rule from Section 9.3. The check-then-insert is
-        atomic because no `await` happens between them while the lock is
-        held. The `views` table's UNIQUE(short_code, viewer_telegram_id)
-        constraint is a second safety net in case that in-process
-        assumption is ever violated.
+        REQUIRES the `views` table's old UNIQUE(short_code,
+        viewer_telegram_id) constraint to be dropped in Supabase (see
+        README.md's Security notes) — with it still in place, the
+        insert below fails on every repeat view, and that failure is
+        logged and re-raised rather than swallowed, so a still-pending
+        migration is obvious instead of quietly losing views again.
         """
         async with self._lock:
-            key = (short_code, viewer_telegram_id)
-            if key in self._view_index:
-                return None
             view = View(short_code=short_code, viewer_telegram_id=viewer_telegram_id)
             try:
                 await self.client.table("views").insert(view.model_dump(mode="json")).execute()
             except Exception as exc:
                 if "duplicate" in str(exc).lower() or "23505" in str(exc):
-                    return None
+                    logger.error(
+                        "views insert for (%s, %s) hit a duplicate-key error — the old "
+                        "UNIQUE(short_code, viewer_telegram_id) constraint is probably "
+                        "still on the Supabase 'views' table; drop it so repeat views by "
+                        "the same viewer can be counted (see README.md's Security notes).",
+                        short_code, viewer_telegram_id,
+                    )
                 raise
             self.views[view.view_id] = view
-            self._view_index[key] = view.view_id
+            await self._save_locked()
             return view
 
     async def list_views_by_short_code(self, short_code: str) -> List[View]:
