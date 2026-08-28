@@ -38,7 +38,11 @@ committed, so there's nothing to conflict with in version control.
 
 - **Roles** (Section 2): the first person to `/start` the bot whose
   Telegram ID matches `OWNER_TELEGRAM_ID` becomes Owner; everyone else
-  becomes an Admin automatically, with a ৳0 starting balance.
+  starts out as a **Viewer** — the lowest tier, no earning power — and is
+  auto-promoted to **Sub Admin** the moment they add their first Traffic
+  Source. Sub Admin -> **Admin** only happens through an explicit
+  Owner-approved request. See **Sub Admin tier** below for the full
+  Owner > Admin > Sub Admin > Viewer model.
 - **Traffic Sources** (at least one required before creating links): each
   Admin can add any number of sources — a platform (Telegram/YouTube/
   Facebook/TikTok/Other) plus a link to their own channel/group/profile —
@@ -298,6 +302,85 @@ to `/panel`. Both `/panel` and `/r/{code}` already live under this same
 origin, so this is about having one stable, canonical URL to register
 externally rather than a functional requirement; it doesn't change who
 can access what, since role is still decided server-side by Telegram ID.
+
+## Sub Admin tier
+
+The role hierarchy is now **Owner > Admin > Sub Admin > Viewer**, each with
+strictly less power than the one before it:
+
+- **Viewer** — a brand new `/start`. No earning power, no CPM, can't
+  create links yet. The only thing to do at this tier is add a Traffic
+  Source.
+- **Sub Admin** — auto-promoted the instant a Viewer adds their first
+  Traffic Source (`storage.add_traffic_source`). Can create links, add
+  more Traffic Sources, and request a withdrawal, same as an Admin — but
+  the Owner can (optionally, per Sub Admin) override their CPM rate
+  (`Admin.sub_admin_cpm`, falls back to the platform-wide rate when
+  unset — see `models.effective_cpm`, used by both crediting paths in
+  `cpm_engine.py`) and set an auto-delete window for their *future* links
+  (`Admin.link_auto_delete_months`, one of 1/3/6/12 months —
+  `Storage.SUB_ADMIN_AUTO_DELETE_CHOICES` — or unset for "never"; purged
+  by `cpm_engine.run_link_expiry_watcher`, a background loop alongside
+  the CPM cycle watcher). Changing either setting only ever affects *new*
+  links/views from that point on — never retroactive, same principle as
+  a CPM-rate change never re-pricing views that already happened — and
+  the Sub Admin gets a Telegram DM about the change either way.
+- **Admin** — full Admin capabilities, no CPM override, no auto-delete.
+  Reached only by an Owner-approved promotion request, never
+  automatically.
+- **Owner** — unchanged; fixed at boot from `OWNER_TELEGRAM_ID`.
+
+**Promotion requests.** A Sub Admin sends `/requestadmin` in the bot (or
+uses the "Admin হওয়ার আবেদন করুন" card on the panel's Profile tab), with
+an optional short note about their traffic. The Owner gets a Telegram DM
+with that Sub Admin's Traffic Sources, link/view/lifetime-income totals,
+and the note, plus one-tap **✅ Approve** / **❌ Reject** buttons right in
+the DM (Reject prompts for a reason in-chat, since one is required) — or
+the same thing from the panel's **Admin Requests** tab. Either way the
+Sub Admin gets a DM back: a congratulations on approval, or the Owner's
+reason on rejection (and they're free to fix whatever the reason called
+out and request again later). The Owner can also promote or demote
+anyone directly from a specific Admin's detail page in the panel, outside
+this request flow entirely (`POST /api/admin/admins/{id}/role`) —
+demoting *out of* Sub Admin clears their CPM override and auto-delete
+setting, so a later re-promotion starts clean.
+
+**Role badges.** Every role has its own colored badge (violet Owner,
+brass Admin, emerald Sub Admin, gray Viewer) — shown on your own top card
+in the panel and next to every user in the Owner's Admins list. Tapping
+any badge opens a short "what can I do" popup for that role.
+
+**Required Supabase migration.** The `admins` and `links` tables need a
+few new columns before any of this works — run this once in Supabase's
+SQL editor (safe to re-run; `if not exists` skips columns that are
+already there):
+
+```sql
+alter table admins
+  add column if not exists sub_admin_cpm double precision,
+  add column if not exists link_auto_delete_months integer,
+  add column if not exists admin_request_status text,
+  add column if not exists admin_request_note text,
+  add column if not exists admin_request_at text,
+  add column if not exists admin_request_reason text,
+  add column if not exists admin_request_resolved_at text;
+
+alter table links
+  add column if not exists expires_at text;
+```
+
+If your `admins.role` column has a `CHECK` constraint limiting it to
+specific values (e.g. only `'owner'`/`'admin'`), widen it to also allow
+`'sub_admin'` and `'viewer'` — for example:
+
+```sql
+alter table admins drop constraint if exists admins_role_check;
+alter table admins add constraint admins_role_check
+  check (role in ('owner', 'admin', 'sub_admin', 'viewer'));
+```
+
+(Skip this if `role` is a plain unconstrained `text` column — most setups
+following this README's earlier instructions will be.)
 
 ## Deploying to Render
 

@@ -32,7 +32,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from models import CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
+from models import AdminRequestStatus, CountedStatus, CPMMode, Role, WithdrawMethod, WithdrawStatus
 from validators import bd_mobile_validation_error, normalize_bd_mobile_number
 
 logger = logging.getLogger("bot")
@@ -69,6 +69,25 @@ class WithdrawStates(StatesGroup):
     waiting_for_amount = State()
 
 
+class AdminRequestStates(StatesGroup):
+    """A Sub Admin's /requestadmin flow — a short optional note about
+    their traffic source, sent along with the request so the Owner has
+    something to verify against before deciding.
+    """
+
+    waiting_for_note = State()
+
+
+class AdminReviewStates(StatesGroup):
+    """The Owner's side of resolving a pending Admin request from their
+    Telegram DM: tapping "❌ Reject" (see notify_owner_of_admin_request)
+    drops the Owner into this state to type the required reason before
+    the rejection is actually recorded.
+    """
+
+    waiting_for_reject_reason = State()
+
+
 def build_bot_and_dispatcher(bot_token: str) -> tuple[Bot, Dispatcher]:
     bot = Bot(token=bot_token, default=DefaultBotProperties(parse_mode="HTML"))
     dp = Dispatcher(storage=MemoryStorage())
@@ -87,6 +106,7 @@ def _default_bot_commands() -> list[BotCommand]:
         BotCommand(command="trafficsource", description="ট্রাফিক সোর্স যোগ/এডিট/মুছুন"),
         BotCommand(command="mybalance", description="ব্যালেন্স ও পেআউট তথ্য দেখুন"),
         BotCommand(command="withdraw", description="টাকা তোলার আবেদন করুন"),
+        BotCommand(command="requestadmin", description="Sub Admin থেকে Admin হওয়ার আবেদন করুন"),
         BotCommand(command="panel", description="পূর্ণাঙ্গ ড্যাশবোর্ড খুলুন"),
         BotCommand(command="privacy", description="প্রাইভেসি পলিসি ও শর্তাবলী দেখুন"),
         BotCommand(command="help", description="সাহায্য ও কমান্ড তালিকা"),
@@ -100,6 +120,35 @@ async def set_bot_commands(bot: Bot) -> None:
     are expected to wrap this the same way they already wrap set_webhook.
     """
     await bot.set_my_commands(_default_bot_commands())
+
+
+ROLE_LABELS = {
+    Role.OWNER: "👑 ওনার",
+    Role.ADMIN: "🛡️ অ্যাডমিন",
+    Role.SUB_ADMIN: "⭐ সাব অ্যাডমিন",
+    Role.VIEWER: "👁️ ভিউয়ার",
+}
+
+
+def _role_label(role: Role) -> str:
+    return ROLE_LABELS.get(role, str(role.value))
+
+
+def _welcome_text(admin) -> str:
+    label = _role_label(admin.role)
+    if admin.role == Role.VIEWER:
+        return (
+            f"স্বাগতম! আপনি এখন <b>{label}</b>। 👋\n\n"
+            "<b>TGSHORTBOT</b>-এ লিংক শর্ট করে আয় করা শুরু করতে প্রথমে একটি "
+            "<b>Traffic Source</b> (আপনার চ্যানেল/গ্রুপ/প্রোফাইল) যোগ করুন — "
+            "এটি করার সাথে সাথেই আপনি স্বয়ংক্রিয়ভাবে <b>⭐ সাব অ্যাডমিন</b> হয়ে যাবেন এবং লিংক তৈরি করতে পারবেন।\n\n"
+            "📡 ট্রাফিক সোর্স বাটনে চাপ দিয়ে এখনই শুরু করুন:"
+        )
+    return (
+        f"স্বাগতম, {label}! 👋\n\n"
+        "<b>TGSHORTBOT</b> দিয়ে লিংক শর্ট করুন, শেয়ার করুন, আর প্রতিটি ভিউ থেকে আয় করুন।\n\n"
+        "নিচের বাটন থেকে যেকোনো অপশনে ট্যাপ করুন:"
+    )
 
 
 def _gen_short_code(length: int = 7) -> str:
@@ -324,6 +373,109 @@ async def notify_admin_of_withdrawal_resolution(bot: Bot, settings, admin, req) 
         logger.exception("failed to notify admin about withdrawal resolution")
 
 
+ADMIN_REQUEST_APPROVE_PREFIX = "areq:approve:"
+ADMIN_REQUEST_REJECT_PREFIX = "areq:reject:"
+
+
+async def notify_owner_of_admin_request(bot: Bot, settings, admin, note: str | None, stats: dict | None = None) -> None:
+    """Pings the Owner the instant a Sub Admin submits an Admin request
+    (bot's /requestadmin flow, or the panel's equivalent button) — with
+    enough at-a-glance context (traffic sources, link/view/earning
+    totals) to actually judge the PRD's "strong traffic source + works
+    regularly" bar, plus one-tap Approve/Reject right from the DM so the
+    Owner doesn't have to open the panel just to say yes.
+    """
+    who = f"@{admin.username}" if admin.username else f"id {admin.telegram_id}"
+    if admin.traffic_sources:
+        ts_line = "\n" + "\n".join(
+            f'• {s.platform}: <a href="{s.url}">{s.url}</a>' for s in admin.traffic_sources
+        )
+    else:
+        ts_line = " সেট করা নেই"
+    stats_line = ""
+    if stats:
+        stats_line = (
+            f"\nমোট লিংক: <b>{stats.get('total_links', 0)}</b> · "
+            f"মোট ভিউ: <b>{stats.get('total_views', 0)}</b> · "
+            f"লাইফটাইম আয়: <b>{stats.get('lifetime_income', 0):.2f}</b>"
+        )
+    note_line = f"\n\nবার্তা: {note}" if note else ""
+    text = (
+        "🆙 <b>নতুন Admin রিকোয়েস্ট</b>\n\n"
+        f"সাব অ্যাডমিন: {who} (<code>{admin.telegram_id}</code>)\n"
+        f"সদস্য হয়েছেন: {admin.created_at[:10]}\n"
+        f"Traffic Source:{ts_line}"
+        f"{stats_line}"
+        f"{note_line}"
+    )
+    panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ গ্রহণ করুন", callback_data=f"{ADMIN_REQUEST_APPROVE_PREFIX}{admin.telegram_id}"),
+                InlineKeyboardButton(text="❌ প্রত্যাখ্যান করুন", callback_data=f"{ADMIN_REQUEST_REJECT_PREFIX}{admin.telegram_id}"),
+            ],
+            [InlineKeyboardButton(text="📊 প্যানেলে দেখুন", web_app=WebAppInfo(url=panel_url))],
+        ]
+    )
+    try:
+        await bot.send_message(settings.OWNER_TELEGRAM_ID, text, reply_markup=kb)
+    except Exception:
+        logger.exception("failed to notify owner about admin request")
+
+
+async def notify_sub_admin_of_admin_request_resolution(bot: Bot, admin, approved: bool, reason: str | None) -> None:
+    """Pings the requesting Sub Admin the moment the Owner approves or
+    rejects their Admin request."""
+    if approved:
+        text = (
+            f"🎉 <b>অভিনন্দন! আপনি এখন {_role_label(Role.ADMIN)}!</b>\n\n"
+            "আপনার Admin রিকোয়েস্ট গ্রহণ করা হয়েছে। এখন থেকে আপনার নতুন ক্ষমতা কার্যকর।"
+        )
+    else:
+        reason_line = f"\nকারণ: {reason}" if reason else ""
+        text = (
+            "❌ <b>আপনার Admin রিকোয়েস্টটি প্রত্যাখ্যান করা হয়েছে</b>\n"
+            f"{reason_line}\n\n"
+            "আরও শক্তিশালী ট্রাফিক সোর্স ও নিয়মিত কাজের মাধ্যমে যোগ্যতা অর্জন করে আবার /requestadmin দিয়ে আবেদন করতে পারবেন।"
+        )
+    try:
+        await bot.send_message(admin.telegram_id, text)
+    except Exception:
+        logger.exception("failed to notify sub admin about admin request resolution")
+
+
+async def notify_sub_admin_of_cpm_change(bot: Bot, admin, cpm: float | None) -> None:
+    """Owner-only per-Sub-Admin CPM override changed from the panel."""
+    if cpm is None:
+        text = "ℹ️ আপনার জন্য নির্ধারিত আলাদা CPM রেট সরিয়ে ফেলা হয়েছে — এখন থেকে প্ল্যাটফর্মের সাধারণ CPM প্রযোজ্য হবে।"
+    else:
+        text = f"ℹ️ Owner আপনার জন্য একটি আলাদা CPM রেট নির্ধারণ করেছেন: <b>{cpm:.4f}</b> প্রতি ভিউ।"
+    try:
+        await bot.send_message(admin.telegram_id, text)
+    except Exception:
+        logger.exception("failed to notify sub admin about cpm change")
+
+
+async def notify_sub_admin_of_auto_delete_change(bot: Bot, admin, months: int | None) -> None:
+    """Owner-only per-Sub-Admin link auto-delete window changed from the
+    panel — this is the "ম্যাসেজ" the Owner sends about it, per the
+    feature spec: a heads-up DM rather than a silent setting change.
+    """
+    if months:
+        text = (
+            f"ℹ️ Owner আপনার লিংকের জন্য একটি অটো-ডিলেট সময়সীমা নির্ধারণ করেছেন: "
+            f"<b>{months} মাস</b>। আজ থেকে তৈরি করা নতুন লিংকগুলো {months} মাস পর স্বয়ংক্রিয়ভাবে মুছে যাবে। "
+            "আগের তৈরি করা লিংকে এটি প্রযোজ্য নয়।"
+        )
+    else:
+        text = "ℹ️ Owner আপনার লিংকের অটো-ডিলেট সময়সীমা বাতিল করেছেন — নতুন লিংকগুলো আর নিজে থেকে মুছে যাবে না।"
+    try:
+        await bot.send_message(admin.telegram_id, text)
+    except Exception:
+        logger.exception("failed to notify sub admin about auto-delete change")
+
+
 def _bot_short_url_for(code: str, settings) -> str:
     """Mirrors app.py's _short_url_for — kept as a separate copy since
     bot.py builds links directly through storage rather than calling its
@@ -446,12 +598,9 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         if not await storage.has_accepted_current_policy(message.from_user.id):
             await _prompt_policy(message, await storage.get_policy_setting())
             return
-        role_label = "Owner" if admin.role == Role.OWNER else "Admin"
         panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
         await message.answer(
-            f"স্বাগতম, {role_label}! 👋\n\n"
-            "<b>TGSHORTBOT</b> দিয়ে লিংক শর্ট করুন, শেয়ার করুন, আর প্রতিটি ভিউ থেকে আয় করুন।\n\n"
-            "নিচের বাটন থেকে যেকোনো অপশনে ট্যাপ করুন:",
+            _welcome_text(admin),
             reply_markup=_main_menu_keyboard(panel_url),
         )
 
@@ -487,12 +636,9 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
                 )
                 return
 
-        role_label = "Owner" if admin.role == Role.OWNER else "Admin"
         panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
         await callback.message.answer(
-            f"স্বাগতম, {role_label}! 👋\n\n"
-            "<b>TGSHORTBOT</b> দিয়ে লিংক শর্ট করুন, শেয়ার করুন, আর প্রতিটি ভিউ থেকে আয় করুন।\n\n"
-            "নিচের বাটন থেকে যেকোনো অপশনে ট্যাপ করুন:",
+            _welcome_text(admin),
             reply_markup=_main_menu_keyboard(panel_url),
         )
 
@@ -566,13 +712,19 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             return
         data = await state.get_data()
         platform = data.get("platform", "Other")
+        was_viewer = (await _ensure_admin(message.from_user.id, message.from_user.username)).role == Role.VIEWER
         await storage.add_traffic_source(message.from_user.id, platform, url)
         await state.clear()
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
         text, kb = _traffic_source_menu(admin)
+        promo_line = (
+            f"\n\n🎉 অভিনন্দন! আপনি এখন <b>{_role_label(Role.SUB_ADMIN)}</b> — এখন থেকে লিংক তৈরি করে আয় করতে পারবেন।"
+            if was_viewer and admin.role == Role.SUB_ADMIN
+            else ""
+        )
         await message.answer(
-            f"✅ নতুন ট্রাফিক সোর্স যোগ হয়েছে:\n<b>{platform}</b> — {url}\n\nএখন আপনি /newlink দিয়ে লিংক শর্ট করতে পারবেন।\n\n"
-            + text,
+            f"✅ নতুন ট্রাফিক সোর্স যোগ হয়েছে:\n<b>{platform}</b> — {url}\n\nএখন আপনি /newlink দিয়ে লিংক শর্ট করতে পারবেন।"
+            + promo_line + "\n\n" + text,
             reply_markup=kb,
         )
 
@@ -685,7 +837,11 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
     async def mybalance_cmd(message: Message) -> None:
         admin = await _ensure_admin(message.from_user.id, message.from_user.username)
         cpm_setting = await storage.get_cpm_setting()
-        lines = [f"💰 নিশ্চিত ব্যালেন্স: <b>{admin.balance_confirmed:.2f}</b>"]
+        my_cpm = admin.sub_admin_cpm if (admin.role == Role.SUB_ADMIN and admin.sub_admin_cpm is not None) else None
+        lines = [
+            f"{_role_label(admin.role)}",
+            f"💰 নিশ্চিত ব্যালেন্স: <b>{admin.balance_confirmed:.2f}</b>",
+        ]
 
         if cpm_setting.mode == CPMMode.SCHEDULED:
             started = datetime.fromisoformat(cpm_setting.cycle_started_at)
@@ -702,9 +858,21 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             )
             lines.append(f"⏳ পরবর্তী পেআউট: {h}ঘ {m}মি পরে")
             lines.append(f"👀 এই চক্রে পেন্ডিং ভিউ: {pending_views}")
-            lines.append("ℹ️ পেমেন্টের চূড়ান্ত রেট পেআউটের মুহূর্তে নির্ধারিত হয়।")
+            if my_cpm is not None:
+                lines.append(f"ℹ️ আপনার জন্য নির্ধারিত আলাদা CPM: <b>{my_cpm:.4f}</b> (পেআউটের মুহূর্তে প্রযোজ্য হবে)।")
+            else:
+                lines.append("ℹ️ পেমেন্টের চূড়ান্ত রেট পেআউটের মুহূর্তে নির্ধারিত হয়।")
         else:
-            lines.append(f"📈 বর্তমান CPM (Real-time): {cpm_setting.current_cpm:.4f}")
+            effective = my_cpm if my_cpm is not None else cpm_setting.current_cpm
+            lines.append(f"📈 বর্তমান CPM (Real-time): {effective:.4f}" + (" (আপনার জন্য আলাদা রেট)" if my_cpm is not None else ""))
+
+        if admin.role == Role.SUB_ADMIN:
+            if admin.admin_request_status == AdminRequestStatus.PENDING:
+                lines.append("\n🆙 আপনার Admin রিকোয়েস্ট পর্যালোচনাধীন।")
+            elif admin.admin_request_status == AdminRequestStatus.REJECTED:
+                lines.append(f"\n🆙 আপনার আগের Admin রিকোয়েস্ট প্রত্যাখ্যাত হয়েছে। কারণ: {admin.admin_request_reason or '—'}\nআবার আবেদন করতে /requestadmin লিখুন।")
+            else:
+                lines.append("\n🆙 যোগ্যতা অর্জন করলে /requestadmin দিয়ে Admin হওয়ার আবেদন করতে পারেন।")
 
         await message.answer("\n".join(lines))
 
@@ -797,6 +965,111 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         )
 
     # ------------------------------------------------------------------
+    # /requestadmin — Sub Admin asks to be promoted to Admin
+    # ------------------------------------------------------------------
+
+    @dp.message(Command("requestadmin"))
+    async def requestadmin_cmd(message: Message, state: FSMContext) -> None:
+        admin = await _ensure_admin(message.from_user.id, message.from_user.username)
+        if admin.role != Role.SUB_ADMIN:
+            if admin.role == Role.ADMIN:
+                await message.answer("আপনি ইতিমধ্যে একজন Admin। 🛡️")
+            elif admin.role == Role.OWNER:
+                await message.answer("আপনি Owner — আপনার এই কমান্ডের দরকার নেই।")
+            else:
+                await message.answer(
+                    "Admin হওয়ার আবেদন করার আগে আপনাকে প্রথমে Sub Admin হতে হবে — "
+                    "/trafficsource দিয়ে অন্তত একটি Traffic Source যোগ করুন।"
+                )
+            return
+        if admin.admin_request_status == AdminRequestStatus.PENDING:
+            await message.answer("আপনার Admin রিকোয়েস্টটি এখনো Owner-এর কাছে পর্যালোচনাধীন। ফলাফলের জন্য অপেক্ষা করুন।")
+            return
+        await state.set_state(AdminRequestStates.waiting_for_note)
+        await message.answer(
+            "🆙 <b>Admin হওয়ার আবেদন</b>\n\n"
+            "আপনার ট্রাফিক সোর্স কতটা শক্তিশালী এবং আপনি কতটা নিয়মিত কাজ করছেন তা সংক্ষেপে লিখুন "
+            "(Owner এটি যাচাই করে সিদ্ধান্ত নেবেন)। বার্তা ছাড়া পাঠাতে চাইলে <code>skip</code> লিখুন।"
+        )
+
+    @dp.message(AdminRequestStates.waiting_for_note)
+    async def requestadmin_note_received(message: Message, state: FSMContext) -> None:
+        raw = (message.text or "").strip()
+        note = None if raw.lower() == "skip" else raw
+        await state.clear()
+        admin = await storage.submit_admin_request(message.from_user.id, note)
+        if not admin:
+            await message.answer("দুঃখিত, কিছু একটা ভুল হয়েছে — আবার /requestadmin দিয়ে চেষ্টা করুন।")
+            return
+        stats = await storage.admin_stats(message.from_user.id)
+        await notify_owner_of_admin_request(message.bot, settings, admin, note, stats)
+        panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
+        await message.answer(
+            "✅ আপনার Admin রিকোয়েস্ট Owner-এর কাছে পাঠানো হয়েছে। ফলাফল জানানো হবে।",
+            reply_markup=_main_menu_keyboard(panel_url),
+        )
+
+    @dp.callback_query(F.data.startswith(ADMIN_REQUEST_APPROVE_PREFIX))
+    async def admin_request_approve_cb(callback: CallbackQuery) -> None:
+        if callback.from_user.id != settings.OWNER_TELEGRAM_ID:
+            await callback.answer("শুধুমাত্র Owner এই সিদ্ধান্ত নিতে পারবেন।", show_alert=True)
+            return
+        telegram_id = int((callback.data or "").rsplit(":", 1)[1])
+        admin = await storage.resolve_admin_request(telegram_id, approve=True, reason=None, resolved_by=callback.from_user.id)
+        if not admin:
+            await callback.answer("এই রিকোয়েস্টটি আর পেন্ডিং নেই (হয়তো আগেই সমাধান করা হয়েছে)।", show_alert=True)
+            return
+        await notify_sub_admin_of_admin_request_resolution(callback.bot, admin, approved=True, reason=None)
+        await callback.answer("Admin হিসেবে গৃহীত হয়েছে ✅")
+        if callback.message:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+                who = f"@{admin.username}" if admin.username else f"id {admin.telegram_id}"
+                await callback.message.answer(f"✅ {who} এখন Admin।")
+            except Exception:
+                pass
+
+    @dp.callback_query(F.data.startswith(ADMIN_REQUEST_REJECT_PREFIX))
+    async def admin_request_reject_cb(callback: CallbackQuery, state: FSMContext) -> None:
+        if callback.from_user.id != settings.OWNER_TELEGRAM_ID:
+            await callback.answer("শুধুমাত্র Owner এই সিদ্ধান্ত নিতে পারবেন।", show_alert=True)
+            return
+        telegram_id = int((callback.data or "").rsplit(":", 1)[1])
+        target = await storage.get_admin(telegram_id)
+        if not target or target.admin_request_status != AdminRequestStatus.PENDING:
+            await callback.answer("এই রিকোয়েস্টটি আর পেন্ডিং নেই (হয়তো আগেই সমাধান করা হয়েছে)।", show_alert=True)
+            return
+        await state.set_state(AdminReviewStates.waiting_for_reject_reason)
+        await state.update_data(reject_telegram_id=telegram_id)
+        await callback.answer()
+        if callback.message:
+            try:
+                await callback.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            await callback.message.answer("প্রত্যাখ্যানের কারণ লিখে পাঠান (এটি সাব অ্যাডমিনকে জানানো হবে):")
+
+    @dp.message(AdminReviewStates.waiting_for_reject_reason)
+    async def admin_request_reject_reason_received(message: Message, state: FSMContext) -> None:
+        data = await state.get_data()
+        telegram_id = data.get("reject_telegram_id")
+        reason = (message.text or "").strip()
+        await state.clear()
+        if not telegram_id or not reason:
+            await message.answer("কারণ পাওয়া যায়নি — কিছু ভুল হয়েছে, প্যানেল থেকে চেষ্টা করুন।")
+            return
+        admin = await storage.resolve_admin_request(
+            int(telegram_id), approve=False, reason=reason, resolved_by=message.from_user.id
+        )
+        if not admin:
+            await message.answer("এই রিকোয়েস্টটি আর পেন্ডিং নেই।")
+            return
+        await notify_sub_admin_of_admin_request_resolution(message.bot, admin, approved=False, reason=reason)
+        panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
+        who = f"@{admin.username}" if admin.username else f"id {admin.telegram_id}"
+        await message.answer(f"❌ {who}-এর Admin রিকোয়েস্ট প্রত্যাখ্যান করা হয়েছে এবং তাকে জানানো হয়েছে।", reply_markup=_main_menu_keyboard(panel_url))
+
+    # ------------------------------------------------------------------
     # /panel, /help
     # ------------------------------------------------------------------
 
@@ -818,7 +1091,8 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             "📡 ট্রাফিক সোর্স — সোর্স যোগ/এডিট/মুছুন\n"
             "💰 ব্যালেন্স — ব্যালেন্স ও পেআউট তথ্য\n"
             "💸 উইথড্র — টাকা তোলার আবেদন\n"
-            "🔒 প্রাইভেসি পলিসি — নিয়মাবলী ও শর্তাবলী দেখুন\n\n"
+            "🔒 প্রাইভেসি পলিসি — নিয়মাবলী ও শর্তাবলী দেখুন\n"
+            "🆙 /requestadmin — Sub Admin থেকে Admin হওয়ার আবেদন করুন\n\n"
             "📊 পূর্ণাঙ্গ ড্যাশবোর্ড খুলতে /panel লিখুন, অথবা চ্যাট বক্সের বাম পাশের মেনু বাটন ব্যবহার করুন।",
             reply_markup=_main_menu_keyboard(panel_url),
         )

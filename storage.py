@@ -44,6 +44,7 @@ from supabase import AsyncClient, create_async_client
 
 from models import (
     Admin,
+    AdminRequestStatus,
     AdminStatus,
     AdNetwork,
     AdNetworkSetting,
@@ -57,6 +58,7 @@ from models import (
     WithdrawMethod,
     WithdrawRequest,
     WithdrawStatus,
+    effective_cpm,
     now_iso,
 )
 
@@ -202,7 +204,15 @@ class Storage:
     async def get_or_create_admin(
         self, telegram_id: int, username: Optional[str], owner_id: int
     ) -> Admin:
-        """Auto-creates an Admin/Owner record on first /start (Section 2)."""
+        """Auto-creates a record on first /start (Section 2).
+
+        Owner > Admin > Sub Admin > Viewer: anyone who isn't the
+        configured Owner starts out as a plain Viewer — the lowest tier,
+        with no earning power — and only becomes a Sub Admin the moment
+        they add their first Traffic Source (see add_traffic_source
+        below). There's no more "everyone who isn't the Owner is
+        automatically an Admin" shortcut.
+        """
         async with self._lock:
             admin = self.admins.get(telegram_id)
             if admin:
@@ -210,7 +220,7 @@ class Storage:
                     admin.username = username
                     await self._save_locked()
                 return admin
-            role = Role.OWNER if telegram_id == owner_id else Role.ADMIN
+            role = Role.OWNER if telegram_id == owner_id else Role.VIEWER
             admin = Admin(telegram_id=telegram_id, username=username, role=role)
             self.admins[telegram_id] = admin
             await self._save_locked()
@@ -258,11 +268,56 @@ class Storage:
             await self._save_locked()
             return admin
 
+    async def set_role(self, telegram_id: int, role: Role, changed_by: int) -> Optional[Admin]:
+        """Owner-only direct role change (promote or demote), for the
+        Owner's general "Admins" management screen — separate from the
+        guided Sub-Admin-requests-Admin flow in submit_admin_request /
+        resolve_admin_request below. Never used to assign Role.OWNER
+        (that's fixed at boot time from OWNER_TELEGRAM_ID).
+        """
+        if role == Role.OWNER:
+            return None
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin or admin.role == Role.OWNER:
+                return None
+            old_role = admin.role
+            if old_role == role:
+                return admin
+            admin.role = role
+            # Demoting out of Sub Admin clears anything that only makes
+            # sense for that tier, so a later re-promotion starts clean
+            # instead of silently inheriting a stale CPM override or
+            # auto-delete window.
+            if role != Role.SUB_ADMIN:
+                admin.sub_admin_cpm = None
+                admin.link_auto_delete_months = None
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="role_change",
+                    detail={
+                        "telegram_id": telegram_id,
+                        "from": old_role.value,
+                        "to": role.value,
+                        "by": changed_by,
+                    },
+                )
+            )
+            await self._save_locked()
+            return admin
+
     async def add_traffic_source(self, telegram_id: int, platform: str, url: str) -> Optional[TrafficSource]:
         """Appends one more "where do your viewers come from" entry for
         this Admin. An Admin can hold several at once (one per platform,
         or several on the same platform) and needs at least one before
         creating any short links.
+
+        Also the Viewer -> Sub Admin promotion trigger: a brand new user
+        starts as a plain Viewer (see get_or_create_admin) with no
+        earning power; the moment they add their first Traffic Source
+        they're auto-promoted to Sub Admin. This never fires again for
+        someone already at Sub Admin or above — adding a 2nd/3rd source
+        doesn't do anything to role.
         """
         async with self._lock:
             admin = self.admins.get(telegram_id)
@@ -270,6 +325,19 @@ class Storage:
                 return None
             source = TrafficSource(platform=platform, url=url)
             admin.traffic_sources.append(source)
+            if admin.role == Role.VIEWER:
+                admin.role = Role.SUB_ADMIN
+                self.cpm_history.append(
+                    CPMHistoryEntry(
+                        event="role_change",
+                        detail={
+                            "telegram_id": telegram_id,
+                            "from": Role.VIEWER.value,
+                            "to": Role.SUB_ADMIN.value,
+                            "reason": "added first traffic source",
+                        },
+                    )
+                )
             await self._save_locked()
             return source
 
@@ -319,6 +387,11 @@ class Storage:
     MIN_AD_COUNT = 1
     MAX_AD_COUNT = 10
 
+    # Sub Admin link auto-delete feature: the only durations the Owner
+    # can pick from `webapp/panel.html`'s per-Sub-Admin setting (0 means
+    # "never", i.e. Admin.link_auto_delete_months = None).
+    SUB_ADMIN_AUTO_DELETE_CHOICES = (1, 3, 6, 12)
+
     async def create_link(
         self,
         short_code: str,
@@ -326,16 +399,60 @@ class Storage:
         destination_url: str,
         ad_count: Optional[int] = None,
     ) -> Link:
+        """`expires_at` is derived here, at creation time, from the
+        creating Admin's *current* `link_auto_delete_months` — never
+        recomputed later, so changing (or clearing) that setting
+        afterward only ever affects links created from then on, exactly
+        like a CPM-rate change never re-prices views that already
+        happened.
+        """
         async with self._lock:
+            owner = self.admins.get(owner_telegram_id)
+            expires_at = None
+            if owner and owner.link_auto_delete_months:
+                expires_at = (
+                    datetime.now(timezone.utc) + timedelta(days=30 * owner.link_auto_delete_months)
+                ).isoformat()
             link = Link(
                 short_code=short_code,
                 owner_telegram_id=owner_telegram_id,
                 destination_url=destination_url,
                 ad_count=ad_count if ad_count is not None else self.DEFAULT_AD_COUNT,
+                expires_at=expires_at,
             )
             self.links[short_code] = link
             await self._save_locked()
             return link
+
+    async def purge_expired_links(self) -> int:
+        """Deletes every Link whose `expires_at` has passed (Sub Admin
+        auto-delete feature). Intended to be called periodically from a
+        background loop (see app.py's lifespan, alongside the CPM cycle
+        watcher) — not from any request path. Leaves that link's View
+        rows alone, same reasoning as delete_link: they've already been
+        credited, so removing them would only make old earnings harder
+        to audit without changing anyone's balance.
+        """
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            expired_codes = []
+            for code, link in self.links.items():
+                if not link.expires_at:
+                    continue
+                try:
+                    expires = datetime.fromisoformat(link.expires_at)
+                except ValueError:
+                    continue
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=timezone.utc)
+                if expires <= now:
+                    expired_codes.append(code)
+            for code in expired_codes:
+                del self.links[code]
+                await self.client.table("links").delete().eq("short_code", code).execute()
+            if expired_codes:
+                await self._save_locked()
+            return len(expired_codes)
 
     async def get_link(self, short_code: str) -> Optional[Link]:
         return self.links.get(short_code)
@@ -577,6 +694,138 @@ class Storage:
             await self._save_locked()
 
     # ------------------------------------------------------------------
+    # Sub Admin tier: per-Sub-Admin CPM override + link auto-delete
+    # ------------------------------------------------------------------
+
+    async def set_sub_admin_cpm(
+        self, telegram_id: int, cpm: Optional[float], changed_by: int
+    ) -> Optional[Admin]:
+        """Owner-only per-Sub-Admin CPM override. `cpm=None` clears the
+        override, falling back to the platform-wide CPMSetting.
+        current_cpm — see cpm_engine.credit_new_view for how the two are
+        reconciled. Meaningful only for a Role.SUB_ADMIN, but not
+        enforced here (a later promotion to Admin doesn't clear it,
+        matching set_role's own docstring — it only clears on a
+        *demotion away from* Sub Admin, i.e. leaving the tier
+        downward).
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            old = admin.sub_admin_cpm
+            if old == cpm:
+                return admin
+            admin.sub_admin_cpm = cpm
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="sub_admin_cpm_change",
+                    detail={"telegram_id": telegram_id, "from": old, "to": cpm, "by": changed_by},
+                )
+            )
+            await self._save_locked()
+            return admin
+
+    async def set_link_auto_delete(
+        self, telegram_id: int, months: Optional[int], changed_by: int
+    ) -> Optional[Admin]:
+        """Owner-only per-Sub-Admin link auto-delete window
+        (SUB_ADMIN_AUTO_DELETE_CHOICES, or None/0 for "never"). Only
+        ever applied to *new* links from now on — see create_link's
+        docstring for why this is never retroactive.
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            normalized = months if months else None
+            old = admin.link_auto_delete_months
+            if old == normalized:
+                return admin
+            admin.link_auto_delete_months = normalized
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="link_auto_delete_change",
+                    detail={"telegram_id": telegram_id, "from": old, "to": normalized, "by": changed_by},
+                )
+            )
+            await self._save_locked()
+            return admin
+
+    # ------------------------------------------------------------------
+    # Sub Admin -> Admin promotion requests
+    # ------------------------------------------------------------------
+
+    async def submit_admin_request(self, telegram_id: int, note: Optional[str]) -> Optional[Admin]:
+        """Records a Sub Admin's request to be promoted to Admin.
+        Callers (app.py / bot.py) are expected to have already checked
+        that this Admin is currently Role.SUB_ADMIN and doesn't already
+        have a request pending — this method itself just performs the
+        write, matching the rest of this module's pattern (e.g.
+        create_link doesn't re-check for a Traffic Source either).
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            admin.admin_request_status = AdminRequestStatus.PENDING
+            admin.admin_request_note = note
+            admin.admin_request_at = now_iso()
+            admin.admin_request_reason = None
+            admin.admin_request_resolved_at = None
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="admin_request_submitted",
+                    detail={"telegram_id": telegram_id, "note": note},
+                )
+            )
+            await self._save_locked()
+            return admin
+
+    async def list_admin_requests(self, status: AdminRequestStatus = AdminRequestStatus.PENDING) -> List[Admin]:
+        return [a for a in self.admins.values() if a.admin_request_status == status]
+
+    async def resolve_admin_request(
+        self, telegram_id: int, approve: bool, reason: Optional[str], resolved_by: int
+    ) -> Optional[Admin]:
+        """Owner decision on a pending Admin request. Approving promotes
+        Role.SUB_ADMIN -> Role.ADMIN and clears the same Sub-Admin-only
+        fields set_role does on any demotion away from that tier (kept
+        as a separate inline update here rather than calling set_role,
+        since self._lock isn't reentrant); rejecting keeps the Sub Admin
+        at their current tier
+        and records `reason` so bot.py / panel.html can show it back to
+        them. Either way `admin_request_status` stops being "pending" —
+        approved requests clear it to None (the role change *is* the
+        record), rejected ones flip it to "rejected" so the Sub Admin
+        can still see why, and can submit a fresh request later.
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin or admin.admin_request_status != AdminRequestStatus.PENDING:
+                return None
+            if approve:
+                admin.role = Role.ADMIN
+                admin.admin_request_status = None
+                admin.admin_request_reason = None
+                admin.sub_admin_cpm = None
+                admin.link_auto_delete_months = None
+                event = "admin_request_approved"
+            else:
+                admin.admin_request_status = AdminRequestStatus.REJECTED
+                admin.admin_request_reason = reason
+                event = "admin_request_rejected"
+            admin.admin_request_resolved_at = now_iso()
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event=event,
+                    detail={"telegram_id": telegram_id, "reason": reason, "by": resolved_by},
+                )
+            )
+            await self._save_locked()
+            return admin
+
+    # ------------------------------------------------------------------
     # Policy (privacy policy / terms every user must accept)
     # ------------------------------------------------------------------
 
@@ -782,7 +1031,9 @@ class Storage:
             "confirmed_views": len(confirmed_views),
             "pending_views": len(pending_views),
             "daily_capped_views": daily_capped_views,
-            "estimated_pending_amount": round(len(pending_views) * self.cpm_setting.current_cpm, 6),
+            "estimated_pending_amount": round(
+                len(pending_views) * effective_cpm(admin, self.cpm_setting.current_cpm), 6
+            ),
             "missed_earnings_trend": await self.missed_earnings_trend(admin_telegram_id=telegram_id),
             "missed_earnings_by_link": await self.missed_earnings_by_link(admin_telegram_id=telegram_id),
         }

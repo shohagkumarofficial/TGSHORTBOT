@@ -18,9 +18,38 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def effective_cpm(admin: "Admin", platform_cpm: float) -> float:
+    """The CPM rate that actually applies when crediting one of this
+    Admin's views: their own override if they're a Sub Admin with one
+    set, otherwise the platform-wide rate. Shared by cpm_engine.py
+    (crediting) and storage.admin_stats (the Owner's pending-earnings
+    estimate) so the two can never disagree about which rate is "the"
+    rate for a given Sub Admin.
+    """
+    if admin.role == Role.SUB_ADMIN and admin.sub_admin_cpm is not None:
+        return admin.sub_admin_cpm
+    return platform_cpm
+
+
 class Role(str, Enum):
+    """Power ranks from highest to lowest: OWNER > ADMIN > SUB_ADMIN >
+    VIEWER. A brand new bot user starts as VIEWER; adding their first
+    Traffic Source auto-promotes them to SUB_ADMIN (see
+    storage.add_traffic_source). SUB_ADMIN -> ADMIN only happens when the
+    Owner approves an Admin request (see storage.resolve_admin_request) —
+    it's never automatic. OWNER is fixed at boot time (OWNER_TELEGRAM_ID)
+    and never assigned any other way.
+    """
+
     OWNER = "owner"
     ADMIN = "admin"
+    SUB_ADMIN = "sub_admin"
+    VIEWER = "viewer"
+
+
+class AdminRequestStatus(str, Enum):
+    PENDING = "pending"
+    REJECTED = "rejected"
 
 
 class AdminStatus(str, Enum):
@@ -83,7 +112,7 @@ class TrafficSource(BaseModel):
 class Admin(BaseModel):
     telegram_id: int
     username: Optional[str] = None
-    role: Role = Role.ADMIN
+    role: Role = Role.VIEWER
     balance_confirmed: float = 0.0
     balance_pending: float = 0.0
     created_at: str = Field(default_factory=now_iso)
@@ -99,6 +128,36 @@ class Admin(BaseModel):
     # re-prompts on their next interaction).
     policy_accepted_version: int = 0
     policy_accepted_at: Optional[str] = None
+
+    # -- Sub Admin tier (Owner > Admin > Sub Admin > Viewer) -------------
+
+    # Owner-only, per-Sub-Admin CPM override (storage.set_sub_admin_cpm).
+    # None means "use the platform-wide CPMSetting.current_cpm" — this is
+    # only ever looked at for a Role.SUB_ADMIN; it's meaningless (and
+    # ignored by cpm_engine) for any other role.
+    sub_admin_cpm: Optional[float] = None
+
+    # Owner-only, per-Sub-Admin auto-delete window in months for every
+    # *new* link this Sub Admin creates from now on (storage.
+    # set_link_auto_delete / storage.SUB_ADMIN_AUTO_DELETE_CHOICES —
+    # 1, 3, 6, or 12). None/0 means links never auto-expire. Existing
+    # links keep whatever expiry they were created with — changing this
+    # is never retroactive, matching how a CPM-rate change never
+    # re-prices views that already happened.
+    link_auto_delete_months: Optional[int] = None
+
+    # -- Sub Admin -> Admin promotion request -----------------------------
+    # A Sub Admin can ask the Owner to be promoted to Admin
+    # (storage.submit_admin_request); the Owner approves or rejects
+    # (storage.resolve_admin_request). `admin_request_status` is None
+    # until a request is submitted, "pending" while awaiting a decision,
+    # or "rejected" after the Owner declines (an approval clears it back
+    # to None since the role itself — now ADMIN — is the record of it).
+    admin_request_status: Optional[AdminRequestStatus] = None
+    admin_request_note: Optional[str] = None
+    admin_request_at: Optional[str] = None
+    admin_request_reason: Optional[str] = None
+    admin_request_resolved_at: Optional[str] = None
 
 
 class Link(BaseModel):
@@ -117,6 +176,13 @@ class Link(BaseModel):
     destination_url: str
     ad_count: int = 3
     created_at: str = Field(default_factory=now_iso)
+
+    # Set at creation time from the owning Admin's
+    # `Admin.link_auto_delete_months` (Sub Admin auto-delete feature) —
+    # None means this link never expires on its own. Purged by
+    # storage.purge_expired_links, run periodically from app.py's
+    # lifespan alongside the CPM cycle watcher.
+    expires_at: Optional[str] = None
 
 
 class View(BaseModel):

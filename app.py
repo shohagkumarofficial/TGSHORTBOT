@@ -29,13 +29,18 @@ import cpm_engine
 from bot import (
     build_bot_and_dispatcher,
     notify_admin_of_withdrawal_resolution,
+    notify_owner_of_admin_request,
     notify_owner_of_withdrawal,
+    notify_sub_admin_of_admin_request_resolution,
+    notify_sub_admin_of_auto_delete_change,
+    notify_sub_admin_of_cpm_change,
     register_handlers,
     set_bot_commands,
 )
 from config import get_settings
 from models import (
     Admin,
+    AdminRequestStatus,
     AdminStatus,
     AdNetwork,
     AdNetworkSetting,
@@ -60,6 +65,7 @@ register_handlers(dp, storage, settings)
 
 _cpm_watcher_task: Optional[asyncio.Task] = None
 _keep_alive_task: Optional[asyncio.Task] = None
+_link_expiry_task: Optional[asyncio.Task] = None
 
 
 async def _keep_alive_worker(base_url: str, interval_seconds: int = 600) -> None:
@@ -112,10 +118,11 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("Could not set bot command menu on startup")
 
-    global _cpm_watcher_task, _keep_alive_task
+    global _cpm_watcher_task, _keep_alive_task, _link_expiry_task
     _cpm_watcher_task = asyncio.create_task(
         cpm_engine.run_cpm_cycle_watcher(storage, settings.CPM_CHECK_INTERVAL_SECONDS)
     )
+    _link_expiry_task = asyncio.create_task(cpm_engine.run_link_expiry_watcher(storage))
     _keep_alive_task = asyncio.create_task(_keep_alive_worker(settings.WEBAPP_BASE_URL))
     logger.info("TGSHORTBOT backend started")
 
@@ -123,6 +130,8 @@ async def lifespan(app: FastAPI):
 
     if _cpm_watcher_task:
         _cpm_watcher_task.cancel()
+    if _link_expiry_task:
+        _link_expiry_task.cancel()
     if _keep_alive_task:
         _keep_alive_task.cancel()
     await bot.session.close()
@@ -792,6 +801,27 @@ async def admin_resolve_withdrawal(request_id: str, payload: dict, owner: Admin 
 
 
 # ---------------------------------------------------------------------------
+# Sub Admin -> Admin promotion requests
+# ---------------------------------------------------------------------------
+
+@app.post("/api/admin-request")
+async def submit_admin_request(payload: dict, admin: Admin = Depends(require_admin)):
+    """A Sub Admin's own request to be promoted to Admin — the panel
+    equivalent of the bot's /requestadmin flow. Only reachable by a
+    current Role.SUB_ADMIN with no request already pending.
+    """
+    if admin.role != Role.SUB_ADMIN:
+        raise HTTPException(status_code=403, detail="only a Sub Admin can request Admin promotion")
+    if admin.admin_request_status == AdminRequestStatus.PENDING:
+        raise HTTPException(status_code=400, detail="a request is already pending review")
+    note = (payload.get("note") or "").strip() or None
+    updated = await storage.submit_admin_request(admin.telegram_id, note)
+    stats = await storage.admin_stats(admin.telegram_id)
+    await notify_owner_of_admin_request(bot, settings, updated, note, stats)
+    return updated.model_dump()
+
+
+# ---------------------------------------------------------------------------
 # Owner: admins list, ban/unban, platform stats
 # ---------------------------------------------------------------------------
 
@@ -885,3 +915,111 @@ async def set_admin_status(telegram_id: int, payload: dict, owner: Admin = Depen
 @app.get("/api/admin/stats")
 async def platform_stats(owner: Admin = Depends(require_owner)):
     return await storage.platform_stats()
+
+
+# ---------------------------------------------------------------------------
+# Owner: Sub Admin -> Admin promotion request queue
+# ---------------------------------------------------------------------------
+
+@app.get("/api/admin/admin-requests")
+async def list_admin_requests(owner: Admin = Depends(require_owner)):
+    """Every currently-pending Admin request, each with the same stats
+    bundle (links/views/earnings) the Owner's DM notification carries,
+    so the panel's queue is just as informative without needing a
+    separate round trip per request.
+    """
+    pending = await storage.list_admin_requests(AdminRequestStatus.PENDING)
+    pending.sort(key=lambda a: a.admin_request_at or "")
+    out = []
+    for a in pending:
+        stats = await storage.admin_stats(a.telegram_id)
+        out.append(
+            {
+                "admin": a.model_dump(),
+                "total_links": stats["total_links"] if stats else 0,
+                "total_views": stats["total_views"] if stats else 0,
+                "lifetime_income": stats["lifetime_income"] if stats else 0,
+            }
+        )
+    return {"requests": out}
+
+
+@app.post("/api/admin/admin-requests/{telegram_id}/resolve")
+async def resolve_admin_request(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
+    decision = payload.get("decision")
+    if decision not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="decision must be 'approve' or 'reject'")
+    reason = (payload.get("reason") or "").strip() or None
+    if decision == "reject" and not reason:
+        raise HTTPException(status_code=400, detail="a reason is required to reject an Admin request")
+    updated = await storage.resolve_admin_request(
+        telegram_id, approve=(decision == "approve"), reason=reason, resolved_by=owner.telegram_id
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="no pending admin request found for this user")
+    await notify_sub_admin_of_admin_request_resolution(bot, updated, approved=(decision == "approve"), reason=reason)
+    return updated.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Owner: direct role management + per-Sub-Admin CPM override / auto-delete
+# ---------------------------------------------------------------------------
+
+@app.post("/api/admin/admins/{telegram_id}/role")
+async def set_role(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
+    """Owner's general promote/demote control (Admins tab), separate
+    from the guided request-and-review flow above — e.g. demoting an
+    Admin back to Sub Admin, or promoting a Viewer/Sub Admin straight to
+    Admin without going through a request at all.
+    """
+    role_raw = payload.get("role")
+    try:
+        role = Role(role_raw)
+    except ValueError:
+        valid = ", ".join(r.value for r in Role if r != Role.OWNER)
+        raise HTTPException(status_code=400, detail=f"role must be one of: {valid}")
+    if role == Role.OWNER:
+        raise HTTPException(status_code=400, detail="cannot assign the Owner role")
+    if telegram_id == owner.telegram_id:
+        raise HTTPException(status_code=400, detail="cannot change your own role")
+    updated = await storage.set_role(telegram_id, role, changed_by=owner.telegram_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="admin not found")
+    return updated.model_dump()
+
+
+@app.post("/api/admin/admins/{telegram_id}/sub-admin-cpm")
+async def set_sub_admin_cpm(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
+    cpm_raw = payload.get("cpm")
+    cpm = None
+    if cpm_raw is not None:
+        try:
+            cpm = float(cpm_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="cpm must be a number or null")
+        if cpm < 0:
+            raise HTTPException(status_code=400, detail="cpm must be >= 0")
+    updated = await storage.set_sub_admin_cpm(telegram_id, cpm, changed_by=owner.telegram_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="admin not found")
+    await notify_sub_admin_of_cpm_change(bot, updated, cpm)
+    return updated.model_dump()
+
+
+@app.post("/api/admin/admins/{telegram_id}/auto-delete")
+async def set_link_auto_delete(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
+    months_raw = payload.get("months")
+    months = None
+    if months_raw:
+        try:
+            months = int(months_raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="months must be a whole number or null")
+        if months not in Storage.SUB_ADMIN_AUTO_DELETE_CHOICES:
+            valid = ", ".join(str(m) for m in Storage.SUB_ADMIN_AUTO_DELETE_CHOICES)
+            raise HTTPException(status_code=400, detail=f"months must be null/0 (never) or one of: {valid}")
+    updated = await storage.set_link_auto_delete(telegram_id, months, changed_by=owner.telegram_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="admin not found")
+    await notify_sub_admin_of_auto_delete_change(bot, updated, months)
+    return updated.model_dump()

@@ -20,7 +20,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from models import CountedStatus, CPMHistoryEntry, CPMMode, Link, View, now_iso
+from models import CountedStatus, CPMHistoryEntry, CPMMode, Link, View, effective_cpm, now_iso
 from storage import Storage
 
 logger = logging.getLogger("cpm_engine")
@@ -78,11 +78,12 @@ async def credit_new_view(storage: Storage, view: View, link: Link) -> None:
             view.daily_capped = True
         elif cpm_setting.mode == CPMMode.REALTIME:
             admin = storage.admins.get(link.owner_telegram_id)
+            rate = effective_cpm(admin, cpm_setting.current_cpm) if admin else cpm_setting.current_cpm
             if admin:
-                admin.balance_confirmed = round(admin.balance_confirmed + cpm_setting.current_cpm, 6)
+                admin.balance_confirmed = round(admin.balance_confirmed + rate, 6)
             view.counted_status = CountedStatus.CONFIRMED
             view.cpm_cycle_id = cpm_setting.cycle_id
-            view.credited_amount = cpm_setting.current_cpm
+            view.credited_amount = rate
             view.credited_at = now_iso()
         else:
             view.counted_status = CountedStatus.PENDING_PAYOUT
@@ -120,7 +121,7 @@ async def maybe_close_cycle(storage: Storage) -> bool:
             return False
 
         closing_cycle_id = cs.cycle_id
-        rate = cs.current_cpm
+        platform_rate = cs.current_cpm
         payouts_by_admin: dict[str, float] = {}
         views_paid = 0
         paid_at = now_iso()
@@ -132,6 +133,12 @@ async def maybe_close_cycle(storage: Storage) -> bool:
             if not link:
                 continue
             admin = storage.admins.get(link.owner_telegram_id)
+            # Each view is priced at whatever rate is active *for that
+            # Admin* right now — their own Sub Admin CPM override if the
+            # Owner set one, otherwise the platform-wide rate — never a
+            # per-day split of rates that changed mid-cycle, per the
+            # PRD's no-retroactive-rate-splitting rule.
+            rate = effective_cpm(admin, platform_rate) if admin else platform_rate
             if admin:
                 # Per Section 9.5: credit to balance_pending, then move to
                 # balance_confirmed. Written as two explicit steps (rather
@@ -167,7 +174,10 @@ async def maybe_close_cycle(storage: Storage) -> bool:
         )
         await storage._save_locked()
 
-    logger.info("Closed CPM cycle %s: %d views paid at rate %s", closing_cycle_id, views_paid, rate)
+    logger.info(
+        "Closed CPM cycle %s: %d views paid (platform rate %s, per-Sub-Admin overrides may differ)",
+        closing_cycle_id, views_paid, platform_rate,
+    )
     return True
 
 
@@ -183,4 +193,25 @@ async def run_cpm_cycle_watcher(storage: Storage, interval_seconds: int = 60) ->
             raise
         except Exception:
             logger.exception("cpm cycle watcher tick failed")
+        await asyncio.sleep(interval_seconds)
+
+
+async def run_link_expiry_watcher(storage: Storage, interval_seconds: int = 3600) -> None:
+    """Background loop for the Sub Admin link auto-delete feature:
+    periodically purges every Link whose `expires_at` has passed (see
+    storage.purge_expired_links / Admin.link_auto_delete_months). Runs
+    for the lifetime of the app, started alongside run_cpm_cycle_watcher
+    in app.py's lifespan. Defaults to hourly since link expiry windows
+    are measured in months, not seconds — no need to poll as tightly as
+    the CPM cycle watcher does.
+    """
+    while True:
+        try:
+            purged = await storage.purge_expired_links()
+            if purged:
+                logger.info("Purged %d auto-expired link(s)", purged)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("link expiry watcher tick failed")
         await asyncio.sleep(interval_seconds)
