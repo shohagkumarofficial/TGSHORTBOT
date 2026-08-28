@@ -36,6 +36,8 @@ upsert/update per call site.
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
@@ -61,6 +63,15 @@ from models import (
     effective_cpm,
     now_iso,
 )
+
+logger = logging.getLogger("tgshortbot.storage")
+
+# Matches PostgREST's "column not found" error (code PGRST204), e.g.:
+# "Could not find the 'expires_at' column of 'links' in the schema cache"
+# — i.e. a model field exists on the Python side but the corresponding
+# `alter table` migration from README.md hasn't been run against this
+# Supabase project yet.
+_MISSING_COLUMN_RE = re.compile(r"Could not find the '([a-zA-Z_][a-zA-Z0-9_]*)' column")
 
 
 class Storage:
@@ -155,6 +166,42 @@ class Storage:
             await self._save_locked()
         self._loaded = True
 
+    async def _safe_upsert(self, table: str, rows: list[dict], on_conflict: str) -> None:
+        """Upserts `rows` into `table`, tolerating a field that exists on
+        the Python model but not yet as a real column in Supabase — i.e.
+        a pending `alter table` migration from README.md. Without this,
+        every write to a table with one missing column 500s on *every*
+        request that touches it (e.g. shortening a link, right after
+        adding `Link.expires_at`, if `links.expires_at` hasn't been
+        migrated in yet) until someone notices and runs the SQL. Instead:
+        strip whichever column PostgREST reports as missing and retry,
+        logging a warning each time so the pending migration is still
+        very visible in the logs — the request itself just succeeds
+        without persisting that one field until the migration is run.
+        """
+        if not rows:
+            return
+        remaining = rows
+        for _ in range(10):  # generous cap: covers a whole migration being missed, not just one column
+            try:
+                await self.client.table(table).upsert(remaining, on_conflict=on_conflict).execute()
+                return
+            except Exception as exc:
+                match = _MISSING_COLUMN_RE.search(str(exc))
+                if not match:
+                    raise
+                column = match.group(1)
+                logger.warning(
+                    "Supabase table '%s' has no '%s' column yet (pending migration — "
+                    "see README.md's schema notes). Dropping it from this write so the "
+                    "request still succeeds; run the migration to actually persist it.",
+                    table, column,
+                )
+                remaining = [{k: v for k, v in row.items() if k != column} for row in remaining]
+        # Retries exhausted (10 distinct missing columns in one write is basically
+        # "wrong table entirely") — let the real error surface instead of looping forever.
+        await self.client.table(table).upsert(remaining, on_conflict=on_conflict).execute()
+
     async def _save_locked(self) -> None:
         """Caller must already hold self._lock. Pushes the full current
         in-memory state to Supabase. Batched: one upsert call per table,
@@ -174,21 +221,15 @@ class Storage:
         ad_network_setting_row = {"id": 1, **self.ad_network_setting.model_dump(mode="json")}
         cpm_history_rows = [e.model_dump(mode="json") for e in self.cpm_history]
 
-        if admin_rows:
-            await self.client.table("admins").upsert(admin_rows, on_conflict="telegram_id").execute()
-        if traffic_rows:
-            await self.client.table("traffic_sources").upsert(traffic_rows, on_conflict="id").execute()
-        if link_rows:
-            await self.client.table("links").upsert(link_rows, on_conflict="short_code").execute()
-        if view_rows:
-            await self.client.table("views").upsert(view_rows, on_conflict="view_id").execute()
-        if withdrawal_rows:
-            await self.client.table("withdrawals").upsert(withdrawal_rows, on_conflict="request_id").execute()
-        await self.client.table("cpm_settings").upsert(cpm_setting_row, on_conflict="id").execute()
-        await self.client.table("policy_settings").upsert(policy_setting_row, on_conflict="id").execute()
-        await self.client.table("ad_network_settings").upsert(ad_network_setting_row, on_conflict="id").execute()
-        if cpm_history_rows:
-            await self.client.table("cpm_history").upsert(cpm_history_rows, on_conflict="entry_id").execute()
+        await self._safe_upsert("admins", admin_rows, on_conflict="telegram_id")
+        await self._safe_upsert("traffic_sources", traffic_rows, on_conflict="id")
+        await self._safe_upsert("links", link_rows, on_conflict="short_code")
+        await self._safe_upsert("views", view_rows, on_conflict="view_id")
+        await self._safe_upsert("withdrawals", withdrawal_rows, on_conflict="request_id")
+        await self._safe_upsert("cpm_settings", [cpm_setting_row], on_conflict="id")
+        await self._safe_upsert("policy_settings", [policy_setting_row], on_conflict="id")
+        await self._safe_upsert("ad_network_settings", [ad_network_setting_row], on_conflict="id")
+        await self._safe_upsert("cpm_history", cpm_history_rows, on_conflict="entry_id")
 
     async def save(self) -> None:
         async with self._lock:
