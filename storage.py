@@ -1256,7 +1256,7 @@ class Storage:
             ],
         }
 
-    async def own_analytics_summary(self, telegram_id: int, days: int = 14) -> dict:
+    async def own_analytics_summary(self, telegram_id: int, days: int = 30) -> dict:
         """Personal earnings + views dashboard for one Admin/Sub Admin's
         own home screen (webapp/panel.html's Overview tab) — the
         self-service, single-Admin counterpart to platform_income_summary
