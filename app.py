@@ -995,6 +995,21 @@ async def admin_links(telegram_id: int, owner: Admin = Depends(require_owner)):
     return {"links": links}
 
 
+@app.get("/api/admin/admins/{telegram_id}/analytics")
+async def admin_detail_analytics(telegram_id: int, owner: Admin = Depends(require_owner)):
+    """Same personal earnings+views dashboard payload as GET
+    /api/my-analytics (storage.own_analytics_summary), just Owner-only
+    and scoped to any Admin/Sub Admin's telegram_id via the path —
+    powers the Obsidian-style glow-card + trend-chart dashboard on the
+    Owner's per-Admin detail page (webapp/panel.html's Admins tab ->
+    tap an Admin), so the Owner sees the exact same chart shape for
+    someone else's links that an Admin sees for their own.
+    """
+    if not await storage.get_admin(telegram_id):
+        raise HTTPException(status_code=404, detail="admin not found")
+    return await storage.own_analytics_summary(telegram_id)
+
+
 @app.post("/api/admin/links/{short_code}/ad-count")
 async def set_link_ad_count(short_code: str, payload: dict, owner: Admin = Depends(require_owner)):
     """Owner-only control over how many sequential ads one specific link
@@ -1058,6 +1073,40 @@ async def set_admin_status(telegram_id: int, payload: dict, owner: Admin = Depen
 @app.get("/api/admin/stats")
 async def platform_stats(owner: Admin = Depends(require_owner)):
     return await storage.platform_stats()
+
+
+@app.get("/api/admin/analytics")
+async def owner_platform_analytics(
+    role_filter: str = "both",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    owner: Admin = Depends(require_owner),
+):
+    """Owner-only platform-wide earnings + views dashboard for the
+    panel's Overview (home) tab — see storage.platform_analytics_summary
+    for the aggregation itself. Every Admin and/or Sub Admin's own
+    genuine views are summed, filterable by role and by an explicit
+    date range (both optional; default is every Admin+Sub Admin
+    combined, trailing 30 days). Kept as its own endpoint rather than a
+    mode of GET /api/my-analytics: an Owner's own personal link income
+    (if they have any) is a different, single-person concept from "how
+    is the whole platform doing", and conflating the two would answer
+    neither question well.
+    """
+    if role_filter not in ("admin", "sub_admin", "both"):
+        raise HTTPException(status_code=400, detail="role_filter must be 'admin', 'sub_admin', or 'both'")
+
+    def _parse_date(raw: Optional[str], field: str):
+        if not raw:
+            return None
+        try:
+            return datetime.strptime(raw, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"{field} must be in YYYY-MM-DD format")
+
+    parsed_start = _parse_date(start_date, "start_date")
+    parsed_end = _parse_date(end_date, "end_date")
+    return await storage.platform_analytics_summary(role_filter, parsed_start, parsed_end)
 
 
 # ---------------------------------------------------------------------------

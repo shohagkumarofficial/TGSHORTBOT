@@ -47,7 +47,7 @@ import logging
 import re
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from supabase import AsyncClient, create_async_client
@@ -1347,6 +1347,139 @@ class Storage:
                 {"date": d.isoformat(), "views": view_buckets[d]} for d in sorted(view_buckets)
             ],
             "top_links": top_links,
+        }
+
+    async def platform_analytics_summary(
+        self,
+        role_filter: str = "both",
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+    ) -> dict:
+        """Platform-wide earnings + views dashboard for the Owner's home
+        screen (webapp/panel.html's Overview tab) — the aggregate,
+        multi-Admin counterpart to own_analytics_summary above. Rather
+        than one Admin's own links, this sums every Admin/Sub Admin's
+        genuine (non-daily-capped) views across the caller-chosen
+        `role_filter` and `[start_date, end_date]` window, so the Owner
+        can compare "how is the whole Admin tier doing" against "how is
+        the whole Sub Admin tier doing" without opening each profile
+        individually.
+
+        `role_filter` is one of "admin" (Role.ADMIN only), "sub_admin"
+        (Role.SUB_ADMIN only), or "both" (default — every Admin and Sub
+        Admin combined). The Owner's own links and any Viewer are always
+        excluded — a Viewer has no links to speak of, and the Owner's
+        own personal link income is a different, single-person concept
+        this screen is deliberately not for (own_analytics_summary
+        already covers that, the same way it covers any Admin's own
+        links, if the Owner ever uses their own "My Links" tab).
+
+        `start_date`/`end_date` default to a trailing 30-day window
+        ending today (UTC) when omitted, matching own_analytics_summary's
+        own 30-day default — but unlike that method, both can be set to
+        any explicit day so the Owner can look back further than 30 days
+        with exact boundaries (webapp/panel.html's custom date-range
+        picker). The window is capped at 366 days to keep a single
+        request's bucket count sane; an overlong request is silently
+        clamped to the most recent 366 days rather than rejected
+        outright, since a slightly-shorter-than-requested chart is more
+        useful than an error.
+
+        `top_performers` ranks by income (not view count, unlike
+        own_analytics_summary's own `top_links`) since "who is actually
+        earning well" is the more direct answer to what the Owner is
+        checking here than a raw view count, which per-Admin CPM
+        overrides can make misleading on its own.
+        """
+        role_map = {
+            "admin": {Role.ADMIN},
+            "sub_admin": {Role.SUB_ADMIN},
+            "both": {Role.ADMIN, Role.SUB_ADMIN},
+        }
+        normalized_filter = role_filter if role_filter in role_map else "both"
+        wanted_roles = role_map[normalized_filter]
+        target_ids = {a.telegram_id for a in self.admins.values() if a.role in wanted_roles}
+
+        today = datetime.now(timezone.utc).date()
+        if end_date is None:
+            end_date = today
+        if start_date is None:
+            start_date = end_date - timedelta(days=29)
+        if end_date < start_date:
+            start_date, end_date = end_date, start_date
+        if (end_date - start_date).days > 365:
+            start_date = end_date - timedelta(days=365)
+
+        num_days = (end_date - start_date).days + 1
+        income_buckets: Dict[object, float] = {start_date + timedelta(days=i): 0.0 for i in range(num_days)}
+        view_buckets: Dict[object, int] = {start_date + timedelta(days=i): 0 for i in range(num_days)}
+
+        total_income = 0.0
+        total_views = 0
+        per_admin: Dict[int, dict] = {}
+
+        for v in self.views.values():
+            if v.daily_capped:
+                continue
+            link = self.links.get(v.short_code)
+            if not link or link.owner_telegram_id not in target_ids:
+                continue
+            try:
+                created = datetime.fromisoformat(v.created_at)
+            except ValueError:
+                continue
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            d = created.astimezone(timezone.utc).date()
+            if d < start_date or d > end_date:
+                continue
+
+            total_views += 1
+            if d in view_buckets:
+                view_buckets[d] += 1
+
+            admin = self.admins.get(link.owner_telegram_id)
+            row = per_admin.setdefault(
+                link.owner_telegram_id,
+                {
+                    "telegram_id": link.owner_telegram_id,
+                    "username": admin.username if admin else None,
+                    "role": admin.role.value if admin else None,
+                    "views": 0,
+                    "income": 0.0,
+                },
+            )
+            row["views"] += 1
+
+            if v.counted_status == CountedStatus.CONFIRMED:
+                amount = v.credited_amount or 0.0
+                total_income += amount
+                row["income"] = round(row["income"] + amount, 6)
+                if d in income_buckets:
+                    income_buckets[d] += amount
+
+        top_performers = sorted(per_admin.values(), key=lambda r: r["income"], reverse=True)[:5]
+        for r in top_performers:
+            r["income"] = round(r["income"], 4)
+
+        avg_daily_income = round(total_income / num_days, 4) if num_days else 0.0
+
+        return {
+            "role_filter": normalized_filter,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "window_days": num_days,
+            "total_admins": len(target_ids),
+            "total_income": round(total_income, 4),
+            "total_views": total_views,
+            "avg_daily_income": avg_daily_income,
+            "income_trend": [
+                {"date": d.isoformat(), "amount": round(income_buckets[d], 4)} for d in sorted(income_buckets)
+            ],
+            "views_trend": [
+                {"date": d.isoformat(), "views": view_buckets[d]} for d in sorted(view_buckets)
+            ],
+            "top_performers": top_performers,
         }
 
     async def platform_stats(self) -> dict:
