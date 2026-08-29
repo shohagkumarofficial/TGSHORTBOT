@@ -274,6 +274,47 @@
   .stat-box .n{ font-family: var(--display); font-weight:700; font-size:22px; }
   .stat-box .l{ font-size:11px; color: var(--text-dim); text-transform:uppercase; letter-spacing:.06em; margin-top:2px; }
 
+  /* ---- Obsidian-style analytics home (Admin/Sub Admin Overview only —
+     Owner gets a separate platform-wide dashboard later) ---- */
+  .glow-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:16px; }
+  .glow-card{
+    position:relative; overflow:hidden;
+    background: var(--panel-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 16px;
+    padding: 16px;
+  }
+  .glow-card::before{
+    content:""; position:absolute; top:-40%; right:-30%;
+    width:110px; height:110px; border-radius:50%;
+    filter: blur(28px); opacity:.32; pointer-events:none;
+  }
+  .glow-card.gold::before{ background: var(--brass); }
+  .glow-card.emerald::before{ background: var(--emerald); }
+  .glow-card.violet::before{ background: var(--violet); }
+  .glow-card.blue::before{ background:#5aa9e6; }
+  .glow-card .gc-icon{
+    width:32px; height:32px; border-radius:9px; display:flex; align-items:center; justify-content:center;
+    margin-bottom:10px; position:relative;
+  }
+  .glow-card.gold .gc-icon{ background: var(--brass-soft); color: var(--brass); }
+  .glow-card.emerald .gc-icon{ background: var(--emerald-soft); color: var(--emerald); }
+  .glow-card.violet .gc-icon{ background: var(--violet-soft); color: var(--violet); }
+  .glow-card.blue .gc-icon{ background: rgba(90,169,230,.14); color:#5aa9e6; }
+  .glow-card .gc-value{ font-family: var(--display); font-weight:700; font-size:21px; position:relative; }
+  .glow-card .gc-label{ font-size:10.5px; color: var(--text-dim); text-transform:uppercase; letter-spacing:.06em; margin-top:4px; position:relative; }
+
+  .chart-card{ background: var(--panel); border:1px solid var(--hairline); border-radius:16px; padding:16px; margin-bottom:14px; }
+  .chart-card h3{ display:flex; align-items:center; gap:7px; margin:0 0 2px; font-size:14px; }
+  .chart-card .chart-sub{ font-size:11.5px; color:var(--text-dim); margin-bottom:10px; }
+
+  .top-link-row{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 0; border-bottom:1px solid var(--hairline); }
+  .top-link-row:last-child{ border-bottom:none; }
+  .top-link-row .tl-code{ font-weight:600; font-size:13px; }
+  .top-link-row .tl-url{ font-size:11px; color:var(--text-faint); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .top-link-row .tl-stats{ text-align:right; font-size:12px; color:var(--text-dim); line-height:1.5; }
+  .top-link-row .tl-stats b{ color:var(--emerald); }
+
   .profile-header{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }
   .profile-avatar{
     width:48px; height:48px; border-radius:50%; flex:0 0 auto;
@@ -451,6 +492,7 @@
     stats: null,
     drawerOpen: false,
     apiKeys: [],
+    analytics: null,
   };
 
   // ---- helpers ------------------------------------------------------
@@ -652,6 +694,53 @@
         </rect>${showLabel ? `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>` : ""}`;
     }).join("");
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
+  }
+
+  // Gradient-filled line chart (Obsidian-dashboard style) for the
+  // Admin/Sub Admin analytics home — shared by the earning trend and
+  // views trend cards in renderOverview(). `valueKey` picks which field
+  // off each trend point to plot ("amount" for income_trend, "views"
+  // for views_trend from GET /api/my-analytics), so one function serves
+  // both charts instead of two near-duplicates. `gradId` must be unique
+  // per call on the same page (two <linearGradient> elements can't
+  // share an id) — renderOverview() passes distinct ids for the two
+  // charts it renders together.
+  function areaTrendChartSVG(trend, valueKey, color, gradId) {
+    if (!trend || !trend.length) return `<div class="empty">No data yet.</div>`;
+    const W = 320, H = 120, padL = 4, padR = 4, padB = 18, padT = 10;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    const n = trend.length;
+    const maxVal = Math.max(0.01, ...trend.map((d) => d[valueKey] || 0));
+    const stepX = n > 1 ? plotW / (n - 1) : 0;
+    const points = trend.map((d, i) => {
+      const x = padL + i * stepX;
+      const y = padT + (plotH - ((d[valueKey] || 0) / maxVal) * plotH);
+      return [x, y];
+    });
+    const linePath = points.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+    const floorY = (padT + plotH).toFixed(1);
+    const areaPath = `${linePath} L${points[points.length - 1][0].toFixed(1)},${floorY} L${points[0][0].toFixed(1)},${floorY} Z`;
+    const labels = trend.map((d, i) => {
+      const showLabel = i === 0 || i === n - 1 || i === Math.floor(n / 2);
+      if (!showLabel) return "";
+      const shortLabel = (d.date || "").slice(5).replace("-", "/");
+      return `<text x="${points[i][0].toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>`;
+    }).join("");
+    const dots = points.map((p, i) => {
+      const val = trend[i][valueKey] || 0;
+      return `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4" fill="${color}"><title>${esc(trend[i].date)} — ${val}</title></circle>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
+        <defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
+          <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
+        </linearGradient></defs>
+        <path d="${areaPath}" fill="url(#${gradId})" stroke="none"></path>
+        <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2"></path>
+        ${dots}
+        ${labels}
+      </svg>`;
   }
 
   function adminLinksListHTML(links) {
@@ -878,8 +967,7 @@
             <div class="meta" style="color:var(--text-faint);">${esc(k.key_prefix)}••••••••</div>
             <div class="meta">Created ${esc((k.created_at || "").slice(0, 10))}${k.last_used_at ? ` · Last used ${esc(k.last_used_at.slice(0, 10))}` : " · Never used yet"}</div>
             ${k.revoked_at
-              ? `<div class="meta" style="color:var(--red);">${icon("trash", 12)} Revoked ${esc(k.revoked_at.slice(0, 10))}</div>
-                 <div class="btn-row"><button class="btn btn-danger btn-sm deleteApiKeyBtn">${icon("trash", 13)} Delete permanently</button></div>`
+              ? `<div class="meta" style="color:var(--red);">${icon("trash", 12)} Revoked ${esc(k.revoked_at.slice(0, 10))}</div>`
               : `<div class="btn-row"><button class="btn btn-outline btn-sm revokeApiKeyBtn">${icon("trash", 13)} Revoke</button></div>`}
           </div>
         `).join("")
@@ -955,23 +1043,6 @@
         } catch (e) {
           toast(e.message, "err");
           btn.disabled = false; btn.textContent = "Revoke";
-        }
-      });
-    });
-    el.querySelectorAll(".deleteApiKeyBtn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const card = btn.closest("[data-key-id]");
-        const keyId = card.getAttribute("data-key-id");
-        const sure = await confirmDestructive("এই API key স্থায়ীভাবে ডিলিট করতে চান? এটা আর ফেরত আনা যাবে না।");
-        if (!sure) return;
-        btn.disabled = true; btn.textContent = "Deleting…";
-        try {
-          await api(`/api/apikeys/${encodeURIComponent(keyId)}/permanent`, { method: "DELETE" });
-          toast("Key permanently deleted", "ok");
-          if (onChange) onChange();
-        } catch (e) {
-          toast(e.message, "err");
-          btn.disabled = false; btn.textContent = "Delete permanently";
         }
       });
     });
@@ -1238,9 +1309,6 @@
         </div>
         <div class="cycle-note">${icon("users", 13)} <b>${state.stats ? state.stats.total_admins : "…"}</b> admins ·
           ${icon("trendingUp", 13)} CPM: ${cpmLine}</div>
-        <div class="cycle-note" style="border-top:none; padding-top:0; margin-top:6px; color: var(--emerald); font-weight:600;">
-          ${icon("checkCircle", 13)} আপনার নিজের কনফার্মড ব্যালেন্স (নিজের লিংকের ইনকামসহ): ${fmt(state.me.balance_confirmed)}
-        </div>
       `;
     } else {
       card.className = "balance-card";
@@ -1293,12 +1361,7 @@
   async function renderOverview(el) {
     if (isOwner()) {
       el.innerHTML = `
-        <div class="section-title">আপনার নিজের আয়</div>
-        <div class="stat-grid">
-          <div class="stat-box"><div class="n" style="color:var(--emerald);">${fmt(state.me.balance_confirmed)}</div><div class="l">Your confirmed balance</div></div>
-          <div class="stat-box"><div class="n">${fmt(state.cpm ? state.cpm.current_cpm : 0)}</div><div class="l">Base CPM / view</div></div>
-        </div>
-        <div class="section-title" style="margin-top:18px;">Quick actions</div>
+        <div class="section-title">Quick actions</div>
         <div class="card">
           <button class="btn btn-primary btn-block" id="qaPayouts">Review pending withdrawals${state.withdrawalsPending.length ? ` (${state.withdrawalsPending.length})` : ""}</button>
           <div class="btn-row">
@@ -1327,22 +1390,86 @@
     }
 
     await loadLinks();
-    const confirmedViews = state.links.reduce((s, l) => s + (l.confirmed_views || 0), 0);
-    const totalViews = state.links.reduce((s, l) => s + (l.view_count || 0), 0);
-    el.innerHTML = `
-      ${!(state.me.traffic_sources && state.me.traffic_sources.length) ? `
+    const hasTrafficSource = !!(state.me.traffic_sources && state.me.traffic_sources.length);
+
+    if (!hasTrafficSource) {
+      // A brand new Viewer with no Traffic Source yet — nothing to chart
+      // for them, so this stays the plain onboarding prompt rather than
+      // an empty-state analytics dashboard. The moment they add a source
+      // they're auto-promoted to Sub Admin (see storage.
+      // add_traffic_source) and land on the real dashboard below.
+      el.innerHTML = `
         <div class="card" style="border-color: rgba(226,104,92,.35);">
           <h3 style="color:var(--red);">${icon("alertTriangle", 15)} No Traffic Source yet</h3>
           <div class="meta">Add at least one before you can create any short links.</div>
           <div class="btn-row"><button class="btn btn-primary btn-block" id="ctaTraffic">Add Traffic Source</button></div>
-        </div>` : ""}
-      <div class="section-title">At a glance</div>
-      <div class="stat-grid">
-        <div class="stat-box"><div class="n">${state.links.length}</div><div class="l">Links created</div></div>
-        <div class="stat-box"><div class="n">${totalViews}</div><div class="l">Total views</div></div>
-        <div class="stat-box"><div class="n">${confirmedViews}</div><div class="l">Confirmed views</div></div>
-        <div class="stat-box"><div class="n">${fmt(state.me.balance_confirmed)}</div><div class="l">Withdrawable</div></div>
+        </div>
+      `;
+      el.querySelector("#ctaTraffic").addEventListener("click", () => { state.tab = "profile"; renderTab(); });
+      return;
+    }
+
+    // Admin/Sub Admin analytics home — the first thing they see on
+    // opening the bot. Driven by GET /api/my-analytics (storage.
+    // own_analytics_summary) rather than deriving trends from
+    // state.links client-side, so the 14-day earning/view charts stay
+    // correct even after a link is deleted. The Owner never reaches
+    // this branch (see the isOwner() early return above) — their own
+    // dashboard is the separate, platform-wide Stats tab.
+    await loadMyAnalytics();
+    const a = state.analytics;
+
+    el.innerHTML = `
+      <div class="glow-grid">
+        <div class="glow-card violet">
+          <div class="gc-icon">${icon("trendingUp", 16)}</div>
+          <div class="gc-value">${fmt(a.lifetime_income)}</div>
+          <div class="gc-label">Lifetime Earning</div>
+        </div>
+        <div class="glow-card emerald">
+          <div class="gc-icon">${icon("banknote", 16)}</div>
+          <div class="gc-value">${fmt(state.me.balance_confirmed)}</div>
+          <div class="gc-label">Withdrawable</div>
+        </div>
+        <div class="glow-card gold">
+          <div class="gc-icon">${icon("trendingUp", 16)}</div>
+          <div class="gc-value">${fmt(a.today_income)}</div>
+          <div class="gc-label">Today's Earning</div>
+        </div>
+        <div class="glow-card blue">
+          <div class="gc-icon">${icon("eye", 16)}</div>
+          <div class="gc-value">${a.total_views}</div>
+          <div class="gc-label">Total Views</div>
+        </div>
       </div>
+
+      <div class="chart-card">
+        <h3>${icon("trendingUp", 15)} Earning Trend</h3>
+        <div class="chart-sub">গত ${a.window_days} দিনের দৈনিক আয় (৳)</div>
+        ${areaTrendChartSVG(a.income_trend, "amount", "var(--emerald)", "gradOverviewIncome")}
+      </div>
+
+      <div class="chart-card">
+        <h3>${icon("eye", 15)} Views Trend</h3>
+        <div class="chart-sub">গত ${a.window_days} দিনের দৈনিক ভিউ</div>
+        ${areaTrendChartSVG(a.views_trend, "views", "var(--brass)", "gradOverviewViews")}
+      </div>
+
+      <div class="section-title" style="margin-top:4px;">${icon("link", 14)} Top Links</div>
+      <div class="chart-card">
+        ${a.top_links && a.top_links.length
+          ? a.top_links.map((l) => `
+              <div class="top-link-row">
+                <div>
+                  <div class="tl-code">/${esc(l.short_code)}</div>
+                  <div class="tl-url">${esc(l.destination_url || "")}</div>
+                </div>
+                <div class="tl-stats">${l.views} views<br><b>${fmt(l.income)}</b></div>
+              </div>
+            `).join("")
+          : `<div class="empty">এখনো কোনো ভিউ আসেনি — লিংক শেয়ার করা শুরু করুন।</div>`}
+      </div>
+
       <div class="section-title" style="margin-top:18px;">Quick actions</div>
       <div class="card">
         <button class="btn btn-primary btn-block" id="qaNewLink">+ Create a new short link</button>
@@ -1354,8 +1481,6 @@
         Tip: you can also do all of this from the bot chat with <code>/newlink</code>, <code>/mybalance</code> and <code>/withdraw</code>.
       </p>
     `;
-    const ctaTraffic = el.querySelector("#ctaTraffic");
-    if (ctaTraffic) ctaTraffic.addEventListener("click", () => { state.tab = "profile"; renderTab(); });
     el.querySelector("#qaNewLink").addEventListener("click", () => { state.tab = "quicklink"; renderTab(); });
     el.querySelector("#qaWithdraw").addEventListener("click", () => { state.tab = "profile"; renderTab(); });
   }
@@ -2653,6 +2778,7 @@
 
   async function loadMe() { state.me = await api("/api/me"); }
   async function loadLinks() { const d = await api("/api/links"); state.links = d.links; }
+  async function loadMyAnalytics() { state.analytics = await api("/api/my-analytics"); }
   async function loadMyWithdrawals() { const d = await api("/api/withdrawals/mine"); state.withdrawals = d.withdrawals; }
   async function loadCpm() { state.cpm = await api("/api/cpm"); }
   async function loadOwnerWithdrawals() { const d = await api("/api/admin/withdrawals"); state.withdrawalsPending = d.withdrawals; }
