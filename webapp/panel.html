@@ -514,6 +514,8 @@
     drawerOpen: false,
     apiKeys: [],
     analytics: null,
+    platformAnalytics: null,
+    platformAnalyticsFilter: { role_filter: "both", start_date: "", end_date: "" },
   };
 
   // ---- helpers ------------------------------------------------------
@@ -1449,8 +1451,88 @@
 
   async function renderOverview(el) {
     if (isOwner()) {
+      // Platform-wide aggregate dashboard — NOT the Owner's own personal
+      // link income (that's what GET /api/my-analytics is for, same as
+      // any Admin's own "My Links"). role_filter + the custom date range
+      // both live in state.platformAnalyticsFilter so re-rendering this
+      // tab (e.g. after "Apply") re-fetches with whatever the Owner last
+      // chose instead of silently resetting back to the 30-day default.
+      await loadPlatformAnalytics();
+      const pa = state.platformAnalytics;
+
       el.innerHTML = `
-        <div class="section-title">Quick actions</div>
+        <div class="card">
+          <h3>${icon("users", 15)} Filter</h3>
+          <label>Show data for</label>
+          <select id="ownerRoleFilter">
+            <option value="both" ${pa.role_filter === "both" ? "selected" : ""}>Admin + Sub Admin (all)</option>
+            <option value="admin" ${pa.role_filter === "admin" ? "selected" : ""}>Admin only</option>
+            <option value="sub_admin" ${pa.role_filter === "sub_admin" ? "selected" : ""}>Sub Admin only</option>
+          </select>
+          <div class="btn-row" style="gap:8px;">
+            <div style="flex:1;">
+              <label>From</label>
+              <input type="date" id="ownerStartDate" value="${esc(pa.start_date)}" />
+            </div>
+            <div style="flex:1;">
+              <label>To</label>
+              <input type="date" id="ownerEndDate" value="${esc(pa.end_date)}" />
+            </div>
+          </div>
+          <div class="btn-row"><button class="btn btn-primary btn-block" id="ownerAnalyticsApply">Apply</button></div>
+        </div>
+
+        <div class="glow-grid">
+          <div class="glow-card violet">
+            <div class="gc-icon">${icon("trendingUp", 16)}</div>
+            <div class="gc-value">${fmt(pa.total_income)}</div>
+            <div class="gc-label">Total Income</div>
+          </div>
+          <div class="glow-card blue">
+            <div class="gc-icon">${icon("eye", 16)}</div>
+            <div class="gc-value">${pa.total_views}</div>
+            <div class="gc-label">Total Views</div>
+          </div>
+          <div class="glow-card gold">
+            <div class="gc-icon">${icon("trendingUp", 16)}</div>
+            <div class="gc-value">${fmt(pa.avg_daily_income)}</div>
+            <div class="gc-label">Avg Daily Income</div>
+          </div>
+          <div class="glow-card emerald">
+            <div class="gc-icon">${icon("users", 16)}</div>
+            <div class="gc-value">${pa.total_admins}</div>
+            <div class="gc-label">Admins Counted</div>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <h3>${icon("trendingUp", 15)} Earning Trend</h3>
+          <div class="chart-sub">${esc(pa.start_date)} – ${esc(pa.end_date)} · পয়েন্টে ট্যাপ করে দেখুন</div>
+          ${areaTrendChartSVG(pa.income_trend, "amount", "var(--emerald)", "gradOwnerIncome", "currency")}
+        </div>
+
+        <div class="chart-card">
+          <h3>${icon("eye", 15)} Views Trend</h3>
+          <div class="chart-sub">${esc(pa.start_date)} – ${esc(pa.end_date)} · পয়েন্টে ট্যাপ করে দেখুন</div>
+          ${areaTrendChartSVG(pa.views_trend, "views", "var(--brass)", "gradOwnerViews", "count")}
+        </div>
+
+        <div class="section-title" style="margin-top:4px;">${icon("users", 14)} Top Performers</div>
+        <div class="chart-card">
+          ${pa.top_performers && pa.top_performers.length
+            ? pa.top_performers.map((p) => `
+                <div class="top-link-row">
+                  <div>
+                    <div class="tl-code">${p.username ? "@" + esc(p.username) : "id " + p.telegram_id}</div>
+                    <span class="pill ${p.role}" style="font-size:9.5px; padding:1px 6px;">${esc(roleMeta(p.role).label)}</span>
+                  </div>
+                  <div class="tl-stats">${p.views} views<br><b>${fmt(p.income)}</b></div>
+                </div>
+              `).join("")
+            : `<div class="empty">এই সময়সীমায় কোনো ভিউ পাওয়া যায়নি।</div>`}
+        </div>
+
+        <div class="section-title" style="margin-top:18px;">Quick actions</div>
         <div class="card">
           <button class="btn btn-primary btn-block" id="qaPayouts">Review pending withdrawals${state.withdrawalsPending.length ? ` (${state.withdrawalsPending.length})` : ""}</button>
           <div class="btn-row">
@@ -1475,6 +1557,18 @@
       el.querySelectorAll(".drawer-item").forEach((item) => {
         item.addEventListener("click", () => { state.tab = item.dataset.tab; renderTab(); });
       });
+      el.querySelector("#ownerAnalyticsApply").addEventListener("click", () => {
+        const roleSel = el.querySelector("#ownerRoleFilter").value;
+        const startVal = el.querySelector("#ownerStartDate").value;
+        const endVal = el.querySelector("#ownerEndDate").value;
+        if (startVal && endVal && startVal > endVal) {
+          toast("From date must be before To date", "err");
+          return;
+        }
+        state.platformAnalyticsFilter = { role_filter: roleSel, start_date: startVal || "", end_date: endVal || "" };
+        renderOverview(el);
+      });
+      wireChartTooltips(el);
       return;
     }
 
@@ -2516,11 +2610,12 @@
 
   async function renderAdminDetail(el, telegramId) {
     el.innerHTML = `<div class="card"><div class="skel" style="height:120px;"></div></div>`;
-    let d, linksResp;
+    let d, linksResp, analyticsResp;
     try {
-      [d, linksResp] = await Promise.all([
+      [d, linksResp, analyticsResp] = await Promise.all([
         api(`/api/admin/admins/${telegramId}`),
         api(`/api/admin/admins/${telegramId}/links`),
+        api(`/api/admin/admins/${telegramId}/analytics`),
       ]);
     } catch (e) {
       toast(e.message, "err");
@@ -2539,6 +2634,56 @@
           <div class="profile-name">${a.username ? "@" + esc(a.username) : "id " + a.telegram_id}</div>
           <div class="profile-sub">${esc(roleMeta(a.role).label)} since ${esc((a.created_at || "").slice(0, 10))} · <span class="pill ${a.status}" style="margin-left:4px;">${a.status}</span></div>
         </div>
+      </div>
+
+      <div class="glow-grid">
+        <div class="glow-card violet">
+          <div class="gc-icon">${icon("trendingUp", 16)}</div>
+          <div class="gc-value">${fmt(analyticsResp.lifetime_income)}</div>
+          <div class="gc-label">Lifetime Earning</div>
+        </div>
+        <div class="glow-card emerald">
+          <div class="gc-icon">${icon("banknote", 16)}</div>
+          <div class="gc-value">${fmt(a.balance_confirmed)}</div>
+          <div class="gc-label">Confirmed Balance</div>
+        </div>
+        <div class="glow-card gold">
+          <div class="gc-icon">${icon("trendingUp", 16)}</div>
+          <div class="gc-value">${fmt(analyticsResp.today_income)}</div>
+          <div class="gc-label">Today's Earning</div>
+        </div>
+        <div class="glow-card blue">
+          <div class="gc-icon">${icon("eye", 16)}</div>
+          <div class="gc-value">${analyticsResp.total_views}</div>
+          <div class="gc-label">Total Views</div>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <h3>${icon("trendingUp", 15)} Earning Trend</h3>
+        <div class="chart-sub">গত ${analyticsResp.window_days} দিনের দৈনিক আয় (৳) · পয়েন্টে ট্যাপ করে দেখুন</div>
+        ${areaTrendChartSVG(analyticsResp.income_trend, "amount", "var(--emerald)", "gradDetailIncome" + telegramId, "currency")}
+      </div>
+
+      <div class="chart-card">
+        <h3>${icon("eye", 15)} Views Trend</h3>
+        <div class="chart-sub">গত ${analyticsResp.window_days} দিনের দৈনিক ভিউ · পয়েন্টে ট্যাপ করে দেখুন</div>
+        ${areaTrendChartSVG(analyticsResp.views_trend, "views", "var(--brass)", "gradDetailViews" + telegramId, "count")}
+      </div>
+
+      <div class="section-title" style="margin-top:4px;">${icon("link", 14)} Top Links</div>
+      <div class="chart-card">
+        ${analyticsResp.top_links && analyticsResp.top_links.length
+          ? analyticsResp.top_links.map((l) => `
+              <div class="top-link-row">
+                <div>
+                  <div class="tl-code">/${esc(l.short_code)}</div>
+                  <div class="tl-url">${esc(l.destination_url || "")}</div>
+                </div>
+                <div class="tl-stats">${l.views} views<br><b>${fmt(l.income)}</b></div>
+              </div>
+            `).join("")
+          : `<div class="empty">এখনো কোনো ভিউ আসেনি।</div>`}
       </div>
 
       <div class="stat-grid">
@@ -2648,6 +2793,7 @@
     `;
 
     el.querySelector("#backToAdmins").addEventListener("click", () => renderAdmins(el));
+    wireChartTooltips(el);
 
     const detailReqEl = el.querySelector("#detailAdminRequest");
     if (detailReqEl) wireAdminRequestActions(detailReqEl, () => renderAdminDetail(el, telegramId));
@@ -2869,6 +3015,14 @@
   async function loadMe() { state.me = await api("/api/me"); }
   async function loadLinks() { const d = await api("/api/links"); state.links = d.links; }
   async function loadMyAnalytics() { state.analytics = await api("/api/my-analytics"); }
+  async function loadPlatformAnalytics() {
+    const f = state.platformAnalyticsFilter;
+    const params = new URLSearchParams();
+    params.set("role_filter", f.role_filter || "both");
+    if (f.start_date) params.set("start_date", f.start_date);
+    if (f.end_date) params.set("end_date", f.end_date);
+    state.platformAnalytics = await api(`/api/admin/analytics?${params.toString()}`);
+  }
   async function loadMyWithdrawals() { const d = await api("/api/withdrawals/mine"); state.withdrawals = d.withdrawals; }
   async function loadCpm() { state.cpm = await api("/api/cpm"); }
   async function loadOwnerWithdrawals() { const d = await api("/api/admin/withdrawals"); state.withdrawalsPending = d.withdrawals; }
