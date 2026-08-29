@@ -1592,6 +1592,44 @@ class Storage:
             await self._save_locked()
             return True
 
+    async def delete_api_key(self, key_id: str, telegram_id: int) -> bool:
+        """Permanently removes an API key record — unlike `revoke_api_key`
+        (which only sets `revoked_at` and leaves the row in place, so a
+        revoked key sits forever in `GET /api/apikeys`/the panel's "API
+        Access" list with a "Revoked on <date>" label and no way to make
+        it disappear), this actually deletes it: from `self.api_keys`,
+        from `self._api_key_hash_index` (so a stale in-memory hash entry
+        can never resolve to a since-deleted key_id), and from the
+        Supabase `api_keys` row.
+
+        Works on an active (not-yet-revoked) key too, not just an
+        already-revoked one — deleting the record is itself enough to
+        cut off authentication (`get_admin_by_api_key` can't resolve a
+        hash to a key_id that's no longer in the index), so callers
+        don't need to revoke first. Same "only the Admin who generated
+        it" ownership rule as `revoke_api_key`.
+        """
+        async with self._lock:
+            key = self.api_keys.get(key_id)
+            if not key or key.owner_telegram_id != telegram_id:
+                return False
+            del self.api_keys[key_id]
+            self._api_key_hash_index.pop(key.key_hash, None)
+            try:
+                await self.client.table("api_keys").delete().eq("key_id", key_id).execute()
+            except Exception as exc:
+                # Mirrors _select_or_empty's self-heal: if the `api_keys`
+                # table's migration hasn't been run yet, there's nothing
+                # in Supabase to delete anyway — the in-memory removal
+                # above already achieves the user-visible effect.
+                if not ("PGRST205" in str(exc) or "Could not find the table" in str(exc)):
+                    raise
+                logger.warning(
+                    "Supabase table 'api_keys' doesn't exist yet (pending migration) — "
+                    "nothing to delete there; the in-memory key was still removed."
+                )
+            return True
+
     async def get_admin_by_api_key(self, raw_key: str) -> Optional[Admin]:
         """Resolves a raw `Authorization`/`X-API-Key` header value back to
         the Admin who generated it — None if the key is unknown, malformed,

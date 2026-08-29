@@ -1232,6 +1232,20 @@ async def revoke_api_key(key_id: str, admin: Admin = Depends(require_owner_or_ad
     return {"ok": True}
 
 
+@app.delete("/api/apikeys/{key_id}/permanent")
+async def delete_api_key_permanent(key_id: str, admin: Admin = Depends(require_owner_or_admin)):
+    """Permanently deletes an API key record, unlike the revoke endpoint
+    above which keeps the row (marked `revoked_at`) so it stays visible
+    forever in the panel's key list. Works on an active key too — see
+    storage.delete_api_key's docstring for why revoking first isn't
+    required.
+    """
+    ok = await storage.delete_api_key(key_id, admin.telegram_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="api key not found")
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Public REST API (/api/v1) — everything here uses `require_api_key`
 # instead of Telegram initData, so it can be called from an Owner's or
