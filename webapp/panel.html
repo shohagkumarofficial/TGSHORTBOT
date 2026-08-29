@@ -315,6 +315,27 @@
   .top-link-row .tl-stats{ text-align:right; font-size:12px; color:var(--text-dim); line-height:1.5; }
   .top-link-row .tl-stats b{ color:var(--emerald); }
 
+  /* Tap-a-point tooltip for the Overview earning/views trend charts —
+     a small floating card showing that exact day's value, positioned
+     via JS against the tapped point's real rendered position (see
+     wireChartTooltips). Hidden by default; JS toggles ".show". */
+  .chart-wrap{ position:relative; }
+  .chart-tooltip{
+    position:absolute; transform: translate(-50%, -122%);
+    background: var(--panel-raised); border:1px solid var(--hairline);
+    border-radius:9px; padding:6px 10px; font-size:11.5px; line-height:1.4;
+    white-space:nowrap; color:var(--text); pointer-events:none; z-index:5;
+    box-shadow: 0 8px 20px -8px rgba(0,0,0,.6);
+    opacity:0; transition: opacity .15s ease;
+  }
+  .chart-tooltip::after{
+    content:""; position:absolute; left:50%; top:100%;
+    transform: translateX(-50%);
+    border:5px solid transparent; border-top-color: var(--hairline);
+  }
+  .chart-tooltip.show{ opacity:1; }
+  .chart-tooltip b{ color: var(--text); }
+
   .profile-header{ display:flex; align-items:center; gap:12px; margin-bottom:16px; }
   .profile-avatar{
     width:48px; height:48px; border-radius:50%; flex:0 0 auto;
@@ -696,16 +717,38 @@
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
   }
 
+  // Human-friendly single-date label for the chart tap-tooltip — e.g.
+  // "15 Aug" from a "2026-08-15" trend-point date string. Falls back to
+  // the raw string if parsing ever fails, so a malformed date can't
+  // crash the tooltip.
+  function prettyChartDate(dateStr) {
+    try {
+      return new Date(dateStr + "T00:00:00Z").toLocaleDateString("en-GB", {
+        day: "numeric", month: "short", timeZone: "UTC",
+      });
+    } catch (e) {
+      return dateStr;
+    }
+  }
+
   // Gradient-filled line chart (Obsidian-dashboard style) for the
   // Admin/Sub Admin analytics home — shared by the earning trend and
   // views trend cards in renderOverview(). `valueKey` picks which field
   // off each trend point to plot ("amount" for income_trend, "views"
   // for views_trend from GET /api/my-analytics), so one function serves
-  // both charts instead of two near-duplicates. `gradId` must be unique
-  // per call on the same page (two <linearGradient> elements can't
-  // share an id) — renderOverview() passes distinct ids for the two
-  // charts it renders together.
-  function areaTrendChartSVG(trend, valueKey, color, gradId) {
+  // both charts instead of two near-duplicates. `chartId` must be
+  // unique per call on the same page (it names both the <linearGradient>
+  // and the wrapping/tooltip elements wireChartTooltips() below looks
+  // for). `unit` is "currency" (formatted with fmt()) or "count" (shown
+  // as "<n> views") — it's stamped on the wrapper as data-unit so
+  // wireChartTooltips can format each chart's popup correctly without
+  // needing a second parallel list of formatters.
+  //
+  // Each data point renders as two overlapping circles: a small filled
+  // dot for visibility, and a larger transparent one on top that
+  // actually receives the tap — a finger is far wider than a 2-3px dot,
+  // so the real hit target needs to be bigger than what's drawn.
+  function areaTrendChartSVG(trend, valueKey, color, chartId, unit) {
     if (!trend || !trend.length) return `<div class="empty">No data yet.</div>`;
     const W = 320, H = 120, padL = 4, padR = 4, padB = 18, padT = 10;
     const plotW = W - padL - padR;
@@ -729,18 +772,64 @@
     }).join("");
     const dots = points.map((p, i) => {
       const val = trend[i][valueKey] || 0;
-      return `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="2.4" fill="${color}"><title>${esc(trend[i].date)} — ${val}</title></circle>`;
+      const cx = p[0].toFixed(1), cy = p[1].toFixed(1);
+      return `<circle cx="${cx}" cy="${cy}" r="2.6" fill="${color}"></circle>`
+        + `<circle class="chart-dot" data-date="${esc(trend[i].date)}" data-value="${val}" `
+        + `cx="${cx}" cy="${cy}" r="9" fill="transparent" style="cursor:pointer;"></circle>`;
     }).join("");
-    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
-        <defs><linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
-          <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
-        </linearGradient></defs>
-        <path d="${areaPath}" fill="url(#${gradId})" stroke="none"></path>
-        <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2"></path>
-        ${dots}
-        ${labels}
-      </svg>`;
+    return `<div class="chart-wrap" id="${chartId}_wrap" data-unit="${unit}">
+        <div class="chart-tooltip" id="${chartId}_tip"></div>
+        <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
+          <defs><linearGradient id="${chartId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${color}" stop-opacity="0.35"></stop>
+            <stop offset="100%" stop-color="${color}" stop-opacity="0"></stop>
+          </linearGradient></defs>
+          <path d="${areaPath}" fill="url(#${chartId})" stroke="none"></path>
+          <path d="${linePath}" fill="none" stroke="${color}" stroke-width="2"></path>
+          ${dots}
+          ${labels}
+        </svg>
+      </div>`;
+  }
+
+  // One page-wide "tap outside closes any open tooltip" listener,
+  // attached once regardless of how many times renderOverview() (and
+  // therefore wireChartTooltips) runs — the per-dot click listeners
+  // below are safe to re-attach on every render since the old .chart-dot
+  // elements are discarded along with the innerHTML they lived in.
+  let _chartTooltipDocListenerAdded = false;
+
+  function wireChartTooltips(container) {
+    container.querySelectorAll(".chart-wrap").forEach((wrap) => {
+      const tip = wrap.querySelector(".chart-tooltip");
+      const unit = wrap.dataset.unit;
+      let activeDot = null;
+      wrap.querySelectorAll(".chart-dot").forEach((dot) => {
+        dot.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (activeDot === dot) {
+            tip.classList.remove("show");
+            activeDot = null;
+            return;
+          }
+          activeDot = dot;
+          const val = parseFloat(dot.dataset.value || "0");
+          const valueLabel = unit === "currency" ? fmt(val) : `${val} views`;
+          tip.innerHTML = `<b>${esc(prettyChartDate(dot.dataset.date))}</b><br>${valueLabel}`;
+          const wrapRect = wrap.getBoundingClientRect();
+          const dotRect = dot.getBoundingClientRect();
+          tip.style.left = (dotRect.left - wrapRect.left + dotRect.width / 2) + "px";
+          tip.style.top = (dotRect.top - wrapRect.top) + "px";
+          tip.classList.add("show");
+        });
+      });
+    });
+    if (!_chartTooltipDocListenerAdded) {
+      _chartTooltipDocListenerAdded = true;
+      document.addEventListener("click", () => {
+        document.querySelectorAll(".chart-tooltip.show").forEach((t) => t.classList.remove("show"));
+      });
+    }
   }
 
   function adminLinksListHTML(links) {
@@ -1445,14 +1534,14 @@
 
       <div class="chart-card">
         <h3>${icon("trendingUp", 15)} Earning Trend</h3>
-        <div class="chart-sub">গত ${a.window_days} দিনের দৈনিক আয় (৳)</div>
-        ${areaTrendChartSVG(a.income_trend, "amount", "var(--emerald)", "gradOverviewIncome")}
+        <div class="chart-sub">গত ${a.window_days} দিনের দৈনিক আয় (৳) · পয়েন্টে ট্যাপ করে দেখুন</div>
+        ${areaTrendChartSVG(a.income_trend, "amount", "var(--emerald)", "gradOverviewIncome", "currency")}
       </div>
 
       <div class="chart-card">
         <h3>${icon("eye", 15)} Views Trend</h3>
-        <div class="chart-sub">গত ${a.window_days} দিনের দৈনিক ভিউ</div>
-        ${areaTrendChartSVG(a.views_trend, "views", "var(--brass)", "gradOverviewViews")}
+        <div class="chart-sub">গত ${a.window_days} দিনের দৈনিক ভিউ · পয়েন্টে ট্যাপ করে দেখুন</div>
+        ${areaTrendChartSVG(a.views_trend, "views", "var(--brass)", "gradOverviewViews", "count")}
       </div>
 
       <div class="section-title" style="margin-top:4px;">${icon("link", 14)} Top Links</div>
@@ -1483,6 +1572,7 @@
     `;
     el.querySelector("#qaNewLink").addEventListener("click", () => { state.tab = "quicklink"; renderTab(); });
     el.querySelector("#qaWithdraw").addEventListener("click", () => { state.tab = "profile"; renderTab(); });
+    wireChartTooltips(el);
   }
 
   // ---- Traffic Source ---------------------------------------------------
