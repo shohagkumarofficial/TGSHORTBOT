@@ -1256,6 +1256,99 @@ class Storage:
             ],
         }
 
+    async def own_analytics_summary(self, telegram_id: int, days: int = 14) -> dict:
+        """Personal earnings + views dashboard for one Admin/Sub Admin's
+        own home screen (webapp/panel.html's Overview tab) — the
+        self-service, single-Admin counterpart to platform_income_summary
+        above. Everything here is scoped to `telegram_id`'s own links via
+        list_views_by_owner, so two different Admins calling this never
+        see each other's numbers, unlike the Owner-only, platform-wide
+        methods.
+
+        Deliberately excludes anything about the Anti-Abuse System's
+        daily cap (no daily_capped_views count, no missed-earnings
+        breakdown) — a capped view is silently dropped from both trends
+        below (0 income, not counted as a "genuine" view), mirroring the
+        same visibility boundary GET /api/links already enforces for an
+        Admin's own link list: an Admin never sees that a view was
+        capped, it simply isn't there. That boundary is deliberately kept
+        Owner-only (admin_stats / platform_stats) — this method must
+        never grow a daily_capped-shaped field even if a future caller
+        asks for one.
+
+        `top_links` ranks by view count (not income) since that's the
+        more actionable number for someone deciding which of their
+        traffic sources to lean into — each row's income is shown
+        alongside it, not used to sort.
+        """
+        views = await self.list_views_by_owner(telegram_id)
+        genuine_views = [v for v in views if not v.daily_capped]
+
+        today = datetime.now(timezone.utc).date()
+        earliest = today - timedelta(days=days - 1)
+        income_buckets: Dict[object, float] = {earliest + timedelta(days=i): 0.0 for i in range(days)}
+        view_buckets: Dict[object, int] = {earliest + timedelta(days=i): 0 for i in range(days)}
+
+        lifetime_income = 0.0
+        per_link: Dict[str, dict] = {}
+        for v in genuine_views:
+            link = self.links.get(v.short_code)
+            try:
+                created = datetime.fromisoformat(v.created_at)
+            except ValueError:
+                created = None
+            if created is not None and created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            bucket_date = created.astimezone(timezone.utc).date() if created is not None else None
+            if bucket_date is not None and bucket_date in view_buckets:
+                view_buckets[bucket_date] += 1
+
+            row = per_link.setdefault(
+                v.short_code,
+                {
+                    "short_code": v.short_code,
+                    "destination_url": link.destination_url if link else None,
+                    "views": 0,
+                    "income": 0.0,
+                },
+            )
+            row["views"] += 1
+
+            if v.counted_status == CountedStatus.CONFIRMED:
+                amount = v.credited_amount or 0.0
+                lifetime_income += amount
+                row["income"] = round(row["income"] + amount, 6)
+                if bucket_date is not None and bucket_date in income_buckets:
+                    income_buckets[bucket_date] += amount
+
+        today_income = income_buckets.get(today, 0.0)
+        last_7 = today - timedelta(days=6)
+        income_7d = sum(v for d, v in income_buckets.items() if d >= last_7)
+        views_7d = sum(v for d, v in view_buckets.items() if d >= last_7)
+
+        top_links = sorted(per_link.values(), key=lambda r: r["views"], reverse=True)[:5]
+        for r in top_links:
+            r["income"] = round(r["income"], 4)
+
+        links = await self.list_links_by_owner(telegram_id)
+
+        return {
+            "lifetime_income": round(lifetime_income, 4),
+            "today_income": round(today_income, 4),
+            "income_last_7_days": round(income_7d, 4),
+            "views_last_7_days": views_7d,
+            "total_links": len(links),
+            "total_views": len(genuine_views),
+            "window_days": days,
+            "income_trend": [
+                {"date": d.isoformat(), "amount": round(income_buckets[d], 4)} for d in sorted(income_buckets)
+            ],
+            "views_trend": [
+                {"date": d.isoformat(), "views": view_buckets[d]} for d in sorted(view_buckets)
+            ],
+            "top_links": top_links,
+        }
+
     async def platform_stats(self) -> dict:
         """Platform-wide numbers for the Owner's Stats tab.
 
@@ -1590,44 +1683,6 @@ class Storage:
                 return False
             key.revoked_at = now_iso()
             await self._save_locked()
-            return True
-
-    async def delete_api_key(self, key_id: str, telegram_id: int) -> bool:
-        """Permanently removes an API key record — unlike `revoke_api_key`
-        (which only sets `revoked_at` and leaves the row in place, so a
-        revoked key sits forever in `GET /api/apikeys`/the panel's "API
-        Access" list with a "Revoked on <date>" label and no way to make
-        it disappear), this actually deletes it: from `self.api_keys`,
-        from `self._api_key_hash_index` (so a stale in-memory hash entry
-        can never resolve to a since-deleted key_id), and from the
-        Supabase `api_keys` row.
-
-        Works on an active (not-yet-revoked) key too, not just an
-        already-revoked one — deleting the record is itself enough to
-        cut off authentication (`get_admin_by_api_key` can't resolve a
-        hash to a key_id that's no longer in the index), so callers
-        don't need to revoke first. Same "only the Admin who generated
-        it" ownership rule as `revoke_api_key`.
-        """
-        async with self._lock:
-            key = self.api_keys.get(key_id)
-            if not key or key.owner_telegram_id != telegram_id:
-                return False
-            del self.api_keys[key_id]
-            self._api_key_hash_index.pop(key.key_hash, None)
-            try:
-                await self.client.table("api_keys").delete().eq("key_id", key_id).execute()
-            except Exception as exc:
-                # Mirrors _select_or_empty's self-heal: if the `api_keys`
-                # table's migration hasn't been run yet, there's nothing
-                # in Supabase to delete anyway — the in-memory removal
-                # above already achieves the user-visible effect.
-                if not ("PGRST205" in str(exc) or "Could not find the table" in str(exc)):
-                    raise
-                logger.warning(
-                    "Supabase table 'api_keys' doesn't exist yet (pending migration) — "
-                    "nothing to delete there; the in-memory key was still removed."
-                )
             return True
 
     async def get_admin_by_api_key(self, raw_key: str) -> Optional[Admin]:

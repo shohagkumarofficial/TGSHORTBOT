@@ -45,12 +45,7 @@ Manage existing keys from the same panel session:
 - `GET /api/apikeys` — list your keys (name, prefix, created/last-used
   dates, revoked status). Never returns the raw secret again.
 - `DELETE /api/apikeys/{key_id}` — revoke a key immediately; anything using
-  it starts getting `401 invalid or revoked API key` right away. The
-  record itself is kept (so the panel can still show "Revoked on ...").
-- `DELETE /api/apikeys/{key_id}/permanent` — permanently deletes the key
-  record instead of just revoking it. Works on an active key too (no need
-  to revoke first — deleting the record already cuts off authentication).
-  Once deleted, it no longer appears in `GET /api/apikeys` at all.
+  it starts getting `401 invalid or revoked API key` right away.
 
 ## 2. Authenticating API requests
 

@@ -433,10 +433,7 @@ Quick summary:
   **once**, in that response, and never again — only its SHA-256 hash is
   stored (`storage.create_api_key`). `GET /api/apikeys` lists your own keys
   (name, prefix, last used) without ever re-exposing the secret;
-  `DELETE /api/apikeys/{key_id}` revokes one (kept in the list, marked
-  "Revoked"); `DELETE /api/apikeys/{key_id}/permanent` removes the record
-  entirely so it stops showing up in the list at all — works on an active
-  key too, revoking first isn't required. Sub Admins and Viewers can't
+  `DELETE /api/apikeys/{key_id}` revokes one. Sub Admins and Viewers can't
   generate keys.
 - **Using a key**: send it as `X-API-Key: <key>` (or
   `Authorization: Bearer <key>`) on any `/api/v1/*` request. A key

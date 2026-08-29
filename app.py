@@ -473,6 +473,20 @@ async def me(admin: Admin = Depends(require_admin)):
     return admin.model_dump()
 
 
+@app.get("/api/my-analytics")
+async def my_analytics(admin: Admin = Depends(require_admin)):
+    """Personal earnings + views dashboard payload for the Overview tab's
+    Admin/Sub Admin home screen (webapp/panel.html) — scoped to the
+    calling Admin's own links via storage.own_analytics_summary. The
+    Owner gets a separate, platform-wide dashboard (Stats tab, backed by
+    platform_stats/platform_income_summary) instead of this endpoint;
+    kept apart deliberately since "my links" and platform-aggregate
+    numbers are different concepts, not just different scopes of the
+    same one.
+    """
+    return await storage.own_analytics_summary(admin.telegram_id)
+
+
 @app.get("/api/traffic-sources")
 async def list_traffic_sources(admin: Admin = Depends(require_admin)):
     return {"traffic_sources": [s.model_dump() for s in admin.traffic_sources]}
@@ -1229,20 +1243,6 @@ async def revoke_api_key(key_id: str, admin: Admin = Depends(require_owner_or_ad
     ok = await storage.revoke_api_key(key_id, admin.telegram_id)
     if not ok:
         raise HTTPException(status_code=404, detail="api key not found (or already revoked)")
-    return {"ok": True}
-
-
-@app.delete("/api/apikeys/{key_id}/permanent")
-async def delete_api_key_permanent(key_id: str, admin: Admin = Depends(require_owner_or_admin)):
-    """Permanently deletes an API key record, unlike the revoke endpoint
-    above which keeps the row (marked `revoked_at`) so it stays visible
-    forever in the panel's key list. Works on an active key too — see
-    storage.delete_api_key's docstring for why revoking first isn't
-    required.
-    """
-    ok = await storage.delete_api_key(key_id, admin.telegram_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="api key not found")
     return {"ok": True}
 
 
