@@ -125,6 +125,31 @@ untouched.
 curl -X DELETE https://your-domain/api/v1/links/aB3xQ9z -H "X-API-Key: tgs_..."
 ```
 
+### `PUT /api/v1/links/{short_code}`
+Edit an existing link's `title` and/or `destination_url` — fixes a typo
+without deleting and recreating it under a new short_code (which would
+lose its accumulated view history from your own link list). Both fields
+are optional and independent; send just the one you want to change.
+Owner keys can edit anyone's link, same as delete. `ad_count` and
+`short_code` itself are never editable here.
+
+```bash
+curl -X PUT https://your-domain/api/v1/links/aB3xQ9z \
+  -H "X-API-Key: tgs_..." \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Renamed campaign", "destination_url": "https://example.com/new-page"}'
+```
+
+```json
+{
+  "short_code": "aB3xQ9z",
+  "short_url": "https://t.me/YourBot?start=aB3xQ9z",
+  "title": "Renamed campaign",
+  "destination_url": "https://example.com/new-page",
+  "ad_count": 3
+}
+```
+
 ### `GET /api/v1/cpm`
 Current CPM settings. Sub Admin/Admin keys get the countdown-to-payout
 info but not a pre-calculated rate in Scheduled mode (same restriction as

@@ -600,6 +600,47 @@ async def delete_link(short_code: str, admin: Admin = Depends(require_admin)):
     return {"ok": True}
 
 
+@app.put("/api/links/{short_code}")
+async def edit_link(short_code: str, payload: dict, admin: Admin = Depends(require_admin)):
+    """Lets an Admin fix a typo in their own link's title or destination
+    URL after the fact, instead of deleting (losing its "My Links"
+    history) and recreating it under a new short_code. Owner accounts
+    can edit anyone's link, mirroring DELETE /api/links/{short_code}'s
+    own is_owner bypass. Both fields are optional and independent — a
+    request can send just one of them.
+    """
+    title_provided = "title" in payload
+    title = None
+    if title_provided:
+        title = (payload.get("title") or "").strip() or None
+        if title and len(title) > 100:
+            raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
+
+    destination_url = None
+    if "destination_url" in payload:
+        destination_url = (payload.get("destination_url") or "").strip()
+        if not destination_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
+
+    link = await storage.update_link(
+        short_code,
+        admin.telegram_id,
+        admin.role == Role.OWNER,
+        title=title,
+        title_provided=title_provided,
+        destination_url=destination_url,
+    )
+    if not link:
+        raise HTTPException(status_code=404, detail="link not found")
+    return {
+        "short_code": link.short_code,
+        "short_url": _short_url_for(link.short_code),
+        "title": link.title,
+        "destination_url": link.destination_url,
+        "ad_count": link.ad_count,
+    }
+
+
 @app.get("/api/links")
 async def my_links(admin: Admin = Depends(require_admin)):
     """Per-link stats for the requesting Admin's own "My Links" list.
@@ -1375,6 +1416,46 @@ async def v1_delete_link(short_code: str, admin: Admin = Depends(require_api_key
     if not ok:
         raise HTTPException(status_code=404, detail="link not found")
     return {"ok": True}
+
+
+@app.put("/api/v1/links/{short_code}")
+async def v1_edit_link(short_code: str, payload: dict, admin: Admin = Depends(require_api_key)):
+    """Mirrors PUT /api/links/{short_code} (the Mini App's own edit
+    endpoint, see its docstring) for the public REST API — lets an
+    Admin fix a link's title or destination URL after creation via
+    their own site/server instead of only from the panel. Both fields
+    are optional and independent, same as the Mini App version.
+    """
+    title_provided = "title" in payload
+    title = None
+    if title_provided:
+        title = (payload.get("title") or "").strip() or None
+        if title and len(title) > 100:
+            raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
+
+    destination_url = None
+    if "destination_url" in payload:
+        destination_url = (payload.get("destination_url") or "").strip()
+        if not destination_url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
+
+    link = await storage.update_link(
+        short_code,
+        admin.telegram_id,
+        admin.role == Role.OWNER,
+        title=title,
+        title_provided=title_provided,
+        destination_url=destination_url,
+    )
+    if not link:
+        raise HTTPException(status_code=404, detail="link not found")
+    return {
+        "short_code": link.short_code,
+        "short_url": _short_url_for(link.short_code),
+        "title": link.title,
+        "destination_url": link.destination_url,
+        "ad_count": link.ad_count,
+    }
 
 
 @app.get("/api/v1/cpm")

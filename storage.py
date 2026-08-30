@@ -634,6 +634,53 @@ class Storage:
             del self.links[short_code]
             return True
 
+    async def update_link(
+        self,
+        short_code: str,
+        requester_telegram_id: int,
+        is_owner: bool,
+        title: Optional[str] = None,
+        title_provided: bool = False,
+        destination_url: Optional[str] = None,
+    ) -> Optional[Link]:
+        """Edits an existing link's `title` and/or `destination_url` in
+        place — added so an Admin can fix a typo or relabel a link
+        without deleting and recreating it, which would otherwise be the
+        only option (and would drop it off "My Links" under a brand-new
+        short_code, losing the view history readers associate with the
+        old one, even though the underlying View rows and balance are
+        untouched either way — see delete_link's own docstring on why
+        views always survive a link's removal).
+
+        Ownership rule mirrors delete_link exactly: an Admin may only
+        edit their own link; the Owner (is_owner=True) may edit anyone's.
+        `ad_count`, `short_code`, `owner_telegram_id`, and `expires_at`
+        are deliberately not editable here — those are either Owner-only
+        controls elsewhere (ad_count) or identity/lifecycle fields that
+        should never silently change after creation.
+
+        `title_provided` distinguishes "the request didn't mention title
+        at all, leave it alone" from "the request explicitly wants it
+        cleared to blank" (`title=None, title_provided=True`) — plain
+        `title=None` alone can't carry that distinction since None is
+        also this field's own empty value. `destination_url` doesn't
+        need the same two-state trick since a link's destination is
+        never usefully blank, so ordinary `None` there just means
+        "leave unchanged".
+        """
+        async with self._lock:
+            link = self.links.get(short_code)
+            if not link:
+                return None
+            if not is_owner and link.owner_telegram_id != requester_telegram_id:
+                return None
+            if title_provided:
+                link.title = title
+            if destination_url is not None:
+                link.destination_url = destination_url
+            await self._save_locked()
+            return link
+
     async def set_link_ad_count(self, short_code: str, ad_count: int) -> Optional[Link]:
         """Owner-only: how many sequential ads this one link requires
         before it unlocks. Nothing about an Admin's own access changes —
