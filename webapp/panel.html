@@ -863,6 +863,82 @@
     }
   }
 
+  // Two-line variant of the Views Trend chart — Owner-only, used
+  // wherever the views_trend payload carries the Anti-Abuse System's
+  // `capped_views` alongside `views` (own_analytics_summary's
+  // include_daily_capped=True, and platform_analytics_summary, which
+  // always includes it since that endpoint is Owner-only to begin
+  // with). Draws Views as a solid brass line with its usual gradient
+  // fill, and Daily-capped views as a dashed red line with no fill
+  // (so the two don't visually compete for the same area) — plus a
+  // small color-coded legend underneath, since two overlapping lines
+  // need one to disambiguate at a glance. Never called from the
+  // Admin/Sub Admin's own Overview (areaTrendChartSVG stays in use
+  // there), because their own GET /api/my-analytics response never
+  // contains `capped_views` in the first place — the Owner-only line
+  // doesn't exist to strip out, it was simply never sent.
+  //
+  // Each day gets ONE combined tap target (anchored at the Views
+  // point) rather than two separate ones per line, so tapping never
+  // requires the Owner to guess which of two close-together dots
+  // belongs to which series — the tooltip shows both numbers together.
+  function dualLineTrendChartSVG(trend, chartId) {
+    if (!trend || !trend.length) return `<div class="empty">No data yet.</div>`;
+    const W = 320, H = 120, padL = 4, padR = 4, padB = 18, padT = 10;
+    const plotW = W - padL - padR;
+    const plotH = H - padT - padB;
+    const n = trend.length;
+    const maxVal = Math.max(0.01, ...trend.map((d) => Math.max(d.views || 0, d.capped_views || 0)));
+    const stepX = n > 1 ? plotW / (n - 1) : 0;
+
+    const yFor = (val) => padT + (plotH - ((val || 0) / maxVal) * plotH);
+    const pathFor = (pts) => pts.map((p, i) => (i === 0 ? "M" : "L") + p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+
+    const viewsPoints = trend.map((d, i) => [padL + i * stepX, yFor(d.views || 0)]);
+    const cappedPoints = trend.map((d, i) => [padL + i * stepX, yFor(d.capped_views || 0)]);
+
+    const viewsLine = pathFor(viewsPoints);
+    const floorY = (padT + plotH).toFixed(1);
+    const viewsArea = `${viewsLine} L${viewsPoints[viewsPoints.length - 1][0].toFixed(1)},${floorY} L${viewsPoints[0][0].toFixed(1)},${floorY} Z`;
+    const cappedLine = pathFor(cappedPoints);
+
+    const labels = trend.map((d, i) => {
+      const showLabel = i === 0 || i === n - 1 || i === Math.floor(n / 2);
+      if (!showLabel) return "";
+      const shortLabel = (d.date || "").slice(5).replace("-", "/");
+      return `<text x="${(padL + i * stepX).toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>`;
+    }).join("");
+
+    const dots = trend.map((d, i) => {
+      const [vx, vy] = viewsPoints[i];
+      const [, cy] = cappedPoints[i];
+      const pointLabel = `${d.views || 0} views · ${d.capped_views || 0} capped`;
+      return `<circle cx="${vx.toFixed(1)}" cy="${vy.toFixed(1)}" r="2.6" fill="var(--brass)"></circle>`
+        + `<circle cx="${vx.toFixed(1)}" cy="${cy.toFixed(1)}" r="2.2" fill="var(--red)"></circle>`
+        + `<circle class="chart-dot" data-date="${esc(d.date)}" data-label="${esc(pointLabel)}" `
+        + `cx="${vx.toFixed(1)}" cy="${vy.toFixed(1)}" r="10" fill="transparent" style="cursor:pointer;"></circle>`;
+    }).join("");
+
+    return `<div class="chart-wrap" id="${chartId}_wrap">
+        <div class="chart-tooltip" id="${chartId}_tip"></div>
+        <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
+          <defs><linearGradient id="${chartId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(--brass)" stop-opacity="0.30"></stop>
+            <stop offset="100%" stop-color="var(--brass)" stop-opacity="0"></stop>
+          </linearGradient></defs>
+          <path d="${viewsArea}" fill="url(#${chartId})" stroke="none"></path>
+          <path d="${viewsLine}" fill="none" stroke="var(--brass)" stroke-width="2"></path>
+          <path d="${cappedLine}" fill="none" stroke="var(--red)" stroke-width="2" stroke-dasharray="4 3"></path>
+          ${dots}
+          ${labels}
+        </svg>
+        <div style="display:flex; gap:14px; margin-top:8px; font-size:11px; color:var(--text-dim);">
+          <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:var(--brass); margin-right:5px; vertical-align:-1px;"></span>Views</span>
+          <span><span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:var(--red); margin-right:5px; vertical-align:-1px;"></span>Daily-capped</span>
+        </div>
+      </div>`;
+  }
+
   function adminLinksListHTML(links) {
     if (!links || !links.length) {
       return `<div class="card"><div class="empty">This Admin hasn't created any links yet.</div></div>`;
@@ -1574,7 +1650,7 @@
         <div class="chart-card">
           <h3>${icon("eye", 15)} Views Trend</h3>
           <div class="chart-sub">${esc(pa.start_date)} – ${esc(pa.end_date)} · পয়েন্টে ট্যাপ করে দেখুন</div>
-          ${areaTrendChartSVG(pa.views_trend, "views", "var(--brass)", "gradOwnerViews", "count")}
+          ${dualLineTrendChartSVG(pa.views_trend, "gradOwnerViews")}
         </div>
 
         <div class="section-title" style="margin-top:4px;">${icon("users", 14)} Top Performers</div>
@@ -2890,7 +2966,7 @@
       <div class="chart-card">
         <h3>${icon("eye", 15)} Views Trend</h3>
         <div class="chart-sub">গত ${analyticsResp.window_days} দিনের দৈনিক ভিউ · পয়েন্টে ট্যাপ করে দেখুন</div>
-        ${areaTrendChartSVG(analyticsResp.views_trend, "views", "var(--brass)", "gradDetailViews" + telegramId, "count")}
+        ${dualLineTrendChartSVG(analyticsResp.views_trend, "gradDetailViews" + telegramId)}
       </div>
 
       <div class="section-title" style="margin-top:4px;">${icon("link", 14)} Top Links</div>
