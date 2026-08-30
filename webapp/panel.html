@@ -1360,6 +1360,16 @@
 
   // ---- generic centered confirm modal ----------------------------------
 
+  // Set by confirm-style helpers (see confirmDeleteLink below) right
+  // before opening a modal that represents a yes/no decision — lets
+  // closeModal() resolve that decision as "cancelled" when the person
+  // dismisses the modal by tapping the backdrop instead of an explicit
+  // button, so the calling code's `await` never hangs forever. Left
+  // null by every other modal usage in this file (balance edit, admin
+  // request rejection, API key display, role permissions), so this is a
+  // pure no-op for all of them.
+  let _pendingModalResolve = null;
+
   function openModal(html) {
     document.getElementById("modalBox").innerHTML = html;
     document.getElementById("modalBackdrop").classList.add("open");
@@ -1367,6 +1377,11 @@
   function closeModal() {
     document.getElementById("modalBackdrop").classList.remove("open");
     document.getElementById("modalBox").innerHTML = "";
+    if (_pendingModalResolve) {
+      const resolve = _pendingModalResolve;
+      _pendingModalResolve = null;
+      resolve(false);
+    }
   }
   document.getElementById("modalBackdrop").addEventListener("click", (e) => {
     if (e.target.id === "modalBackdrop") closeModal();
@@ -1778,13 +1793,43 @@
     renderLinksList();
   }
 
-  function confirmDestructive(message) {
+  // Themed replacement for the plain Telegram/browser confirm() popup —
+  // shows the link's own title (or short_code, if it has no title) so
+  // the person can double-check exactly which link they're about to
+  // remove, rather than a generic "are you sure?" with no context.
+  // Resolves true only on an explicit "Delete" tap; Cancel or dismissing
+  // the modal (tapping the backdrop, handled by closeModal's
+  // _pendingModalResolve hook) both resolve false.
+  function confirmDeleteLink(shortCode, title) {
     return new Promise((resolve) => {
-      if (tg && typeof tg.showConfirm === "function") {
-        tg.showConfirm(message, (ok) => resolve(!!ok));
-      } else {
-        resolve(window.confirm(message));
-      }
+      _pendingModalResolve = resolve;
+      openModal(`
+        <div style="text-align:center;">
+          <div style="width:52px; height:52px; border-radius:50%; background:var(--red-soft); color:var(--red);
+                      display:flex; align-items:center; justify-content:center; margin:0 auto 14px;">
+            ${icon("trash", 22)}
+          </div>
+          <h3 style="margin-bottom:8px;">Delete this link?</h3>
+          <div class="meta" style="color:var(--text); font-weight:600; margin-bottom:2px;">${esc(title || ("/" + shortCode))}</div>
+          ${title ? `<div class="meta" style="color:var(--text-faint); margin-bottom:12px;">/${esc(shortCode)}</div>` : `<div style="margin-bottom:12px;"></div>`}
+          <div class="meta">Anyone who already has this link will stop being able to use it.</div>
+          <div class="meta" style="color:var(--red); margin-top:2px;">This can't be undone.</div>
+        </div>
+        <div class="btn-row" style="margin-top:16px;">
+          <button class="btn btn-outline btn-block" id="linkDeleteCancel">Cancel</button>
+          <button class="btn btn-danger btn-block" id="linkDeleteConfirm">${icon("trash", 14)} Delete</button>
+        </div>
+      `);
+      document.getElementById("linkDeleteCancel").addEventListener("click", () => {
+        _pendingModalResolve = null;
+        closeModal();
+        resolve(false);
+      });
+      document.getElementById("linkDeleteConfirm").addEventListener("click", () => {
+        _pendingModalResolve = null;
+        closeModal();
+        resolve(true);
+      });
     });
   }
 
@@ -1802,7 +1847,7 @@
         <code class="short-url">${esc(l.short_url)}</code>
         <div class="btn-row">
           <button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">${icon("clipboard", 14)} Copy</button>
-          <button class="btn btn-outline btn-sm linkDelBtn" data-code="${esc(l.short_code)}">${icon("trash", 14)} Delete</button>
+          <button class="btn btn-outline btn-sm linkDelBtn" data-code="${esc(l.short_code)}" data-title="${esc(l.title || "")}">${icon("trash", 14)} Delete</button>
         </div>
         <div class="meta">→ ${esc(l.destination_url)}</div>
         <div class="meta">${l.view_count} views · ${l.confirmed_views} confirmed · ${l.pending_views} pending</div>
@@ -1813,9 +1858,7 @@
     listEl.querySelectorAll(".linkDelBtn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const code = btn.dataset.code;
-        const sure = await confirmDestructive(
-          `Delete /${code}? Anyone who already has this link will stop being able to use it. This can't be undone.`
-        );
+        const sure = await confirmDeleteLink(code, btn.dataset.title);
         if (!sure) return;
         btn.disabled = true;
         try {
