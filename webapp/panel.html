@@ -844,7 +844,8 @@
     // reason, not a per-link value.
     return links.map((l) => `
       <div class="card" data-short-code="${esc(l.short_code)}">
-        <div class="meta" style="color:var(--text); font-weight:600;">/${esc(l.short_code)}</div>
+        ${l.title ? `<div class="meta" style="color:var(--text); font-weight:600;">${esc(l.title)}</div>` : ""}
+        <div class="meta" style="color:${l.title ? "var(--text-faint)" : "var(--text)"}; ${l.title ? "" : "font-weight:600;"}">/${esc(l.short_code)}</div>
         <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(l.destination_url)}</div>
         <div class="meta">${l.view_count} views${l.daily_capped_views ? ` · ${l.daily_capped_views} missed` : ""}</div>
         <div class="meta">${icon("play", 12)} ${l.effective_ad_count} ad${l.effective_ad_count === 1 ? "" : "s"} to unlock</div>
@@ -1468,6 +1469,7 @@
             <option value="both" ${pa.role_filter === "both" ? "selected" : ""}>Admin + Sub Admin (all)</option>
             <option value="admin" ${pa.role_filter === "admin" ? "selected" : ""}>Admin only</option>
             <option value="sub_admin" ${pa.role_filter === "sub_admin" ? "selected" : ""}>Sub Admin only</option>
+            <option value="owner" ${pa.role_filter === "owner" ? "selected" : ""}>Owner only</option>
           </select>
           <div class="btn-row" style="gap:8px;">
             <div style="flex:1;">
@@ -1644,8 +1646,8 @@
           ? a.top_links.map((l) => `
               <div class="top-link-row">
                 <div>
-                  <div class="tl-code">/${esc(l.short_code)}</div>
-                  <div class="tl-url">${esc(l.destination_url || "")}</div>
+                  <div class="tl-code">${l.title ? esc(l.title) : "/" + esc(l.short_code)}</div>
+                  <div class="tl-url">${l.title ? "/" + esc(l.short_code) + " · " : ""}${esc(l.destination_url || "")}</div>
                 </div>
                 <div class="tl-stats">${l.views} views<br><b>${fmt(l.income)}</b></div>
               </div>
@@ -1699,6 +1701,8 @@
     el.innerHTML = `
       <div class="card">
         <h3>Create a short link</h3>
+        <label for="newTitle">Title <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional)</span></label>
+        <input type="text" id="newTitle" maxlength="100" placeholder="e.g. August giveaway post" />
         <label for="newUrl">Destination URL</label>
         <input type="url" id="newUrl" placeholder="https://example.com/your-page" />
         <div class="btn-row"><button class="btn btn-primary btn-block" id="createLinkBtn">Create link</button></div>
@@ -1710,19 +1714,23 @@
       </p>
     `;
     el.querySelector("#createLinkBtn").addEventListener("click", async () => {
+      const titleInput = el.querySelector("#newTitle");
+      const title = titleInput.value.trim();
       const input = el.querySelector("#newUrl");
       const url = input.value.trim();
       if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
       const btn = el.querySelector("#createLinkBtn");
       btn.disabled = true; btn.textContent = "Creating…";
       try {
-        const res = await api("/api/links", { method: "POST", body: JSON.stringify({ destination_url: url }) });
+        const res = await api("/api/links", { method: "POST", body: JSON.stringify({ destination_url: url, title: title || null }) });
         input.value = "";
+        titleInput.value = "";
         toast("Short link created", "ok");
         const resultEl = el.querySelector("#createResult");
         resultEl.innerHTML = `
           <div class="card" style="border-color: rgba(63,191,127,.35);">
             <h3>${icon("checkCircle", 15)} Your short link is ready</h3>
+            ${res.title ? `<div class="meta" style="color:var(--text); font-weight:600; margin-bottom:2px;">${esc(res.title)}</div>` : ""}
             <code class="short-url">${esc(res.short_url)}</code>
             <div class="btn-row"><button class="btn btn-outline btn-block copyBtn" data-url="${esc(res.short_url)}">${icon("clipboard", 14)} Copy link</button></div>
           </div>
@@ -1789,7 +1797,8 @@
     }
     listEl.innerHTML = state.links.map((l) => `
       <div class="card">
-        <h3>/${esc(l.short_code)}</h3>
+        <h3>${l.title ? esc(l.title) : "/" + esc(l.short_code)}</h3>
+        ${l.title ? `<div class="meta" style="color:var(--text-faint); margin-top:-6px;">/${esc(l.short_code)}</div>` : ""}
         <code class="short-url">${esc(l.short_url)}</code>
         <div class="btn-row">
           <button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">${icon("clipboard", 14)} Copy</button>
@@ -2677,8 +2686,8 @@
           ? analyticsResp.top_links.map((l) => `
               <div class="top-link-row">
                 <div>
-                  <div class="tl-code">/${esc(l.short_code)}</div>
-                  <div class="tl-url">${esc(l.destination_url || "")}</div>
+                  <div class="tl-code">${l.title ? esc(l.title) : "/" + esc(l.short_code)}</div>
+                  <div class="tl-url">${l.title ? "/" + esc(l.short_code) + " · " : ""}${esc(l.destination_url || "")}</div>
                 </div>
                 <div class="tl-stats">${l.views} views<br><b>${fmt(l.income)}</b></div>
               </div>
