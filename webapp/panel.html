@@ -667,7 +667,36 @@
   // scoped by whichever `missed_earnings_trend` / `missed_earnings_by_link`
   // payload is passed in (platform-wide vs one Admin's own links).
 
-  function missedTrendChartSVG(trend) {
+  // Human-friendly single-date label for the chart tap-tooltip — e.g.
+  // "15 Aug" from a "2026-08-15" trend-point date string. Falls back to
+  // the raw string if parsing ever fails, so a malformed date can't
+  // crash the tooltip. Declared before the chart functions below since
+  // they call it while building each point's data-date attribute isn't
+  // needed here directly, but wireChartTooltips (further down) uses it
+  // at tap-time — kept next to the chart functions since all of them
+  // exist to feed that one tap interaction.
+  function prettyChartDate(dateStr) {
+    try {
+      return new Date(dateStr + "T00:00:00Z").toLocaleDateString("en-GB", {
+        day: "numeric", month: "short", timeZone: "UTC",
+      });
+    } catch (e) {
+      return dateStr;
+    }
+  }
+
+  // Bar chart for the Anti-Abuse System's daily-capped-views trend (Owner
+  // Stats tab + per-Admin detail page). Every bar carries `data-date` and
+  // a pre-formatted `data-label` so wireChartTooltips() can show the
+  // day's exact figures on tap, without needing to know this chart's
+  // specific field names — see areaTrendChartSVG's docstring below for
+  // why that split (chart function formats, wiring function only
+  // displays) is worth keeping. `chartId` must be unique per call on the
+  // same page (it names the wrap/tooltip elements wireChartTooltips
+  // looks for) — callers with more than one of these on screen at once
+  // (e.g. renderStats' income vs withdrawn charts) must pass distinct
+  // ids.
+  function missedTrendChartSVG(trend, chartId) {
     if (!trend || !trend.length) return `<div class="empty">No view history yet.</div>`;
     const W = 320, H = 110, padL = 3, padR = 3, padB = 16, padT = 6;
     const plotW = W - padL - padR;
@@ -682,12 +711,17 @@
       const y = padT + (plotH - h);
       const shortLabel = (d.date || "").slice(5).replace("-", "/");
       const showLabel = i === 0 || i === n - 1 || i === Math.floor(n / 2);
-      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"
-          fill="${d.capped_views > 0 ? "var(--red)" : "var(--hairline)"}" opacity="${d.capped_views > 0 ? "0.88" : "0.6"}">
-          <title>${esc(shortLabel)} — ${d.capped_views} missed view(s), ~${fmt(d.estimated_missed_amount)}</title>
+      const pointLabel = `${d.capped_views} missed view${d.capped_views === 1 ? "" : "s"} (~${fmt(d.estimated_missed_amount)})`;
+      return `<rect class="chart-dot" data-date="${esc(d.date)}" data-label="${esc(pointLabel)}"
+          x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"
+          fill="${d.capped_views > 0 ? "var(--red)" : "var(--hairline)"}" opacity="${d.capped_views > 0 ? "0.88" : "0.6"}"
+          style="cursor:pointer;">
         </rect>${showLabel ? `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>` : ""}`;
     }).join("");
-    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
+    return `<div class="chart-wrap" id="${chartId}_wrap">
+        <div class="chart-tooltip" id="${chartId}_tip"></div>
+        <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>
+      </div>`;
   }
 
   // Generic amount-per-day bar chart — used for the platform income and
@@ -695,8 +729,9 @@
   // Adsgram's own dashboard). Same layout/sizing as missedTrendChartSVG
   // above, just keyed off `amount` (a currency value) instead of a
   // capped-view count, and always drawn in `color` rather than a
-  // conditional red/gray.
-  function amountTrendChartSVG(trend, color) {
+  // conditional red/gray. `chartId` — see missedTrendChartSVG's
+  // docstring on why it must be unique per call.
+  function amountTrendChartSVG(trend, color, chartId) {
     if (!trend || !trend.length) return `<div class="empty">No history yet.</div>`;
     const W = 320, H = 110, padL = 3, padR = 3, padB = 16, padT = 6;
     const plotW = W - padL - padR;
@@ -711,40 +746,30 @@
       const y = padT + (plotH - h);
       const shortLabel = (d.date || "").slice(5).replace("-", "/");
       const showLabel = i === 0 || i === n - 1 || i === Math.floor(n / 2);
-      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"
-          fill="${color}" opacity="${d.amount > 0 ? "0.88" : "0.35"}">
-          <title>${esc(shortLabel)} — ${fmt(d.amount)}</title>
+      return `<rect class="chart-dot" data-date="${esc(d.date)}" data-label="${esc(fmt(d.amount))}"
+          x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"
+          fill="${color}" opacity="${d.amount > 0 ? "0.88" : "0.35"}" style="cursor:pointer;">
         </rect>${showLabel ? `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>` : ""}`;
     }).join("");
-    return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
-  }
-
-  // Human-friendly single-date label for the chart tap-tooltip — e.g.
-  // "15 Aug" from a "2026-08-15" trend-point date string. Falls back to
-  // the raw string if parsing ever fails, so a malformed date can't
-  // crash the tooltip.
-  function prettyChartDate(dateStr) {
-    try {
-      return new Date(dateStr + "T00:00:00Z").toLocaleDateString("en-GB", {
-        day: "numeric", month: "short", timeZone: "UTC",
-      });
-    } catch (e) {
-      return dateStr;
-    }
+    return `<div class="chart-wrap" id="${chartId}_wrap">
+        <div class="chart-tooltip" id="${chartId}_tip"></div>
+        <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>
+      </div>`;
   }
 
   // Gradient-filled line chart (Obsidian-dashboard style) for the
-  // Admin/Sub Admin analytics home — shared by the earning trend and
-  // views trend cards in renderOverview(). `valueKey` picks which field
+  // Admin/Sub Admin analytics home, the Owner's per-Admin detail page,
+  // and the Owner's platform-wide Overview. `valueKey` picks which field
   // off each trend point to plot ("amount" for income_trend, "views"
-  // for views_trend from GET /api/my-analytics), so one function serves
-  // both charts instead of two near-duplicates. `chartId` must be
-  // unique per call on the same page (it names both the <linearGradient>
-  // and the wrapping/tooltip elements wireChartTooltips() below looks
-  // for). `unit` is "currency" (formatted with fmt()) or "count" (shown
-  // as "<n> views") — it's stamped on the wrapper as data-unit so
-  // wireChartTooltips can format each chart's popup correctly without
-  // needing a second parallel list of formatters.
+  // for views_trend), so one function serves both charts instead of two
+  // near-duplicates. `chartId` — see missedTrendChartSVG's docstring on
+  // why it must be unique per call. `unit` ("currency" | "count")
+  // controls how each point's tap-tooltip value is worded — resolved
+  // once here into a plain-text `data-label` per point, the same
+  // contract every chart function in this file now follows, so
+  // wireChartTooltips (below) never needs to know any chart's specific
+  // field names or units; it just displays whatever label the chart
+  // that built the markup already decided on.
   //
   // Each data point renders as two overlapping circles: a small filled
   // dot for visibility, and a larger transparent one on top that
@@ -775,11 +800,12 @@
     const dots = points.map((p, i) => {
       const val = trend[i][valueKey] || 0;
       const cx = p[0].toFixed(1), cy = p[1].toFixed(1);
+      const pointLabel = unit === "currency" ? fmt(val) : `${val} views`;
       return `<circle cx="${cx}" cy="${cy}" r="2.6" fill="${color}"></circle>`
-        + `<circle class="chart-dot" data-date="${esc(trend[i].date)}" data-value="${val}" `
+        + `<circle class="chart-dot" data-date="${esc(trend[i].date)}" data-label="${esc(pointLabel)}" `
         + `cx="${cx}" cy="${cy}" r="9" fill="transparent" style="cursor:pointer;"></circle>`;
     }).join("");
-    return `<div class="chart-wrap" id="${chartId}_wrap" data-unit="${unit}">
+    return `<div class="chart-wrap" id="${chartId}_wrap">
         <div class="chart-tooltip" id="${chartId}_tip"></div>
         <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">
           <defs><linearGradient id="${chartId}" x1="0" y1="0" x2="0" y2="1">
@@ -795,16 +821,21 @@
   }
 
   // One page-wide "tap outside closes any open tooltip" listener,
-  // attached once regardless of how many times renderOverview() (and
-  // therefore wireChartTooltips) runs — the per-dot click listeners
-  // below are safe to re-attach on every render since the old .chart-dot
-  // elements are discarded along with the innerHTML they lived in.
+  // attached once regardless of how many times wireChartTooltips runs —
+  // the per-point click listeners below are safe to re-attach on every
+  // render since the old .chart-dot elements are discarded along with
+  // the innerHTML they lived in.
   let _chartTooltipDocListenerAdded = false;
 
+  // Wires tap-to-reveal tooltips for every chart in `container` — works
+  // uniformly across every chart function above (line-chart dots and
+  // bar-chart rects alike) since all of them already stamp their own
+  // `data-date`/`data-label` on each `.chart-dot` element; this function
+  // never needs to know what kind of chart it's looking at.
   function wireChartTooltips(container) {
     container.querySelectorAll(".chart-wrap").forEach((wrap) => {
       const tip = wrap.querySelector(".chart-tooltip");
-      const unit = wrap.dataset.unit;
+      if (!tip) return;
       let activeDot = null;
       wrap.querySelectorAll(".chart-dot").forEach((dot) => {
         dot.addEventListener("click", (e) => {
@@ -815,9 +846,7 @@
             return;
           }
           activeDot = dot;
-          const val = parseFloat(dot.dataset.value || "0");
-          const valueLabel = unit === "currency" ? fmt(val) : `${val} views`;
-          tip.innerHTML = `<b>${esc(prettyChartDate(dot.dataset.date))}</b><br>${valueLabel}`;
+          tip.innerHTML = `<b>${esc(prettyChartDate(dot.dataset.date))}</b><br>${esc(dot.dataset.label || "")}`;
           const wrapRect = wrap.getBoundingClientRect();
           const dotRect = dot.getBoundingClientRect();
           tip.style.left = (dotRect.left - wrapRect.left + dotRect.width / 2) + "px";
@@ -849,6 +878,9 @@
         <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(l.destination_url)}</div>
         <div class="meta">${l.view_count} views${l.daily_capped_views ? ` · ${l.daily_capped_views} missed` : ""}</div>
         <div class="meta">${icon("play", 12)} ${l.effective_ad_count} ad${l.effective_ad_count === 1 ? "" : "s"} to unlock</div>
+        <div class="btn-row">
+          <button class="btn btn-outline btn-sm linkEditBtn" data-code="${esc(l.short_code)}" data-title="${esc(l.title || "")}" data-url="${esc(l.destination_url)}">${icon("edit", 14)} Edit title/URL</button>
+        </div>
       </div>
     `).join("");
   }
@@ -1206,6 +1238,17 @@
 
     el.querySelectorAll(`.${prefix}DelBtn`).forEach((btn) => {
       btn.addEventListener("click", async () => {
+        const source = (state.me.traffic_sources || []).find((s) => s.id === btn.dataset.id);
+        const sure = await confirmAction({
+          iconName: "trash",
+          title: "Remove this traffic source?",
+          bodyHtml: source
+            ? `<div class="meta" style="color:var(--text); font-weight:600; margin-bottom:2px;">${esc(source.platform)}</div>
+               <div class="meta" style="color:var(--text-faint); margin-bottom:12px; word-break:break-all;">${esc(source.url)}</div>`
+            : `<div style="margin-bottom:12px;"></div>`,
+          confirmLabel: `${icon("trash", 14)} Remove`,
+        });
+        if (!sure) return;
         btn.disabled = true;
         try {
           await api(`/api/traffic-sources/${btn.dataset.id}`, { method: "DELETE" });
@@ -1574,7 +1617,7 @@
       el.querySelectorAll(".drawer-item").forEach((item) => {
         item.addEventListener("click", () => { state.tab = item.dataset.tab; renderTab(); });
       });
-      el.querySelector("#ownerAnalyticsApply").addEventListener("click", () => {
+      el.querySelector("#ownerAnalyticsApply").addEventListener("click", async () => {
         const roleSel = el.querySelector("#ownerRoleFilter").value;
         const startVal = el.querySelector("#ownerStartDate").value;
         const endVal = el.querySelector("#ownerEndDate").value;
@@ -1582,8 +1625,17 @@
           toast("From date must be before To date", "err");
           return;
         }
+        const applyBtn = el.querySelector("#ownerAnalyticsApply");
+        applyBtn.disabled = true;
+        applyBtn.textContent = "Loading…";
         state.platformAnalyticsFilter = { role_filter: roleSel, start_date: startVal || "", end_date: endVal || "" };
-        renderOverview(el);
+        try {
+          await renderOverview(el);
+        } catch (e) {
+          toast(e.message, "err");
+          applyBtn.disabled = false;
+          applyBtn.textContent = "Apply";
+        }
       });
       wireChartTooltips(el);
       return;
@@ -1793,43 +1845,102 @@
     renderLinksList();
   }
 
-  // Themed replacement for the plain Telegram/browser confirm() popup —
-  // shows the link's own title (or short_code, if it has no title) so
-  // the person can double-check exactly which link they're about to
-  // remove, rather than a generic "are you sure?" with no context.
-  // Resolves true only on an explicit "Delete" tap; Cancel or dismissing
-  // the modal (tapping the backdrop, handled by closeModal's
-  // _pendingModalResolve hook) both resolve false.
-  function confirmDeleteLink(shortCode, title) {
+  // Generic reusable yes/no confirmation modal — the themed replacement
+  // for every plain window.confirm()/tg.showConfirm() in this app.
+  // Returns a Promise<boolean>: true only on an explicit confirm-button
+  // tap; Cancel or dismissing the modal (tapping the backdrop, via
+  // closeModal's _pendingModalResolve hook) both resolve false. Every
+  // destructive or hard-to-undo action (link delete, Admin suspend,
+  // traffic source removal, ...) should go through this one function so
+  // they all look and behave the same way instead of each inventing
+  // their own modal markup.
+  function confirmAction(opts) {
     return new Promise((resolve) => {
       _pendingModalResolve = resolve;
+      const isDanger = opts.danger !== false;
+      const iconColor = isDanger ? "var(--red)" : "var(--brass)";
+      const iconBg = isDanger ? "var(--red-soft)" : "var(--brass-soft)";
+      const confirmBtnClass = isDanger ? "btn-danger" : "btn-primary";
       openModal(`
         <div style="text-align:center;">
-          <div style="width:52px; height:52px; border-radius:50%; background:var(--red-soft); color:var(--red);
+          <div style="width:52px; height:52px; border-radius:50%; background:${iconBg}; color:${iconColor};
                       display:flex; align-items:center; justify-content:center; margin:0 auto 14px;">
-            ${icon("trash", 22)}
+            ${icon(opts.iconName || "alertTriangle", 22)}
           </div>
-          <h3 style="margin-bottom:8px;">Delete this link?</h3>
-          <div class="meta" style="color:var(--text); font-weight:600; margin-bottom:2px;">${esc(title || ("/" + shortCode))}</div>
-          ${title ? `<div class="meta" style="color:var(--text-faint); margin-bottom:12px;">/${esc(shortCode)}</div>` : `<div style="margin-bottom:12px;"></div>`}
-          <div class="meta">Anyone who already has this link will stop being able to use it.</div>
-          <div class="meta" style="color:var(--red); margin-top:2px;">This can't be undone.</div>
+          <h3 style="margin-bottom:8px;">${esc(opts.title)}</h3>
+          ${opts.bodyHtml || ""}
         </div>
         <div class="btn-row" style="margin-top:16px;">
-          <button class="btn btn-outline btn-block" id="linkDeleteCancel">Cancel</button>
-          <button class="btn btn-danger btn-block" id="linkDeleteConfirm">${icon("trash", 14)} Delete</button>
+          <button class="btn btn-outline btn-block" id="confirmActionCancel">${opts.cancelLabel || "Cancel"}</button>
+          <button class="btn ${confirmBtnClass} btn-block" id="confirmActionOk">${opts.confirmLabel || "Confirm"}</button>
         </div>
       `);
-      document.getElementById("linkDeleteCancel").addEventListener("click", () => {
+      document.getElementById("confirmActionCancel").addEventListener("click", () => {
         _pendingModalResolve = null;
         closeModal();
         resolve(false);
       });
-      document.getElementById("linkDeleteConfirm").addEventListener("click", () => {
+      document.getElementById("confirmActionOk").addEventListener("click", () => {
         _pendingModalResolve = null;
         closeModal();
         resolve(true);
       });
+    });
+  }
+
+  // Shows the link's own title (or short_code, if it has no title) so
+  // the person can double-check exactly which link they're about to
+  // remove, rather than a generic "are you sure?" with no context.
+  function confirmDeleteLink(shortCode, title) {
+    return confirmAction({
+      iconName: "trash",
+      title: "Delete this link?",
+      bodyHtml: `
+        <div class="meta" style="color:var(--text); font-weight:600; margin-bottom:2px;">${esc(title || ("/" + shortCode))}</div>
+        ${title ? `<div class="meta" style="color:var(--text-faint); margin-bottom:12px;">/${esc(shortCode)}</div>` : `<div style="margin-bottom:12px;"></div>`}
+        <div class="meta">Anyone who already has this link will stop being able to use it.</div>
+        <div class="meta" style="color:var(--red); margin-top:2px;">This can't be undone.</div>
+      `,
+      confirmLabel: `${icon("trash", 14)} Delete`,
+    });
+  }
+
+  // Lets an Admin (or, from the Owner's per-Admin detail page, the
+  // Owner) fix a link's title or destination URL after creation via
+  // PUT /api/links/{short_code}/storage.update_link — the alternative
+  // to deleting and recreating a link just to correct a typo, which
+  // would otherwise drop it off "My Links" under a brand-new short_code
+  // and lose the view history readers associate with the old one.
+  function openEditLinkModal(shortCode, currentTitle, currentUrl, afterSave) {
+    openModal(`
+      <h3>${icon("edit", 16)} Edit link</h3>
+      <div class="meta" style="margin-bottom:10px; color:var(--text-faint);">/${esc(shortCode)}</div>
+      <label>Title <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional)</span></label>
+      <input type="text" id="editLinkTitle" maxlength="100" value="${esc(currentTitle || "")}" placeholder="e.g. August giveaway post" />
+      <label>Destination URL</label>
+      <input type="url" id="editLinkUrl" value="${esc(currentUrl || "")}" />
+      <div class="btn-row"><button class="btn btn-primary btn-block" id="editLinkSave">Save changes</button></div>
+      <div class="btn-row"><button class="btn btn-outline btn-block" id="editLinkCancel">Cancel</button></div>
+    `);
+    document.getElementById("editLinkCancel").addEventListener("click", closeModal);
+    document.getElementById("editLinkSave").addEventListener("click", async () => {
+      const title = document.getElementById("editLinkTitle").value.trim();
+      const url = document.getElementById("editLinkUrl").value.trim();
+      if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
+      const saveBtn = document.getElementById("editLinkSave");
+      saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+      try {
+        await api(`/api/links/${shortCode}`, {
+          method: "PUT",
+          body: JSON.stringify({ title: title || null, destination_url: url }),
+        });
+        closeModal();
+        toast("Link updated", "ok");
+        afterSave();
+      } catch (e) {
+        toast(e.message, "err");
+        saveBtn.disabled = false; saveBtn.textContent = "Save changes";
+      }
     });
   }
 
@@ -1847,6 +1958,7 @@
         <code class="short-url">${esc(l.short_url)}</code>
         <div class="btn-row">
           <button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">${icon("clipboard", 14)} Copy</button>
+          <button class="btn btn-outline btn-sm linkEditBtn" data-code="${esc(l.short_code)}" data-title="${esc(l.title || "")}" data-url="${esc(l.destination_url)}">${icon("edit", 14)} Edit</button>
           <button class="btn btn-outline btn-sm linkDelBtn" data-code="${esc(l.short_code)}" data-title="${esc(l.title || "")}">${icon("trash", 14)} Delete</button>
         </div>
         <div class="meta">→ ${esc(l.destination_url)}</div>
@@ -1855,6 +1967,14 @@
       </div>
     `).join("");
     wireCopyButtons(listEl);
+    listEl.querySelectorAll(".linkEditBtn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        openEditLinkModal(btn.dataset.code, btn.dataset.title, btn.dataset.url, async () => {
+          await loadLinks();
+          renderLinksList();
+        });
+      });
+    });
     listEl.querySelectorAll(".linkDelBtn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const code = btn.dataset.code;
@@ -2083,6 +2203,45 @@
 
   // ---- Owner: Withdrawals queue -----------------------------------------
 
+  // Lets the Owner type an optional custom reason before rejecting a
+  // withdrawal — replaces the old hardcoded "Rejected by owner" string,
+  // which the requesting Admin actually sees in their rejection DM (see
+  // bot.notify_admin_of_withdrawal_resolution) and told them nothing
+  // useful about what to fix. Mirrors the Admin-request rejection
+  // modal's own reason-input pattern, except the reason here is
+  // optional (POST /api/admin/withdrawals/{id}/resolve never required
+  // one, unlike admin-request rejection).
+  function openRejectWithdrawalModal(requestId, afterResolve) {
+    openModal(`
+      <h3>Reject this withdrawal?</h3>
+      <div class="meta" style="margin-bottom:8px;">Optionally add a reason — it's sent to the Admin along with the rejection.</div>
+      <label>Reason (optional)</label>
+      <input type="text" id="withdrawRejectReason" placeholder="e.g. account number didn't match records" autocomplete="off" />
+      <div class="btn-row"><button class="btn btn-danger btn-block" id="withdrawRejectConfirm">Reject withdrawal</button></div>
+      <div class="btn-row"><button class="btn btn-outline btn-block" id="withdrawRejectCancel">Cancel</button></div>
+    `);
+    document.getElementById("withdrawRejectCancel").addEventListener("click", closeModal);
+    const reasonInput = document.getElementById("withdrawRejectReason");
+    document.getElementById("withdrawRejectConfirm").addEventListener("click", async () => {
+      const reason = reasonInput.value.trim();
+      const confirmBtn = document.getElementById("withdrawRejectConfirm");
+      confirmBtn.disabled = true; confirmBtn.textContent = "Rejecting…";
+      try {
+        await api(`/api/admin/withdrawals/${requestId}/resolve`, {
+          method: "POST",
+          body: JSON.stringify({ decision: "rejected", reason: reason || null }),
+        });
+        closeModal();
+        toast("Request rejected", "ok");
+        afterResolve();
+      } catch (e) {
+        toast(e.message, "err");
+        confirmBtn.disabled = false; confirmBtn.textContent = "Reject withdrawal";
+      }
+    });
+    reasonInput.focus();
+  }
+
   async function renderPayouts(el) {
     const data = await api("/api/admin/withdrawals");
     state.withdrawalsPending = data.withdrawals;
@@ -2122,14 +2281,11 @@
       });
     });
     el.querySelectorAll(".rejectBtn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        btn.disabled = true;
-        try {
-          await api(`/api/admin/withdrawals/${btn.dataset.id}/resolve`, { method: "POST", body: JSON.stringify({ decision: "rejected", reason: "Rejected by owner" }) });
-          toast("Request rejected", "ok");
+      btn.addEventListener("click", () => {
+        openRejectWithdrawalModal(btn.dataset.id, () => {
           renderTab();
           renderTopCard();
-        } catch (e) { toast(e.message, "err"); btn.disabled = false; }
+        });
       });
     });
   }
@@ -2631,14 +2787,28 @@
           <div class="btn-row">
             <button class="btn btn-outline btn-sm detailBtn" data-id="${a.telegram_id}">${icon("eye", 14)} View details</button>
             ${a.status === "active"
-              ? `<button class="btn btn-danger btn-sm banBtn" data-id="${a.telegram_id}" data-status="banned">Suspend</button>`
-              : `<button class="btn btn-success btn-sm banBtn" data-id="${a.telegram_id}" data-status="active">Reactivate</button>`}
+              ? `<button class="btn btn-danger btn-sm banBtn" data-id="${a.telegram_id}" data-status="banned" data-who="${esc(a.username ? "@" + a.username : "id " + a.telegram_id)}">Suspend</button>`
+              : `<button class="btn btn-success btn-sm banBtn" data-id="${a.telegram_id}" data-status="active" data-who="${esc(a.username ? "@" + a.username : "id " + a.telegram_id)}">Reactivate</button>`}
           </div>` : ""}
       </div>
     `).join("");
     el.querySelectorAll(".banBtn").forEach((btn) => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
+        const suspending = btn.dataset.status === "banned";
+        const sure = await confirmAction({
+          iconName: suspending ? "alertTriangle" : "checkCircle",
+          danger: suspending,
+          title: suspending ? "Suspend this Admin?" : "Reactivate this Admin?",
+          bodyHtml: `
+            <div class="meta" style="color:var(--text); font-weight:600; margin-bottom:8px;">${esc(btn.dataset.who)}</div>
+            <div class="meta">${suspending
+              ? "They'll immediately lose access to the bot and panel, and every API key they hold stops working right away."
+              : "They'll regain access to the bot, panel, and any API keys they held."}</div>
+          `,
+          confirmLabel: suspending ? "Suspend" : "Reactivate",
+        });
+        if (!sure) return;
         btn.disabled = true;
         try {
           await api(`/api/admin/admins/${btn.dataset.id}/status`, { method: "POST", body: JSON.stringify({ status: btn.dataset.status }) });
@@ -2753,7 +2923,7 @@
       <div class="section-title" style="margin-top:14px;">${icon("alertTriangle", 14)} Missed earnings trend (last 14 days)</div>
       <div class="card">
         <div class="meta" style="margin-bottom:6px;">This Admin's views excluded from earnings by the daily anti-abuse cap, day by day.</div>
-        ${missedTrendChartSVG(d.missed_earnings_trend)}
+        ${missedTrendChartSVG(d.missed_earnings_trend, "gradMissedDetail" + telegramId)}
       </div>
 
       ${d.missed_earnings_by_link && d.missed_earnings_by_link.length ? `
@@ -2846,6 +3016,12 @@
 
     el.querySelector("#backToAdmins").addEventListener("click", () => renderAdmins(el));
     wireChartTooltips(el);
+
+    el.querySelectorAll(".linkEditBtn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        openEditLinkModal(btn.dataset.code, btn.dataset.title, btn.dataset.url, () => renderAdminDetail(el, telegramId));
+      });
+    });
 
     const detailReqEl = el.querySelector("#detailAdminRequest");
     if (detailReqEl) wireAdminRequestActions(detailReqEl, () => renderAdminDetail(el, telegramId));
@@ -2997,7 +3173,7 @@
       </div>
       <div class="card">
         <div class="meta" style="margin-bottom:6px;">Total credited to every Admin/Sub Admin, day by day — the CPM side of the ledger. Compare this against your Adsgram dashboard's revenue for the same days to see profit or loss.</div>
-        ${amountTrendChartSVG(s.income_trend, "var(--emerald)")}
+        ${amountTrendChartSVG(s.income_trend, "var(--emerald)", "gradPlatformIncome")}
       </div>
 
       <div class="section-title" style="margin-top:14px;">${icon("banknote", 14)} Withdrawn (all admins combined)</div>
@@ -3008,13 +3184,13 @@
       </div>
       <div class="card">
         <div class="meta" style="margin-bottom:6px;">Money actually paid out (status: Paid), grouped by the day it was marked paid — not the day it was requested.</div>
-        ${amountTrendChartSVG(s.withdrawn_trend, "var(--brass)")}
+        ${amountTrendChartSVG(s.withdrawn_trend, "var(--brass)", "gradPlatformWithdrawn")}
       </div>
 
       <div class="section-title" style="margin-top:14px;">${icon("alertTriangle", 14)} Missed earnings trend (last 14 days)</div>
       <div class="card">
         <div class="meta" style="margin-bottom:6px;">Views watched but excluded from earnings by the daily anti-abuse cap, day by day — a rising bar chain means abuse is trending up, not just a one-off spike.</div>
-        ${missedTrendChartSVG(s.missed_earnings_trend)}
+        ${missedTrendChartSVG(s.missed_earnings_trend, "gradPlatformMissed")}
       </div>
 
       ${suggestedLimitCardHTML(s.suggested_daily_limit)}
@@ -3040,6 +3216,7 @@
         }
       });
     }
+    wireChartTooltips(el);
     renderTopCard();
   }
 
