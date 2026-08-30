@@ -1312,7 +1312,9 @@ class Storage:
             ],
         }
 
-    async def own_analytics_summary(self, telegram_id: int, days: int = 30) -> dict:
+    async def own_analytics_summary(
+        self, telegram_id: int, days: int = 30, include_daily_capped: bool = False
+    ) -> dict:
         """Personal earnings + views dashboard for one Admin/Sub Admin's
         own home screen (webapp/panel.html's Overview tab) — the
         self-service, single-Admin counterpart to platform_income_summary
@@ -1321,16 +1323,24 @@ class Storage:
         see each other's numbers, unlike the Owner-only, platform-wide
         methods.
 
-        Deliberately excludes anything about the Anti-Abuse System's
-        daily cap (no daily_capped_views count, no missed-earnings
-        breakdown) — a capped view is silently dropped from both trends
-        below (0 income, not counted as a "genuine" view), mirroring the
-        same visibility boundary GET /api/links already enforces for an
-        Admin's own link list: an Admin never sees that a view was
-        capped, it simply isn't there. That boundary is deliberately kept
-        Owner-only (admin_stats / platform_stats) — this method must
-        never grow a daily_capped-shaped field even if a future caller
-        asks for one.
+        `total_views`/`income_trend`/`top_links` are always built from
+        genuine (non-`daily_capped`) views only — a capped view never
+        counts toward earnings or the "real" view total anywhere in this
+        method, matching the Anti-Abuse System's rule everywhere else it
+        applies.
+
+        `include_daily_capped` additionally stamps a `capped_views` count
+        onto every `views_trend` point (the Anti-Abuse System's daily cap
+        — see CPMSetting.max_daily_views_per_admin) and adds a
+        `total_capped_views` figure to the response. This is Owner-only
+        information, the same visibility boundary `daily_capped` already
+        has everywhere else it's surfaced (admin_stats / platform_stats /
+        platform_analytics_summary) — an Admin must never learn that one
+        of their views was capped, it should simply not be there. Defaults
+        to False specifically so GET /api/my-analytics (an Admin looking
+        at their own dashboard) stays safe by construction without the
+        caller having to remember to omit anything; only the Owner-only
+        GET /api/admin/admins/{id}/analytics endpoint passes True.
 
         `top_links` ranks by view count (not income) since that's the
         more actionable number for someone deciding which of their
@@ -1344,10 +1354,11 @@ class Storage:
         earliest = today - timedelta(days=days - 1)
         income_buckets: Dict[object, float] = {earliest + timedelta(days=i): 0.0 for i in range(days)}
         view_buckets: Dict[object, int] = {earliest + timedelta(days=i): 0 for i in range(days)}
+        capped_view_buckets: Dict[object, int] = {earliest + timedelta(days=i): 0 for i in range(days)}
 
         lifetime_income = 0.0
         per_link: Dict[str, dict] = {}
-        for v in genuine_views:
+        for v in views:
             link = self.links.get(v.short_code)
             try:
                 created = datetime.fromisoformat(v.created_at)
@@ -1356,6 +1367,16 @@ class Storage:
             if created is not None and created.tzinfo is None:
                 created = created.replace(tzinfo=timezone.utc)
             bucket_date = created.astimezone(timezone.utc).date() if created is not None else None
+
+            if v.daily_capped:
+                # Only ever tallied into capped_view_buckets — never
+                # touches view_buckets, income_buckets, or per_link below,
+                # so a capped view can't leak into any "genuine" figure
+                # regardless of include_daily_capped.
+                if bucket_date is not None and bucket_date in capped_view_buckets:
+                    capped_view_buckets[bucket_date] += 1
+                continue
+
             if bucket_date is not None and bucket_date in view_buckets:
                 view_buckets[bucket_date] += 1
 
@@ -1389,7 +1410,14 @@ class Storage:
 
         links = await self.list_links_by_owner(telegram_id)
 
-        return {
+        views_trend = []
+        for d in sorted(view_buckets):
+            point = {"date": d.isoformat(), "views": view_buckets[d]}
+            if include_daily_capped:
+                point["capped_views"] = capped_view_buckets[d]
+            views_trend.append(point)
+
+        result = {
             "lifetime_income": round(lifetime_income, 4),
             "today_income": round(today_income, 4),
             "income_last_7_days": round(income_7d, 4),
@@ -1400,11 +1428,12 @@ class Storage:
             "income_trend": [
                 {"date": d.isoformat(), "amount": round(income_buckets[d], 4)} for d in sorted(income_buckets)
             ],
-            "views_trend": [
-                {"date": d.isoformat(), "views": view_buckets[d]} for d in sorted(view_buckets)
-            ],
+            "views_trend": views_trend,
             "top_links": top_links,
         }
+        if include_daily_capped:
+            result["total_capped_views"] = len(views) - len(genuine_views)
+        return result
 
     async def platform_analytics_summary(
         self,
@@ -1450,6 +1479,14 @@ class Storage:
         earning well" is the more direct answer to what the Owner is
         checking here than a raw view count, which per-Admin CPM
         overrides can make misleading on its own.
+
+        `views_trend` carries a `capped_views` count alongside `views`
+        on every point — this whole method is Owner-only to begin with
+        (unlike own_analytics_summary, which gates the same figure
+        behind an `include_daily_capped` flag for its Admin-facing use),
+        so there's no equivalent visibility boundary to enforce here;
+        the Owner already sees daily-capped figures everywhere else in
+        the app (admin_stats / platform_stats).
         """
         role_map = {
             "admin": {Role.ADMIN},
@@ -1474,14 +1511,14 @@ class Storage:
         num_days = (end_date - start_date).days + 1
         income_buckets: Dict[object, float] = {start_date + timedelta(days=i): 0.0 for i in range(num_days)}
         view_buckets: Dict[object, int] = {start_date + timedelta(days=i): 0 for i in range(num_days)}
+        capped_view_buckets: Dict[object, int] = {start_date + timedelta(days=i): 0 for i in range(num_days)}
 
         total_income = 0.0
         total_views = 0
+        total_capped_views = 0
         per_admin: Dict[int, dict] = {}
 
         for v in self.views.values():
-            if v.daily_capped:
-                continue
             link = self.links.get(v.short_code)
             if not link or link.owner_telegram_id not in target_ids:
                 continue
@@ -1493,6 +1530,19 @@ class Storage:
                 created = created.replace(tzinfo=timezone.utc)
             d = created.astimezone(timezone.utc).date()
             if d < start_date or d > end_date:
+                continue
+
+            if v.daily_capped:
+                # Tallied separately, under the same role/date filters as
+                # everything else here — this is the Owner-only
+                # "Daily-capped views" line on the platform Views Trend
+                # chart, never blended into total_views/per_admin/income
+                # below (a capped view earned nothing and was never
+                # "genuine" to begin with, same rule as everywhere else
+                # daily_capped is checked in this module).
+                total_capped_views += 1
+                if d in capped_view_buckets:
+                    capped_view_buckets[d] += 1
                 continue
 
             total_views += 1
@@ -1533,12 +1583,14 @@ class Storage:
             "total_admins": len(target_ids),
             "total_income": round(total_income, 4),
             "total_views": total_views,
+            "total_capped_views": total_capped_views,
             "avg_daily_income": avg_daily_income,
             "income_trend": [
                 {"date": d.isoformat(), "amount": round(income_buckets[d], 4)} for d in sorted(income_buckets)
             ],
             "views_trend": [
-                {"date": d.isoformat(), "views": view_buckets[d]} for d in sorted(view_buckets)
+                {"date": d.isoformat(), "views": view_buckets[d], "capped_views": capped_view_buckets[d]}
+                for d in sorted(view_buckets)
             ],
             "top_performers": top_performers,
         }

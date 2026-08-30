@@ -1052,11 +1052,14 @@ async def admin_detail_analytics(telegram_id: int, owner: Admin = Depends(requir
     powers the Obsidian-style glow-card + trend-chart dashboard on the
     Owner's per-Admin detail page (webapp/panel.html's Admins tab ->
     tap an Admin), so the Owner sees the exact same chart shape for
-    someone else's links that an Admin sees for their own.
+    someone else's links that an Admin sees for their own — plus a
+    Daily-capped-views line on the Views Trend chart that only the
+    Owner ever sees (include_daily_capped=True), never the Admin's own
+    GET /api/my-analytics call.
     """
     if not await storage.get_admin(telegram_id):
         raise HTTPException(status_code=404, detail="admin not found")
-    return await storage.own_analytics_summary(telegram_id)
+    return await storage.own_analytics_summary(telegram_id, include_daily_capped=True)
 
 
 @app.post("/api/admin/links/{short_code}/ad-count")
