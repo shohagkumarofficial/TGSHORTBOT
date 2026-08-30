@@ -516,6 +516,7 @@ class Storage:
         owner_telegram_id: int,
         destination_url: str,
         ad_count: Optional[int] = None,
+        title: Optional[str] = None,
     ) -> Link:
         """`expires_at` is derived here, at creation time, from the
         creating Admin's *current* `link_auto_delete_months` — never
@@ -523,6 +524,12 @@ class Storage:
         afterward only ever affects links created from then on, exactly
         like a CPM-rate change never re-prices views that already
         happened.
+
+        `title` is optional and purely cosmetic (see Link.title's
+        docstring) — passed through with no validation here; app.py is
+        responsible for trimming/length-checking it before calling this,
+        the same division of labor as every other request-shaped field
+        this method receives.
         """
         async with self._lock:
             owner = self.admins.get(owner_telegram_id)
@@ -537,6 +544,7 @@ class Storage:
                 destination_url=destination_url,
                 ad_count=ad_count if ad_count is not None else self.DEFAULT_AD_COUNT,
                 expires_at=expires_at,
+                title=title,
             )
             self.links[short_code] = link
             await self._save_locked()
@@ -656,6 +664,7 @@ class Storage:
             out.append(
                 {
                     "short_code": l.short_code,
+                    "title": l.title,
                     "destination_url": l.destination_url,
                     "ad_count": l.ad_count,
                     "created_at": l.created_at,
@@ -1307,6 +1316,7 @@ class Storage:
                 v.short_code,
                 {
                     "short_code": v.short_code,
+                    "title": link.title if link else None,
                     "destination_url": link.destination_url if link else None,
                     "views": 0,
                     "income": 0.0,
@@ -1366,13 +1376,16 @@ class Storage:
         individually.
 
         `role_filter` is one of "admin" (Role.ADMIN only), "sub_admin"
-        (Role.SUB_ADMIN only), or "both" (default — every Admin and Sub
-        Admin combined). The Owner's own links and any Viewer are always
-        excluded — a Viewer has no links to speak of, and the Owner's
-        own personal link income is a different, single-person concept
-        this screen is deliberately not for (own_analytics_summary
-        already covers that, the same way it covers any Admin's own
-        links, if the Owner ever uses their own "My Links" tab).
+        (Role.SUB_ADMIN only), "owner" (the Owner's own links only), or
+        "both" (default — every Admin and Sub Admin combined, excluding
+        the Owner). The Owner's own personal link income sits behind its
+        own explicit filter value rather than always being folded into
+        "both", since an Owner who also runs their own links may want to
+        check that performance in isolation the same way they'd check
+        any one Admin's — not blended into the Admin/Sub Admin tier
+        totals where it would just look like noise. Any Viewer is always
+        excluded regardless of filter — a Viewer has no links to speak
+        of.
 
         `start_date`/`end_date` default to a trailing 30-day window
         ending today (UTC) when omitted, matching own_analytics_summary's
@@ -1395,6 +1408,7 @@ class Storage:
             "admin": {Role.ADMIN},
             "sub_admin": {Role.SUB_ADMIN},
             "both": {Role.ADMIN, Role.SUB_ADMIN},
+            "owner": {Role.OWNER},
         }
         normalized_filter = role_filter if role_filter in role_map else "both"
         wanted_roles = role_map[normalized_filter]

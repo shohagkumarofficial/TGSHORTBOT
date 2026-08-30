@@ -572,6 +572,9 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
     destination_url = (payload.get("destination_url") or "").strip()
     if not destination_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
+    title = (payload.get("title") or "").strip() or None
+    if title and len(title) > 100:
+        raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
 
     code = _gen_short_code()
     while await storage.get_link(code):
@@ -580,8 +583,13 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
     # starts at storage.Storage.DEFAULT_AD_COUNT regardless of who
     # creates it; only the Owner can change it afterward, per-link, via
     # POST /api/admin/links/{short_code}/ad-count.
-    link = await storage.create_link(code, admin.telegram_id, destination_url)
-    return {"short_code": link.short_code, "short_url": _short_url_for(link.short_code), "ad_count": link.ad_count}
+    link = await storage.create_link(code, admin.telegram_id, destination_url, title=title)
+    return {
+        "short_code": link.short_code,
+        "short_url": _short_url_for(link.short_code),
+        "ad_count": link.ad_count,
+        "title": link.title,
+    }
 
 
 @app.delete("/api/links/{short_code}")
@@ -1093,8 +1101,8 @@ async def owner_platform_analytics(
     is the whole platform doing", and conflating the two would answer
     neither question well.
     """
-    if role_filter not in ("admin", "sub_admin", "both"):
-        raise HTTPException(status_code=400, detail="role_filter must be 'admin', 'sub_admin', or 'both'")
+    if role_filter not in ("admin", "sub_admin", "both", "owner"):
+        raise HTTPException(status_code=400, detail="role_filter must be 'admin', 'sub_admin', 'owner', or 'both'")
 
     def _parse_date(raw: Optional[str], field: str):
         if not raw:
@@ -1318,12 +1326,20 @@ async def v1_create_link(payload: dict, admin: Admin = Depends(require_api_key))
     destination_url = (payload.get("destination_url") or "").strip()
     if not destination_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
+    title = (payload.get("title") or "").strip() or None
+    if title and len(title) > 100:
+        raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
 
     code = _gen_short_code()
     while await storage.get_link(code):
         code = _gen_short_code()
-    link = await storage.create_link(code, admin.telegram_id, destination_url)
-    return {"short_code": link.short_code, "short_url": _short_url_for(link.short_code), "ad_count": link.ad_count}
+    link = await storage.create_link(code, admin.telegram_id, destination_url, title=title)
+    return {
+        "short_code": link.short_code,
+        "short_url": _short_url_for(link.short_code),
+        "ad_count": link.ad_count,
+        "title": link.title,
+    }
 
 
 @app.get("/api/v1/links")

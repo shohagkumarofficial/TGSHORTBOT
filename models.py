@@ -263,6 +263,15 @@ class Link(BaseModel):
     short_code: str
     owner_telegram_id: int
     destination_url: str
+    # Optional, Admin-set label for this link (e.g. "August giveaway
+    # post") — purely a display convenience so an Admin with many links
+    # can tell them apart at a glance in "My Links" / the Owner's
+    # per-Admin link list, without having to remember what a bare
+    # short_code or destination_url was for. Always optional: POST
+    # /api/links and POST /api/v1/links both accept it but never require
+    # it, and nothing else in the app (ad-serving, CPM crediting, the
+    # bot's /newlink flow) reads or depends on it — it's display-only.
+    title: Optional[str] = None
     ad_count: int = 3
     created_at: str = Field(default_factory=now_iso)
 

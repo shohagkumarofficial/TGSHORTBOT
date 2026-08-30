@@ -88,21 +88,29 @@ curl https://your-domain/api/v1/me \
 Create a short link. Requires at least one Traffic Source already added
 from the panel — same rule as the bot's `/newlink`. `ad_count` is never
 client-settable here either; every link starts at the platform default.
+`title` is optional — a display-only label, 100 characters or fewer;
+omit it (or send `null`) and the link simply has no title.
 
 ```bash
 curl -X POST https://your-domain/api/v1/links \
   -H "X-API-Key: tgs_..." \
   -H "Content-Type: application/json" \
-  -d '{"destination_url": "https://example.com/my-page"}'
+  -d '{"destination_url": "https://example.com/my-page", "title": "August giveaway post"}'
 ```
 
 ```json
-{ "short_code": "aB3xQ9z", "short_url": "https://t.me/YourBot?start=aB3xQ9z", "ad_count": 3 }
+{
+  "short_code": "aB3xQ9z",
+  "short_url": "https://t.me/YourBot?start=aB3xQ9z",
+  "ad_count": 3,
+  "title": "August giveaway post"
+}
 ```
 
 ### `GET /api/v1/links`
 List your own links with view counts (capped/abusive views excluded, same
-as the panel's "My Links").
+as the panel's "My Links"). Each link includes `title` (`null` if none
+was set at creation).
 
 ```bash
 curl https://your-domain/api/v1/links -H "X-API-Key: tgs_..."

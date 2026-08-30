@@ -459,6 +459,31 @@ Quick summary:
   how `_safe_upsert` already tolerates a missing column elsewhere), but
   `POST /api/apikeys` needs it to actually persist anything.
 
+## Link titles (optional)
+
+Both `POST /api/links` (Mini App) and `POST /api/v1/links` (public REST
+API) accept an optional `title` field (e.g. `{"destination_url": "...",
+"title": "August giveaway post"}`) — purely a display label so an Admin
+with many links can tell them apart at a glance. Nothing else in the app
+reads it: it doesn't affect the short_code, the ad-serving flow, or CPM
+crediting. Leaving it out (or the bot's `/newlink`, which doesn't ask for
+one) works exactly as before — every existing link simply has
+`title: null`. When set, it's shown in place of the bare short_code on
+"My Links", the Owner's per-Admin link list, and every "Top Links"
+breakdown; the short_code itself is still shown alongside it as a
+secondary line so it's never hidden.
+
+**Required Supabase migration** — run once (safe to re-run):
+
+```sql
+alter table links add column if not exists title text;
+```
+
+Until this is run, `_safe_upsert` silently drops the `title` field from
+every write to the `links` table (logging a warning each time, per its
+usual missing-column tolerance) — link creation still succeeds, the
+title just won't survive a restart until the column exists.
+
 ## Deploying to Render
 
 `render.yaml` is ready to use as-is:
