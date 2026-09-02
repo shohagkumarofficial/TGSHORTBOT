@@ -89,13 +89,18 @@ Create a short link. Requires at least one Traffic Source already added
 from the panel — same rule as the bot's `/newlink`. `ad_count` is never
 client-settable here either; every link starts at the platform default.
 `title` is optional — a display-only label, 100 characters or fewer;
-omit it (or send `null`) and the link simply has no title.
+omit it (or send `null`) and the link simply has no title. `category_id`
+is likewise optional — the id of one of *your own* categories (managed
+from the panel's Profile tab, not via this API — see README.md's
+"Categories" section); omit it, send `null`, or leave it out entirely
+for no category. A `category_id` that doesn't belong to you (or doesn't
+exist) is rejected with `400 category not found`.
 
 ```bash
 curl -X POST https://your-domain/api/v1/links \
   -H "X-API-Key: tgs_..." \
   -H "Content-Type: application/json" \
-  -d '{"destination_url": "https://example.com/my-page", "title": "August giveaway post"}'
+  -d '{"destination_url": "https://example.com/my-page", "title": "August giveaway post", "category_id": null}'
 ```
 
 ```json
@@ -103,14 +108,17 @@ curl -X POST https://your-domain/api/v1/links \
   "short_code": "aB3xQ9z",
   "short_url": "https://t.me/YourBot?start=aB3xQ9z",
   "ad_count": 3,
-  "title": "August giveaway post"
+  "title": "August giveaway post",
+  "category_id": null,
+  "category_name": null
 }
 ```
 
 ### `GET /api/v1/links`
 List your own links with view counts (capped/abusive views excluded, same
 as the panel's "My Links"). Each link includes `title` (`null` if none
-was set at creation).
+was set at creation) and `category_id`/`category_name` (both `null` if
+uncategorized, or if the category was since deleted).
 
 ```bash
 curl https://your-domain/api/v1/links -H "X-API-Key: tgs_..."
@@ -126,12 +134,14 @@ curl -X DELETE https://your-domain/api/v1/links/aB3xQ9z -H "X-API-Key: tgs_..."
 ```
 
 ### `PUT /api/v1/links/{short_code}`
-Edit an existing link's `title` and/or `destination_url` — fixes a typo
-without deleting and recreating it under a new short_code (which would
-lose its accumulated view history from your own link list). Both fields
-are optional and independent; send just the one you want to change.
-Owner keys can edit anyone's link, same as delete. `ad_count` and
-`short_code` itself are never editable here.
+Edit an existing link's `title`, `category_id`, and/or `destination_url`
+— fixes a typo without deleting and recreating it under a new short_code
+(which would lose its accumulated view history from your own link list).
+All three fields are optional and independent; send just the one(s) you
+want to change. Owner keys can edit anyone's link, same as delete — in
+that case `category_id` is checked against *the link owner's* own
+categories, not the calling Owner's. `ad_count` and `short_code` itself
+are never editable here.
 
 ```bash
 curl -X PUT https://your-domain/api/v1/links/aB3xQ9z \
@@ -145,6 +155,8 @@ curl -X PUT https://your-domain/api/v1/links/aB3xQ9z \
   "short_code": "aB3xQ9z",
   "short_url": "https://t.me/YourBot?start=aB3xQ9z",
   "title": "Renamed campaign",
+  "category_id": null,
+  "category_name": null,
   "destination_url": "https://example.com/new-page",
   "ad_count": 3
 }

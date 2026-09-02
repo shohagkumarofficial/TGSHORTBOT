@@ -484,6 +484,49 @@ every write to the `links` table (logging a warning each time, per its
 usual missing-column tolerance) — link creation still succeeds, the
 title just won't survive a restart until the column exists.
 
+## Categories
+
+Every Admin/Sub Admin can keep their own list of categories (e.g.
+"Movies", "Giveaway", "YouTube") from the panel's Profile tab, and
+optionally tag a link with one at creation time (or add/change it later
+via the link's Edit button) — purely a personal organizational tool,
+never read by ad-serving, CPM crediting, or anything Owner-facing beyond
+just showing the label back. Categories are per-Admin: two different
+Admins can each have one named the same thing without colliding, and one
+Admin's categories are never visible or selectable by another (the Owner
+can still see and edit the category on any Admin's link from their
+per-Admin detail page, using that Admin's own category list). There's no
+rename — delete and recreate covers it, since removing a category costs
+nothing (no view history or balance is attached to a category itself);
+deleting one clears `category_id` back to null on any of that Admin's
+own links that referenced it, rather than leaving a dangling reference.
+
+Managed only from the panel (`GET/POST /api/categories`,
+`DELETE /api/categories/{id}`) — same as Traffic Sources, there's no bot
+command or public-API equivalent for creating/deleting categories, only
+for using an existing `category_id` when creating or editing a link via
+`POST/PUT /api/links` or their `/api/v1/*` counterparts.
+
+**Required Supabase migration** — run once (safe to re-run):
+
+```sql
+create table if not exists categories (
+  id text primary key,
+  admin_telegram_id bigint not null,
+  name text not null,
+  created_at text not null
+);
+
+alter table links add column if not exists category_id text;
+```
+
+Both writes self-heal the same way `api_keys`/`title` do if this hasn't
+been run yet: category creation still works for the life of the running
+process (kept in memory), it just won't persist across a restart until
+the migration is applied — `categories` rows are silently skipped
+(`_safe_upsert`'s `tolerate_missing_table=True`) and `links.category_id`
+is silently dropped from each write, both logging a warning.
+
 ## Deploying to Render
 
 `render.yaml` is ready to use as-is:

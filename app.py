@@ -546,6 +546,63 @@ async def remove_traffic_source(source_id: str, admin: Admin = Depends(require_a
 
 
 # ---------------------------------------------------------------------------
+# Categories — per-Admin, user-defined labels an Admin/Sub Admin can tag
+# their own links with (see models.Category). Panel-only, same as Traffic
+# Sources: there's no public-API or bot equivalent for managing these,
+# only for using an existing category_id when creating/editing a link.
+# ---------------------------------------------------------------------------
+
+MAX_CATEGORY_NAME_LENGTH = 40
+
+
+@app.get("/api/categories")
+async def list_categories(admin: Admin = Depends(require_admin)):
+    return {"categories": [c.model_dump() for c in admin.categories]}
+
+
+@app.post("/api/categories")
+async def add_category(payload: dict, admin: Admin = Depends(require_admin)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if len(name) > MAX_CATEGORY_NAME_LENGTH:
+        raise HTTPException(status_code=400, detail=f"name must be {MAX_CATEGORY_NAME_LENGTH} characters or fewer")
+    if len(admin.categories) >= Storage.MAX_CATEGORIES_PER_ADMIN:
+        raise HTTPException(
+            status_code=400,
+            detail=f"you can have at most {Storage.MAX_CATEGORIES_PER_ADMIN} categories",
+        )
+    category = await storage.add_category(admin.telegram_id, name)
+    if not category:
+        raise HTTPException(status_code=400, detail="couldn't create category")
+    return category.model_dump()
+
+
+@app.delete("/api/categories/{category_id}")
+async def remove_category(category_id: str, admin: Admin = Depends(require_admin)):
+    ok = await storage.delete_category(admin.telegram_id, category_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="category not found")
+    return {"ok": True}
+
+
+def _category_name_for(categories, category_id: Optional[str]) -> Optional[str]:
+    """Resolves `category_id` to its display name from an already-loaded
+    `categories` list (e.g. `admin.categories`) — the app.py-side twin of
+    storage._category_name, used by the two endpoints below that build
+    their link dicts directly in this module rather than through a
+    storage helper. Returns None for "no category" or a since-deleted
+    category, same fallback both resolvers share.
+    """
+    if not category_id:
+        return None
+    for c in categories:
+        if c.id == category_id:
+            return c.name
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Admin: links
 # ---------------------------------------------------------------------------
 
@@ -575,6 +632,9 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
     title = (payload.get("title") or "").strip() or None
     if title and len(title) > 100:
         raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
+    category_id = (payload.get("category_id") or "").strip() or None
+    if category_id and not any(c.id == category_id for c in admin.categories):
+        raise HTTPException(status_code=400, detail="category not found")
 
     code = _gen_short_code()
     while await storage.get_link(code):
@@ -583,12 +643,14 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
     # starts at storage.Storage.DEFAULT_AD_COUNT regardless of who
     # creates it; only the Owner can change it afterward, per-link, via
     # POST /api/admin/links/{short_code}/ad-count.
-    link = await storage.create_link(code, admin.telegram_id, destination_url, title=title)
+    link = await storage.create_link(code, admin.telegram_id, destination_url, title=title, category_id=category_id)
     return {
         "short_code": link.short_code,
         "short_url": _short_url_for(link.short_code),
         "ad_count": link.ad_count,
         "title": link.title,
+        "category_id": link.category_id,
+        "category_name": _category_name_for(admin.categories, link.category_id),
     }
 
 
@@ -602,13 +664,26 @@ async def delete_link(short_code: str, admin: Admin = Depends(require_admin)):
 
 @app.put("/api/links/{short_code}")
 async def edit_link(short_code: str, payload: dict, admin: Admin = Depends(require_admin)):
-    """Lets an Admin fix a typo in their own link's title or destination
-    URL after the fact, instead of deleting (losing its "My Links"
-    history) and recreating it under a new short_code. Owner accounts
-    can edit anyone's link, mirroring DELETE /api/links/{short_code}'s
-    own is_owner bypass. Both fields are optional and independent — a
-    request can send just one of them.
+    """Lets an Admin fix a typo in their own link's title, category, or
+    destination URL after the fact, instead of deleting (losing its
+    "My Links" history) and recreating it under a new short_code. Owner
+    accounts can edit anyone's link, mirroring DELETE
+    /api/links/{short_code}'s own is_owner bypass. All three fields are
+    optional and independent — a request can send just one of them.
+
+    A new `category_id` is validated against the *link's own owner's*
+    categories, not necessarily the caller's — when the Owner edits
+    someone else's link, "does this category exist" has to mean "does
+    it exist for the Admin who actually owns this link", since the
+    Owner's own category list (if they have one at all) is a completely
+    different set.
     """
+    link_existing = await storage.get_link(short_code)
+    if not link_existing:
+        raise HTTPException(status_code=404, detail="link not found")
+    if admin.role != Role.OWNER and link_existing.owner_telegram_id != admin.telegram_id:
+        raise HTTPException(status_code=404, detail="link not found")
+
     title_provided = "title" in payload
     title = None
     if title_provided:
@@ -622,6 +697,15 @@ async def edit_link(short_code: str, payload: dict, admin: Admin = Depends(requi
         if not destination_url.startswith(("http://", "https://")):
             raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
 
+    category_id_provided = "category_id" in payload
+    category_id = None
+    owner_admin = await storage.get_admin(link_existing.owner_telegram_id)
+    if category_id_provided:
+        category_id = (payload.get("category_id") or "").strip() or None
+        owner_categories = owner_admin.categories if owner_admin else []
+        if category_id and not any(c.id == category_id for c in owner_categories):
+            raise HTTPException(status_code=400, detail="category not found")
+
     link = await storage.update_link(
         short_code,
         admin.telegram_id,
@@ -629,6 +713,8 @@ async def edit_link(short_code: str, payload: dict, admin: Admin = Depends(requi
         title=title,
         title_provided=title_provided,
         destination_url=destination_url,
+        category_id=category_id,
+        category_id_provided=category_id_provided,
     )
     if not link:
         raise HTTPException(status_code=404, detail="link not found")
@@ -636,6 +722,8 @@ async def edit_link(short_code: str, payload: dict, admin: Admin = Depends(requi
         "short_code": link.short_code,
         "short_url": _short_url_for(link.short_code),
         "title": link.title,
+        "category_id": link.category_id,
+        "category_name": _category_name_for(owner_admin.categories, link.category_id) if owner_admin else None,
         "destination_url": link.destination_url,
         "ad_count": link.ad_count,
     }
@@ -675,6 +763,7 @@ async def my_links(admin: Admin = Depends(require_admin)):
             {
                 **l.model_dump(),
                 "short_url": _short_url_for(l.short_code),
+                "category_name": _category_name_for(admin.categories, l.category_id),
                 "effective_ad_count": my_ad_count,
                 "view_count": len(genuine_views),
                 "confirmed_views": len(
@@ -1373,16 +1462,21 @@ async def v1_create_link(payload: dict, admin: Admin = Depends(require_api_key))
     title = (payload.get("title") or "").strip() or None
     if title and len(title) > 100:
         raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
+    category_id = (payload.get("category_id") or "").strip() or None
+    if category_id and not any(c.id == category_id for c in admin.categories):
+        raise HTTPException(status_code=400, detail="category not found")
 
     code = _gen_short_code()
     while await storage.get_link(code):
         code = _gen_short_code()
-    link = await storage.create_link(code, admin.telegram_id, destination_url, title=title)
+    link = await storage.create_link(code, admin.telegram_id, destination_url, title=title, category_id=category_id)
     return {
         "short_code": link.short_code,
         "short_url": _short_url_for(link.short_code),
         "ad_count": link.ad_count,
         "title": link.title,
+        "category_id": link.category_id,
+        "category_name": _category_name_for(admin.categories, link.category_id),
     }
 
 
@@ -1399,6 +1493,7 @@ async def v1_my_links(admin: Admin = Depends(require_api_key)):
             {
                 **l.model_dump(),
                 "short_url": _short_url_for(l.short_code),
+                "category_name": _category_name_for(admin.categories, l.category_id),
                 "effective_ad_count": my_ad_count,
                 "view_count": len(genuine_views),
                 "confirmed_views": len(
@@ -1425,10 +1520,17 @@ async def v1_delete_link(short_code: str, admin: Admin = Depends(require_api_key
 async def v1_edit_link(short_code: str, payload: dict, admin: Admin = Depends(require_api_key)):
     """Mirrors PUT /api/links/{short_code} (the Mini App's own edit
     endpoint, see its docstring) for the public REST API — lets an
-    Admin fix a link's title or destination URL after creation via
-    their own site/server instead of only from the panel. Both fields
-    are optional and independent, same as the Mini App version.
+    Admin fix a link's title, category, or destination URL after
+    creation via their own site/server instead of only from the panel.
+    All three fields are optional and independent, same as the Mini App
+    version.
     """
+    link_existing = await storage.get_link(short_code)
+    if not link_existing:
+        raise HTTPException(status_code=404, detail="link not found")
+    if admin.role != Role.OWNER and link_existing.owner_telegram_id != admin.telegram_id:
+        raise HTTPException(status_code=404, detail="link not found")
+
     title_provided = "title" in payload
     title = None
     if title_provided:
@@ -1442,6 +1544,15 @@ async def v1_edit_link(short_code: str, payload: dict, admin: Admin = Depends(re
         if not destination_url.startswith(("http://", "https://")):
             raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
 
+    category_id_provided = "category_id" in payload
+    category_id = None
+    owner_admin = await storage.get_admin(link_existing.owner_telegram_id)
+    if category_id_provided:
+        category_id = (payload.get("category_id") or "").strip() or None
+        owner_categories = owner_admin.categories if owner_admin else []
+        if category_id and not any(c.id == category_id for c in owner_categories):
+            raise HTTPException(status_code=400, detail="category not found")
+
     link = await storage.update_link(
         short_code,
         admin.telegram_id,
@@ -1449,6 +1560,8 @@ async def v1_edit_link(short_code: str, payload: dict, admin: Admin = Depends(re
         title=title,
         title_provided=title_provided,
         destination_url=destination_url,
+        category_id=category_id,
+        category_id_provided=category_id_provided,
     )
     if not link:
         raise HTTPException(status_code=404, detail="link not found")
@@ -1456,6 +1569,8 @@ async def v1_edit_link(short_code: str, payload: dict, admin: Admin = Depends(re
         "short_code": link.short_code,
         "short_url": _short_url_for(link.short_code),
         "title": link.title,
+        "category_id": link.category_id,
+        "category_name": _category_name_for(owner_admin.categories, link.category_id) if owner_admin else None,
         "destination_url": link.destination_url,
         "ad_count": link.ad_count,
     }

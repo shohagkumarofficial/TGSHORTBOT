@@ -59,6 +59,7 @@ from models import (
     AdNetwork,
     AdNetworkSetting,
     ApiKey,
+    Category,
     CountedStatus,
     CPMHistoryEntry,
     CPMSetting,
@@ -132,6 +133,7 @@ class Storage:
         ad_network_setting_res = await self.client.table("ad_network_settings").select("*").eq("id", 1).execute()
         cpm_history_res = await self.client.table("cpm_history").select("*").execute()
         api_keys_res = await self._select_or_empty("api_keys")
+        categories_res = await self._select_or_empty("categories")
 
         traffic_by_admin: Dict[int, List[TrafficSource]] = {}
         for row in traffic_res.data:
@@ -139,10 +141,17 @@ class Storage:
             admin_id = row.pop("admin_telegram_id")
             traffic_by_admin.setdefault(admin_id, []).append(TrafficSource(**row))
 
+        categories_by_admin: Dict[int, List[Category]] = {}
+        for row in categories_res.data:
+            row = dict(row)
+            admin_id = row.pop("admin_telegram_id")
+            categories_by_admin.setdefault(admin_id, []).append(Category(**row))
+
         self.admins = {}
         for row in admins_res.data:
             row = dict(row)
             row["traffic_sources"] = traffic_by_admin.get(row["telegram_id"], [])
+            row["categories"] = categories_by_admin.get(row["telegram_id"], [])
             self.admins[row["telegram_id"]] = Admin(**row)
 
         self.links = {row["short_code"]: Link(**row) for row in links_res.data}
@@ -275,11 +284,18 @@ class Storage:
         in-memory state to Supabase. Batched: one upsert call per table,
         regardless of how many rows changed.
         """
-        admin_rows = [a.model_dump(mode="json", exclude={"traffic_sources"}) for a in self.admins.values()]
+        admin_rows = [
+            a.model_dump(mode="json", exclude={"traffic_sources", "categories"}) for a in self.admins.values()
+        ]
         traffic_rows = [
             {**s.model_dump(mode="json"), "admin_telegram_id": a.telegram_id}
             for a in self.admins.values()
             for s in a.traffic_sources
+        ]
+        category_rows = [
+            {**c.model_dump(mode="json"), "admin_telegram_id": a.telegram_id}
+            for a in self.admins.values()
+            for c in a.categories
         ]
         link_rows = [l.model_dump(mode="json") for l in self.links.values()]
         view_rows = [v.model_dump(mode="json") for v in self.views.values()]
@@ -292,6 +308,7 @@ class Storage:
 
         await self._safe_upsert("admins", admin_rows, on_conflict="telegram_id")
         await self._safe_upsert("traffic_sources", traffic_rows, on_conflict="id")
+        await self._safe_upsert("categories", category_rows, on_conflict="id", tolerate_missing_table=True)
         await self._safe_upsert("links", link_rows, on_conflict="short_code")
         await self._safe_upsert("views", view_rows, on_conflict="view_id")
         await self._safe_upsert("withdrawals", withdrawal_rows, on_conflict="request_id")
@@ -498,6 +515,87 @@ class Storage:
             return changed
 
     # ------------------------------------------------------------------
+    # Categories — per-Admin, user-defined link labels (see Category's
+    # docstring in models.py). Same one-list-per-Admin shape as Traffic
+    # Sources above, just simpler: no edit-in-place, only add/remove,
+    # since renaming isn't supported (delete + recreate covers it at no
+    # real cost — see Category's own docstring for why).
+    # ------------------------------------------------------------------
+
+    MAX_CATEGORIES_PER_ADMIN = 30
+
+    async def add_category(self, telegram_id: int, name: str) -> Optional[Category]:
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            if len(admin.categories) >= self.MAX_CATEGORIES_PER_ADMIN:
+                return None
+            category = Category(name=name)
+            admin.categories.append(category)
+            await self._save_locked()
+            return category
+
+    async def delete_category(self, telegram_id: int, category_id: str) -> bool:
+        """Removes one of this Admin's own categories, and — since a
+        Link's `category_id` would otherwise be left pointing at
+        nothing — clears `category_id` back to None on every one of
+        this same Admin's own links that referenced it, so nothing in
+        `self.links` is left holding a dangling reference after this
+        returns. Mirrors delete_traffic_source's explicit-delete-then-
+        full-save shape (a blanket upsert alone would never remove the
+        row from Supabase); the categories table's own delete is
+        additionally tolerant of not existing yet (pending migration —
+        see README.md), the same self-heal `_safe_upsert` already
+        applies to writes, since this is a newer, optional table.
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return False
+            before = len(admin.categories)
+            admin.categories = [c for c in admin.categories if c.id != category_id]
+            changed = len(admin.categories) != before
+            if changed:
+                for link in self.links.values():
+                    if link.owner_telegram_id == telegram_id and link.category_id == category_id:
+                        link.category_id = None
+                try:
+                    await self.client.table("categories").delete().eq("id", category_id).execute()
+                except Exception as exc:
+                    if not ("PGRST205" in str(exc) or "Could not find the table" in str(exc)):
+                        raise
+                    logger.warning(
+                        "Supabase table 'categories' doesn't exist yet (pending migration — "
+                        "see README.md's schema notes); nothing to delete there yet."
+                    )
+                await self._save_locked()
+            return changed
+
+    def _category_name(self, owner_telegram_id: int, category_id: Optional[str]) -> Optional[str]:
+        """Resolves a link's `category_id` to its current display name,
+        read fresh from the *owning* Admin's own `categories` list —
+        never a global lookup, since categories are per-Admin (see
+        Category's docstring). Returns None if the link has no
+        category, or if the category was since deleted (delete_category
+        already clears `category_id` on that Admin's own links when it
+        happens, but this stays defensive regardless) — every caller
+        treats that the same as "no category" rather than surfacing a
+        broken reference. A plain sync helper (no lock, no await) since
+        it only reads already-in-memory state; called from inside
+        already-async, already-locked-where-needed methods below.
+        """
+        if not category_id:
+            return None
+        owner = self.admins.get(owner_telegram_id)
+        if not owner:
+            return None
+        for c in owner.categories:
+            if c.id == category_id:
+                return c.name
+        return None
+
+    # ------------------------------------------------------------------
     # Link
     # ------------------------------------------------------------------
 
@@ -517,6 +615,7 @@ class Storage:
         destination_url: str,
         ad_count: Optional[int] = None,
         title: Optional[str] = None,
+        category_id: Optional[str] = None,
     ) -> Link:
         """`expires_at` is derived here, at creation time, from the
         creating Admin's *current* `link_auto_delete_months` — never
@@ -525,11 +624,13 @@ class Storage:
         like a CPM-rate change never re-prices views that already
         happened.
 
-        `title` is optional and purely cosmetic (see Link.title's
-        docstring) — passed through with no validation here; app.py is
-        responsible for trimming/length-checking it before calling this,
-        the same division of labor as every other request-shaped field
-        this method receives.
+        `title`/`category_id` are optional and purely cosmetic (see
+        their own docstrings on Link) — passed through with no
+        validation here; app.py is responsible for trimming/length-
+        checking `title` and confirming `category_id` actually belongs
+        to `owner_telegram_id`'s own categories before calling this, the
+        same division of labor as every other request-shaped field this
+        method receives.
         """
         async with self._lock:
             owner = self.admins.get(owner_telegram_id)
@@ -545,6 +646,7 @@ class Storage:
                 ad_count=ad_count if ad_count is not None else self.DEFAULT_AD_COUNT,
                 expires_at=expires_at,
                 title=title,
+                category_id=category_id,
             )
             self.links[short_code] = link
             await self._save_locked()
@@ -642,15 +744,17 @@ class Storage:
         title: Optional[str] = None,
         title_provided: bool = False,
         destination_url: Optional[str] = None,
+        category_id: Optional[str] = None,
+        category_id_provided: bool = False,
     ) -> Optional[Link]:
-        """Edits an existing link's `title` and/or `destination_url` in
-        place — added so an Admin can fix a typo or relabel a link
-        without deleting and recreating it, which would otherwise be the
-        only option (and would drop it off "My Links" under a brand-new
-        short_code, losing the view history readers associate with the
-        old one, even though the underlying View rows and balance are
-        untouched either way — see delete_link's own docstring on why
-        views always survive a link's removal).
+        """Edits an existing link's `title`, `category_id`, and/or
+        `destination_url` in place — added so an Admin can fix a typo or
+        relabel a link without deleting and recreating it, which would
+        otherwise be the only option (and would drop it off "My Links"
+        under a brand-new short_code, losing the view history readers
+        associate with the old one, even though the underlying View rows
+        and balance are untouched either way — see delete_link's own
+        docstring on why views always survive a link's removal).
 
         Ownership rule mirrors delete_link exactly: an Admin may only
         edit their own link; the Owner (is_owner=True) may edit anyone's.
@@ -659,14 +763,18 @@ class Storage:
         controls elsewhere (ad_count) or identity/lifecycle fields that
         should never silently change after creation.
 
-        `title_provided` distinguishes "the request didn't mention title
-        at all, leave it alone" from "the request explicitly wants it
-        cleared to blank" (`title=None, title_provided=True`) — plain
-        `title=None` alone can't carry that distinction since None is
-        also this field's own empty value. `destination_url` doesn't
-        need the same two-state trick since a link's destination is
-        never usefully blank, so ordinary `None` there just means
-        "leave unchanged".
+        `title_provided`/`category_id_provided` distinguish "the request
+        didn't mention this field at all, leave it alone" from "the
+        request explicitly wants it cleared to blank" (`title=None,
+        title_provided=True`) — plain `None` alone can't carry that
+        distinction since None is also each field's own empty value.
+        `destination_url` doesn't need the same two-state trick since a
+        link's destination is never usefully blank, so ordinary `None`
+        there just means "leave unchanged". `category_id` is passed
+        through with no ownership check here — app.py is responsible for
+        confirming a new `category_id` actually belongs to the link's
+        *owning* Admin (not necessarily the requester, if the Owner is
+        editing someone else's link) before calling this.
         """
         async with self._lock:
             link = self.links.get(short_code)
@@ -678,6 +786,8 @@ class Storage:
                 link.title = title
             if destination_url is not None:
                 link.destination_url = destination_url
+            if category_id_provided:
+                link.category_id = category_id
             await self._save_locked()
             return link
 
@@ -712,6 +822,8 @@ class Storage:
                 {
                     "short_code": l.short_code,
                     "title": l.title,
+                    "category_id": l.category_id,
+                    "category_name": self._category_name(owner_telegram_id, l.category_id),
                     "destination_url": l.destination_url,
                     "ad_count": l.ad_count,
                     "created_at": l.created_at,
@@ -1385,6 +1497,7 @@ class Storage:
                 {
                     "short_code": v.short_code,
                     "title": link.title if link else None,
+                    "category_name": self._category_name(telegram_id, link.category_id) if link else None,
                     "destination_url": link.destination_url if link else None,
                     "views": 0,
                     "income": 0.0,

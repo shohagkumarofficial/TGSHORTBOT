@@ -151,6 +151,29 @@ class TrafficSource(BaseModel):
     updated_at: str = Field(default_factory=now_iso)
 
 
+class Category(BaseModel):
+    """One user-defined label an Admin/Sub Admin can tag their own short
+    links with (e.g. "Movies", "Giveaway", "YouTube promo") — purely a
+    personal organizational tool, not read by ad-serving or CPM
+    crediting anywhere. Scoped to whichever Admin created it, the same
+    way TrafficSource is: it lives inside that Admin's own `categories`
+    list rather than a shared platform-wide table, so two different
+    Admins can each have a category named the same thing without
+    colliding, and one Admin's categories are never shown or selectable
+    by another.
+
+    Renaming isn't supported — delete and recreate covers it, since
+    (unlike a Link) removing a Category loses nothing: no view history
+    or balance is attached to a category itself, only to the links that
+    once referenced it (and storage.delete_category clears their
+    `category_id` back to None rather than leaving it dangling).
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    created_at: str = Field(default_factory=now_iso)
+
+
 class Admin(BaseModel):
     telegram_id: int
     username: Optional[str] = None
@@ -161,6 +184,7 @@ class Admin(BaseModel):
     status: AdminStatus = AdminStatus.ACTIVE
 
     traffic_sources: list[TrafficSource] = Field(default_factory=list)
+    categories: list[Category] = Field(default_factory=list)
 
     # Which PolicySetting.version this Admin last tapped "Accept" on (see
     # PolicySetting below). 0 means "never accepted anything" — a brand
@@ -272,6 +296,14 @@ class Link(BaseModel):
     # it, and nothing else in the app (ad-serving, CPM crediting, the
     # bot's /newlink flow) reads or depends on it — it's display-only.
     title: Optional[str] = None
+    # References one of the owning Admin's own Category.id values (see
+    # Category's docstring) — never validated against a foreign key at
+    # this model level, only at request time in app.py, the same
+    # division of labor `title`'s own length check follows. A dangling
+    # value (the category was since deleted) is treated as "no
+    # category" everywhere this is read, never an error — see
+    # storage.delete_category and Storage._category_name.
+    category_id: Optional[str] = None
     ad_count: int = 3
     created_at: str = Field(default_factory=now_iso)
 
