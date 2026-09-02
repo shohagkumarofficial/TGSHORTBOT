@@ -951,11 +951,12 @@
       <div class="card" data-short-code="${esc(l.short_code)}">
         ${l.title ? `<div class="meta" style="color:var(--text); font-weight:600;">${esc(l.title)}</div>` : ""}
         <div class="meta" style="color:${l.title ? "var(--text-faint)" : "var(--text)"}; ${l.title ? "" : "font-weight:600;"}">/${esc(l.short_code)}</div>
+        ${l.category_name ? `<span class="pill" style="background:var(--violet-soft); color:var(--violet); margin:4px 0; display:inline-block;">${esc(l.category_name)}</span>` : ""}
         <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(l.destination_url)}</div>
         <div class="meta">${l.view_count} views${l.daily_capped_views ? ` · ${l.daily_capped_views} missed` : ""}</div>
         <div class="meta">${icon("play", 12)} ${l.effective_ad_count} ad${l.effective_ad_count === 1 ? "" : "s"} to unlock</div>
         <div class="btn-row">
-          <button class="btn btn-outline btn-sm linkEditBtn" data-code="${esc(l.short_code)}" data-title="${esc(l.title || "")}" data-url="${esc(l.destination_url)}">${icon("edit", 14)} Edit title/URL</button>
+          <button class="btn btn-outline btn-sm linkEditBtn" data-code="${esc(l.short_code)}" data-title="${esc(l.title || "")}" data-url="${esc(l.destination_url)}" data-category="${esc(l.category_id || "")}">${icon("edit", 14)} Edit title/URL</button>
         </div>
       </div>
     `).join("");
@@ -1243,6 +1244,89 @@
         } catch (e) {
           toast(e.message, "err");
           btn.disabled = false; btn.textContent = "Revoke";
+        }
+      });
+    });
+  }
+
+  // Categories — a simpler cousin of Traffic Sources above: add/remove
+  // only, no in-place edit (see Category's docstring in models.py on
+  // why renaming isn't worth supporting). `prefix` namespaces element
+  // ids the same way trafficSourceSectionHTML does, in case this ever
+  // needs to appear in more than one tab.
+  const MAX_CATEGORIES_PER_ADMIN = 30;
+
+  function categorySectionHTML(prefix, categories) {
+    const listHtml = (categories && categories.length)
+      ? categories.map((c) => `
+          <div class="ts-item">
+            <div class="ts-info">
+              <div class="ts-platform">${esc(c.name)}</div>
+            </div>
+            <div class="ts-actions">
+              <button class="ts-icon-btn danger ${prefix}DelBtn" data-id="${c.id}" data-name="${esc(c.name)}" title="Remove">${icon("trash", 14)}</button>
+            </div>
+          </div>
+        `).join("")
+      : `<div class="empty" style="padding:14px 4px;">No categories yet — add one to organize your links.</div>`;
+    return `
+      <div class="card">
+        <h3>Categories</h3>
+        <div class="meta">Organize your own links into categories (e.g. Movies, Giveaway, YouTube) — purely for your own reference; pick one when creating a link.</div>
+        <div id="${prefix}List" style="margin-top:6px;">${listHtml}</div>
+      </div>
+      <div class="card">
+        <label>New category name</label>
+        <input type="text" id="${prefix}Name" maxlength="40" placeholder="e.g. Movies" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="${prefix}Save">Add category</button></div>
+      </div>
+    `;
+  }
+
+  function wireCategorySection(el, prefix, afterChange) {
+    const nameInput = el.querySelector(`#${prefix}Name`);
+    const saveBtn = el.querySelector(`#${prefix}Save`);
+
+    saveBtn.addEventListener("click", async () => {
+      const name = nameInput.value.trim();
+      if (!name) { toast("Enter a category name", "err"); return; }
+      if ((state.me.categories || []).length >= MAX_CATEGORIES_PER_ADMIN) {
+        toast(`You can have at most ${MAX_CATEGORIES_PER_ADMIN} categories`, "err");
+        return;
+      }
+      saveBtn.disabled = true; saveBtn.textContent = "Adding…";
+      try {
+        await api("/api/categories", { method: "POST", body: JSON.stringify({ name }) });
+        toast("Category added", "ok");
+        await loadMe();
+        afterChange();
+      } catch (e) {
+        toast(e.message, "err");
+        saveBtn.disabled = false; saveBtn.textContent = "Add category";
+      }
+    });
+
+    el.querySelectorAll(`.${prefix}DelBtn`).forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const sure = await confirmAction({
+          iconName: "trash",
+          title: "Remove this category?",
+          bodyHtml: `
+            <div class="meta" style="color:var(--text); font-weight:600; margin-bottom:12px;">${esc(btn.dataset.name)}</div>
+            <div class="meta">Any of your links using it will simply show no category — nothing is deleted.</div>
+          `,
+          confirmLabel: `${icon("trash", 14)} Remove`,
+        });
+        if (!sure) return;
+        btn.disabled = true;
+        try {
+          await api(`/api/categories/${btn.dataset.id}`, { method: "DELETE" });
+          toast("Category removed", "ok");
+          await loadMe();
+          afterChange();
+        } catch (e) {
+          toast(e.message, "err");
+          btn.disabled = false;
         }
       });
     });
@@ -1791,6 +1875,7 @@
                 <div>
                   <div class="tl-code">${l.title ? esc(l.title) : "/" + esc(l.short_code)}</div>
                   <div class="tl-url">${l.title ? "/" + esc(l.short_code) + " · " : ""}${esc(l.destination_url || "")}</div>
+                  ${l.category_name ? `<span class="pill" style="background:var(--violet-soft); color:var(--violet); margin-top:4px; display:inline-block; font-size:9.5px; padding:1px 6px;">${esc(l.category_name)}</span>` : ""}
                 </div>
                 <div class="tl-stats">${l.views} views<br><b>${fmt(l.income)}</b></div>
               </div>
@@ -1846,6 +1931,11 @@
         <h3>Create a short link</h3>
         <label for="newTitle">Title <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional)</span></label>
         <input type="text" id="newTitle" maxlength="100" placeholder="e.g. August giveaway post" />
+        <label for="newCategory">Category <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional)</span></label>
+        <select id="newCategory">
+          <option value="">No category</option>
+          ${(state.me.categories || []).map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}
+        </select>
         <label for="newUrl">Destination URL</label>
         <input type="url" id="newUrl" placeholder="https://example.com/your-page" />
         <div class="btn-row"><button class="btn btn-primary btn-block" id="createLinkBtn">Create link</button></div>
@@ -1853,27 +1943,34 @@
       <div id="createResult"></div>
       <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
         Tip: you can also create a link from the bot chat with <code>/newlink</code>. Head to
-        My Links to see everything you've created.
+        My Links to see everything you've created. Manage categories from your Profile tab.
       </p>
     `;
     el.querySelector("#createLinkBtn").addEventListener("click", async () => {
       const titleInput = el.querySelector("#newTitle");
       const title = titleInput.value.trim();
+      const categorySelect = el.querySelector("#newCategory");
+      const category_id = categorySelect.value || null;
       const input = el.querySelector("#newUrl");
       const url = input.value.trim();
       if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
       const btn = el.querySelector("#createLinkBtn");
       btn.disabled = true; btn.textContent = "Creating…";
       try {
-        const res = await api("/api/links", { method: "POST", body: JSON.stringify({ destination_url: url, title: title || null }) });
+        const res = await api("/api/links", {
+          method: "POST",
+          body: JSON.stringify({ destination_url: url, title: title || null, category_id }),
+        });
         input.value = "";
         titleInput.value = "";
+        categorySelect.value = "";
         toast("Short link created", "ok");
         const resultEl = el.querySelector("#createResult");
         resultEl.innerHTML = `
           <div class="card" style="border-color: rgba(63,191,127,.35);">
             <h3>${icon("checkCircle", 15)} Your short link is ready</h3>
             ${res.title ? `<div class="meta" style="color:var(--text); font-weight:600; margin-bottom:2px;">${esc(res.title)}</div>` : ""}
+            ${res.category_name ? `<span class="pill" style="background:var(--violet-soft); color:var(--violet); margin-bottom:6px; display:inline-block;">${esc(res.category_name)}</span>` : ""}
             <code class="short-url">${esc(res.short_url)}</code>
             <div class="btn-row"><button class="btn btn-outline btn-block copyBtn" data-url="${esc(res.short_url)}">${icon("clipboard", 14)} Copy link</button></div>
           </div>
@@ -1982,17 +2079,31 @@
   }
 
   // Lets an Admin (or, from the Owner's per-Admin detail page, the
-  // Owner) fix a link's title or destination URL after creation via
-  // PUT /api/links/{short_code}/storage.update_link — the alternative
-  // to deleting and recreating a link just to correct a typo, which
-  // would otherwise drop it off "My Links" under a brand-new short_code
-  // and lose the view history readers associate with the old one.
-  function openEditLinkModal(shortCode, currentTitle, currentUrl, afterSave) {
+  // Owner) fix a link's title, category, or destination URL after
+  // creation via PUT /api/links/{short_code}/storage.update_link — the
+  // alternative to deleting and recreating a link just to correct a
+  // typo, which would otherwise drop it off "My Links" under a
+  // brand-new short_code and lose the view history readers associate
+  // with the old one. `availableCategories` is the *owning* Admin's own
+  // category list (state.me.categories for My Links; the target
+  // Admin's own list when the Owner opens this from a per-Admin detail
+  // page) — never the caller's own list when those two differ, since a
+  // link can only ever be tagged with a category that belongs to
+  // whoever actually owns it.
+  function openEditLinkModal(shortCode, currentTitle, currentUrl, currentCategoryId, availableCategories, afterSave) {
+    const categoryOptionsHtml = (availableCategories || [])
+      .map((c) => `<option value="${esc(c.id)}" ${c.id === currentCategoryId ? "selected" : ""}>${esc(c.name)}</option>`)
+      .join("");
     openModal(`
       <h3>${icon("edit", 16)} Edit link</h3>
       <div class="meta" style="margin-bottom:10px; color:var(--text-faint);">/${esc(shortCode)}</div>
       <label>Title <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional)</span></label>
       <input type="text" id="editLinkTitle" maxlength="100" value="${esc(currentTitle || "")}" placeholder="e.g. August giveaway post" />
+      <label>Category <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional)</span></label>
+      <select id="editLinkCategory">
+        <option value="">No category</option>
+        ${categoryOptionsHtml}
+      </select>
       <label>Destination URL</label>
       <input type="url" id="editLinkUrl" value="${esc(currentUrl || "")}" />
       <div class="btn-row"><button class="btn btn-primary btn-block" id="editLinkSave">Save changes</button></div>
@@ -2001,6 +2112,7 @@
     document.getElementById("editLinkCancel").addEventListener("click", closeModal);
     document.getElementById("editLinkSave").addEventListener("click", async () => {
       const title = document.getElementById("editLinkTitle").value.trim();
+      const category_id = document.getElementById("editLinkCategory").value || null;
       const url = document.getElementById("editLinkUrl").value.trim();
       if (!/^https?:\/\//i.test(url)) { toast("Enter a valid http(s) URL", "err"); return; }
       const saveBtn = document.getElementById("editLinkSave");
@@ -2008,7 +2120,7 @@
       try {
         await api(`/api/links/${shortCode}`, {
           method: "PUT",
-          body: JSON.stringify({ title: title || null, destination_url: url }),
+          body: JSON.stringify({ title: title || null, category_id, destination_url: url }),
         });
         closeModal();
         toast("Link updated", "ok");
@@ -2031,10 +2143,11 @@
       <div class="card">
         <h3>${l.title ? esc(l.title) : "/" + esc(l.short_code)}</h3>
         ${l.title ? `<div class="meta" style="color:var(--text-faint); margin-top:-6px;">/${esc(l.short_code)}</div>` : ""}
+        ${l.category_name ? `<span class="pill" style="background:var(--violet-soft); color:var(--violet); margin:4px 0; display:inline-block;">${esc(l.category_name)}</span>` : ""}
         <code class="short-url">${esc(l.short_url)}</code>
         <div class="btn-row">
           <button class="btn btn-outline btn-sm copyBtn" data-url="${esc(l.short_url)}">${icon("clipboard", 14)} Copy</button>
-          <button class="btn btn-outline btn-sm linkEditBtn" data-code="${esc(l.short_code)}" data-title="${esc(l.title || "")}" data-url="${esc(l.destination_url)}">${icon("edit", 14)} Edit</button>
+          <button class="btn btn-outline btn-sm linkEditBtn" data-code="${esc(l.short_code)}" data-title="${esc(l.title || "")}" data-url="${esc(l.destination_url)}" data-category="${esc(l.category_id || "")}">${icon("edit", 14)} Edit</button>
           <button class="btn btn-outline btn-sm linkDelBtn" data-code="${esc(l.short_code)}" data-title="${esc(l.title || "")}">${icon("trash", 14)} Delete</button>
         </div>
         <div class="meta">→ ${esc(l.destination_url)}</div>
@@ -2045,7 +2158,7 @@
     wireCopyButtons(listEl);
     listEl.querySelectorAll(".linkEditBtn").forEach((btn) => {
       btn.addEventListener("click", () => {
-        openEditLinkModal(btn.dataset.code, btn.dataset.title, btn.dataset.url, async () => {
+        openEditLinkModal(btn.dataset.code, btn.dataset.title, btn.dataset.url, btn.dataset.category, state.me.categories, async () => {
           await loadLinks();
           renderLinksList();
         });
@@ -2182,6 +2295,9 @@
       <div class="section-title" style="margin-top:18px;">Traffic Sources</div>
       ${trafficSourceSectionHTML("pTs", state.me.traffic_sources)}
 
+      <div class="section-title" style="margin-top:18px;">Categories</div>
+      ${categorySectionHTML("pCat", state.me.categories)}
+
       <div class="section-title" style="margin-top:18px;">Withdraw</div>
       ${withdrawPausedBannerHTML()}
       <div class="card">
@@ -2211,6 +2327,7 @@
     `;
 
     wireTrafficSourceSection(el, "pTs", () => { renderTopCard(); renderProfile(el); });
+    wireCategorySection(el, "pCat", () => renderProfile(el));
     wireRequestAdminSection(el);
     wireApiKeysSection(el, async () => { await loadApiKeys(); renderProfile(el); });
 
@@ -2977,6 +3094,7 @@
                 <div>
                   <div class="tl-code">${l.title ? esc(l.title) : "/" + esc(l.short_code)}</div>
                   <div class="tl-url">${l.title ? "/" + esc(l.short_code) + " · " : ""}${esc(l.destination_url || "")}</div>
+                  ${l.category_name ? `<span class="pill" style="background:var(--violet-soft); color:var(--violet); margin-top:4px; display:inline-block; font-size:9.5px; padding:1px 6px;">${esc(l.category_name)}</span>` : ""}
                 </div>
                 <div class="tl-stats">${l.views} views<br><b>${fmt(l.income)}</b></div>
               </div>
@@ -3095,7 +3213,10 @@
 
     el.querySelectorAll(".linkEditBtn").forEach((btn) => {
       btn.addEventListener("click", () => {
-        openEditLinkModal(btn.dataset.code, btn.dataset.title, btn.dataset.url, () => renderAdminDetail(el, telegramId));
+        openEditLinkModal(
+          btn.dataset.code, btn.dataset.title, btn.dataset.url, btn.dataset.category, a.categories,
+          () => renderAdminDetail(el, telegramId)
+        );
       });
     });
 
