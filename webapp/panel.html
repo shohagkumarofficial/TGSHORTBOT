@@ -943,10 +943,13 @@
     if (!links || !links.length) {
       return `<div class="card"><div class="empty">This Admin hasn't created any links yet.</div></div>`;
     }
-    // Read-only: ad count is now set once on this Admin/Sub Admin's
-    // profile (see the "Ad count override" card above) rather than per
-    // link — every row shows the same effective_ad_count for that
-    // reason, not a per-link value.
+    // Read-only here either way: ad count is set on this Admin/Sub
+    // Admin's profile (or on one of their categories) from the cards
+    // above, never edited per link. Each row's own effective_ad_count
+    // can still differ from another's, though — a category-level
+    // override only applies to links tagged with that category, so two
+    // links owned by the same Admin can legitimately show different
+    // counts (see effective_ad_count()'s priority order in models.py).
     return links.map((l) => `
       <div class="card" data-short-code="${esc(l.short_code)}">
         ${l.title ? `<div class="meta" style="color:var(--text); font-weight:600;">${esc(l.title)}</div>` : ""}
@@ -3133,6 +3136,20 @@
         <div class="meta" style="color:var(--text-faint);">Applies instantly to every link this ${esc(roleMeta(a.role).label)} already has, and every new one — no need to set it per link.</div>
         <div class="btn-row"><button class="btn btn-primary btn-block" id="adminAdCountSaveBtn">Save ad count</button></div>
       </div>
+
+      ${a.categories && a.categories.length ? `
+        <div class="section-title" style="margin-top:14px;">${icon("layers", 14)} Category ad count overrides</div>
+        <div class="card">
+          <div class="meta">Give any of this ${esc(roleMeta(a.role).label)}'s own categories a fixed ad count — every link tagged with it (existing and future) shows that many ads, taking priority over the profile-level override above. Leave a category blank to fall back to that override, or the platform default if that's blank too.</div>
+          ${a.categories.map((c) => `
+            <div class="row-between" style="margin-top:12px; gap:8px; align-items:center;">
+              <div style="flex:1; min-width:0; font-size:13px; color:var(--text); font-weight:600;">${esc(c.name)}</div>
+              <input type="number" class="categoryAdCountInput" data-category-id="${c.id}" min="${AD_COUNT_MIN}" max="${AD_COUNT_MAX}" step="1" value="${c.ad_count != null ? c.ad_count : ""}" placeholder="Default" style="width:84px; flex:0 0 auto;" />
+              <button class="btn btn-outline btn-sm categoryAdCountSaveBtn" data-category-id="${c.id}" style="flex:0 0 auto;">Save</button>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
       <div id="adminLinksList">${adminLinksListHTML(adminLinks)}</div>
 
       ${a.admin_request_status === "pending" ? `
@@ -3278,6 +3295,31 @@
         }
       });
     }
+
+    el.querySelectorAll(".categoryAdCountSaveBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const categoryId = btn.dataset.categoryId;
+        const input = el.querySelector(`.categoryAdCountInput[data-category-id="${categoryId}"]`);
+        const raw = input.value.trim();
+        const ad_count = raw === "" ? null : parseInt(raw, 10);
+        if (ad_count !== null && (!Number.isFinite(ad_count) || ad_count < AD_COUNT_MIN || ad_count > AD_COUNT_MAX)) {
+          toast(`Ad count must be between ${AD_COUNT_MIN} and ${AD_COUNT_MAX}, or left blank`, "err");
+          return;
+        }
+        btn.disabled = true; btn.textContent = "Saving…";
+        try {
+          await api(`/api/admin/admins/${telegramId}/categories/${categoryId}/ad-count`, {
+            method: "POST",
+            body: JSON.stringify({ ad_count }),
+          });
+          toast("Category ad count updated", "ok");
+          renderAdminDetail(el, telegramId);
+        } catch (e) {
+          toast(e.message, "err");
+          btn.disabled = false; btn.textContent = "Save";
+        }
+      });
+    });
 
     const autoDeleteSaveBtn = el.querySelector("#autoDeleteSaveBtn");
     if (autoDeleteSaveBtn) {
