@@ -572,18 +572,19 @@ class Storage:
                 await self._save_locked()
             return changed
 
-    def _category_name(self, owner_telegram_id: int, category_id: Optional[str]) -> Optional[str]:
-        """Resolves a link's `category_id` to its current display name,
-        read fresh from the *owning* Admin's own `categories` list —
-        never a global lookup, since categories are per-Admin (see
-        Category's docstring). Returns None if the link has no
-        category, or if the category was since deleted (delete_category
-        already clears `category_id` on that Admin's own links when it
-        happens, but this stays defensive regardless) — every caller
-        treats that the same as "no category" rather than surfacing a
-        broken reference. A plain sync helper (no lock, no await) since
-        it only reads already-in-memory state; called from inside
-        already-async, already-locked-where-needed methods below.
+    def _category_for_id(self, owner_telegram_id: int, category_id: Optional[str]) -> Optional[Category]:
+        """Resolves a link's `category_id` back to the actual Category
+        object, read fresh from the *owning* Admin's own `categories`
+        list — never a global lookup, since categories are per-Admin
+        (see Category's docstring). Returns None for "no category" or a
+        since-deleted category (delete_category already clears
+        `category_id` on that Admin's own links when it happens, but
+        this stays defensive regardless). The shared lookup behind both
+        `_category_name` (display) and `effective_ad_count`'s category
+        argument (ad-serving) — see callers below and in app.py/bot.py —
+        so the two can never disagree about which Category a given
+        `category_id` actually refers to. A plain sync helper (no lock,
+        no await) since it only reads already-in-memory state.
         """
         if not category_id:
             return None
@@ -592,8 +593,70 @@ class Storage:
             return None
         for c in owner.categories:
             if c.id == category_id:
-                return c.name
+                return c
         return None
+
+    def _category_name(self, owner_telegram_id: int, category_id: Optional[str]) -> Optional[str]:
+        """Display-name convenience wrapper over `_category_for_id` —
+        every caller that only needs the name (not the full Category,
+        e.g. to also check its `ad_count`) uses this instead.
+        """
+        category = self._category_for_id(owner_telegram_id, category_id)
+        return category.name if category else None
+
+    async def set_category_ad_count(
+        self, owner_telegram_id: int, category_id: str, ad_count: Optional[int], changed_by: int
+    ) -> Optional[Category]:
+        """Owner-only per-category ad count override — e.g. every link
+        an Admin tags "Movie" shows 10 ads, "Natok" shows 7, regardless
+        of that Admin's own `Admin.ad_count` profile setting (see
+        `effective_ad_count()`'s full priority order in models.py, where
+        a category's own count is checked *before* the per-Admin one).
+        `ad_count=None` clears the override, falling back to the
+        Admin-level override (if any) or the platform default. Bounds
+        (Storage.MIN_AD_COUNT..MAX_AD_COUNT) are enforced by the caller
+        (app.py), same as set_admin_ad_count leaves its own range check
+        to the caller.
+
+        Real-time by construction: nothing here touches any existing
+        Link row. `effective_ad_count()` reads this category's current
+        `ad_count` fresh on every `/r/{short_code}` and
+        `/api/ad-config/{short_code}` call, so the change is visible on
+        every link tagged with this category — existing and future — the
+        instant it's saved, exactly like the per-Admin override already
+        works.
+        """
+        async with self._lock:
+            owner = self.admins.get(owner_telegram_id)
+            if not owner:
+                return None
+            category = None
+            for c in owner.categories:
+                if c.id == category_id:
+                    category = c
+                    break
+            if not category:
+                return None
+            old = category.ad_count
+            if old == ad_count:
+                return category
+            category.ad_count = ad_count
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="category_ad_count_change",
+                    detail={
+                        "owner_telegram_id": owner_telegram_id,
+                        "category_id": category_id,
+                        "category_name": category.name,
+                        "from": old,
+                        "to": ad_count,
+                        "by": changed_by,
+                    },
+                )
+            )
+            await self._save_locked()
+            return category
+
 
     # ------------------------------------------------------------------
     # Link

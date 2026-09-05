@@ -359,7 +359,8 @@ async def redirect_entry(short_code: str):
     cs = await storage.get_cpm_setting()
     ans = await storage.get_ad_network_setting()
     owner = await storage.get_admin(link.owner_telegram_id)
-    ad_config = _build_ad_config(ans, cs, effective_ad_count(owner, ans))
+    category = storage._category_for_id(link.owner_telegram_id, link.category_id)
+    ad_config = _build_ad_config(ans, cs, effective_ad_count(owner, ans, category))
     with open("webapp/viewer.html", "r", encoding="utf-8") as f:
         html = f.read()
     html = (
@@ -406,7 +407,8 @@ async def get_ad_config(short_code: str):
     cs = await storage.get_cpm_setting()
     ans = await storage.get_ad_network_setting()
     owner = await storage.get_admin(link.owner_telegram_id)
-    return _build_ad_config(ans, cs, effective_ad_count(owner, ans))
+    category = storage._category_for_id(link.owner_telegram_id, link.category_id)
+    return _build_ad_config(ans, cs, effective_ad_count(owner, ans, category))
 
 
 @app.get("/panel", response_class=HTMLResponse)
@@ -746,25 +748,27 @@ async def my_links(admin: Admin = Depends(require_admin)):
     can see the old per-link value — it's legacy and read-only either
     way (see Link.ad_count's docstring). `effective_ad_count` is the
     number that actually matters now: how many ads a viewer of this
-    link really watches, i.e. this Admin's own `Admin.ad_count`
-    profile override if the Owner set one for them, otherwise
-    len(AdNetworkSetting.slot_sequence) — see effective_ad_count()'s
-    docstring in models.py. It's the same value for every link in this
-    list, since it's a per-Admin setting, not a per-link one.
+    link really watches — see effective_ad_count()'s full priority
+    order in models.py (a category-level override, if this link has one
+    and the Owner set one for it, wins over this Admin's own
+    `Admin.ad_count` profile override, which wins over the platform
+    default). Computed per-link, not once for the whole Admin, since two
+    links in different categories can now genuinely show different
+    counts even though they're owned by the same Admin.
     """
     ans = await storage.get_ad_network_setting()
-    my_ad_count = effective_ad_count(admin, ans)
     links = await storage.list_links_by_owner(admin.telegram_id)
     out = []
     for l in links:
         views = await storage.list_views_by_short_code(l.short_code)
         genuine_views = [v for v in views if not v.daily_capped]
+        category = storage._category_for_id(admin.telegram_id, l.category_id)
         out.append(
             {
                 **l.model_dump(),
                 "short_url": _short_url_for(l.short_code),
-                "category_name": _category_name_for(admin.categories, l.category_id),
-                "effective_ad_count": my_ad_count,
+                "category_name": category.name if category else None,
+                "effective_ad_count": effective_ad_count(admin, ans, category),
                 "view_count": len(genuine_views),
                 "confirmed_views": len(
                     [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]
@@ -1118,18 +1122,22 @@ async def admin_detail(telegram_id: int, owner: Admin = Depends(require_owner)):
 async def admin_links(telegram_id: int, owner: Admin = Depends(require_owner)):
     """Every link this Admin/Sub Admin owns — the list the Owner's
     per-Admin detail page shows alongside their profile-level ad count
-    control (see POST /api/admin/admins/{telegram_id}/ad-count).
-    `effective_ad_count` is the same value repeated on every row (a
-    per-Admin setting, not a per-link one), included per-link only so
-    the panel doesn't need a second round trip."""
+    control (see POST /api/admin/admins/{telegram_id}/ad-count) and any
+    of their categories' own ad count overrides (see POST
+    /api/admin/admins/{telegram_id}/categories/{category_id}/ad-count).
+    `effective_ad_count` is computed per-link now, not repeated as one
+    value for the whole Admin — two links in different categories can
+    genuinely show different counts even though the same Admin owns
+    both; see effective_ad_count()'s full priority order in models.py.
+    """
     target = await storage.get_admin(telegram_id)
     if not target or not await storage.admin_stats(telegram_id):
         raise HTTPException(status_code=404, detail="admin not found")
     ans = await storage.get_ad_network_setting()
-    my_ad_count = effective_ad_count(target, ans)
     links = await storage.admin_links_detail(telegram_id)
     for l in links:
-        l["effective_ad_count"] = my_ad_count
+        category = storage._category_for_id(telegram_id, l.get("category_id"))
+        l["effective_ad_count"] = effective_ad_count(target, ans, category)
     return {"links": links}
 
 
@@ -1364,6 +1372,36 @@ async def set_admin_ad_count(telegram_id: int, payload: dict, owner: Admin = Dep
     return updated.model_dump()
 
 
+@app.post("/api/admin/admins/{telegram_id}/categories/{category_id}/ad-count")
+async def set_category_ad_count(
+    telegram_id: int, category_id: str, payload: dict, owner: Admin = Depends(require_owner)
+):
+    """Owner-only per-category ad count override — every link this
+    Admin/Sub Admin has tagged with this specific category (existing and
+    future) shows this many ads, taking priority over their own profile-
+    level `Admin.ad_count` override (see effective_ad_count()'s full
+    priority order in models.py). `ad_count: null` clears the category's
+    own override, falling back to that Admin's profile-level setting or
+    the platform default.
+    """
+    raw = payload.get("ad_count")
+    ad_count = None
+    if raw is not None and raw != "":
+        try:
+            ad_count = int(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="ad_count must be a whole number or null")
+        if not (Storage.MIN_AD_COUNT <= ad_count <= Storage.MAX_AD_COUNT):
+            raise HTTPException(
+                status_code=400,
+                detail=f"ad_count must be between {Storage.MIN_AD_COUNT} and {Storage.MAX_AD_COUNT}",
+            )
+    updated = await storage.set_category_ad_count(telegram_id, category_id, ad_count, changed_by=owner.telegram_id)
+    if not updated:
+        raise HTTPException(status_code=404, detail="category not found")
+    return updated.model_dump()
+
+
 @app.post("/api/admin/admins/{telegram_id}/auto-delete")
 async def set_link_auto_delete(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
     months_raw = payload.get("months")
@@ -1483,18 +1521,18 @@ async def v1_create_link(payload: dict, admin: Admin = Depends(require_api_key))
 @app.get("/api/v1/links")
 async def v1_my_links(admin: Admin = Depends(require_api_key)):
     ans = await storage.get_ad_network_setting()
-    my_ad_count = effective_ad_count(admin, ans)
     links = await storage.list_links_by_owner(admin.telegram_id)
     out = []
     for l in links:
         views = await storage.list_views_by_short_code(l.short_code)
         genuine_views = [v for v in views if not v.daily_capped]
+        category = storage._category_for_id(admin.telegram_id, l.category_id)
         out.append(
             {
                 **l.model_dump(),
                 "short_url": _short_url_for(l.short_code),
-                "category_name": _category_name_for(admin.categories, l.category_id),
-                "effective_ad_count": my_ad_count,
+                "category_name": category.name if category else None,
+                "effective_ad_count": effective_ad_count(admin, ans, category),
                 "view_count": len(genuine_views),
                 "confirmed_views": len(
                     [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]

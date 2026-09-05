@@ -518,19 +518,28 @@ def _bot_short_url_for(code: str, settings) -> str:
     return f"https://t.me/{settings.BOT_USERNAME}?start={code}"
 
 
-async def _effective_ad_count(storage, link_owner_telegram_id: int | None = None) -> int:
+async def _effective_ad_count(
+    storage, link_owner_telegram_id: int | None = None, category_id: str | None = None
+) -> int:
     """How many ads a viewer actually watches to unlock a given link
-    right now — the owning Admin/Sub Admin's own `Admin.ad_count`
-    profile override if the Owner set one, otherwise the platform-wide
-    `AdNetworkSetting.slot_sequence` length — see
-    models.effective_ad_count()'s docstring. Used only for the
-    human-readable count in bot messages; the real enforcement lives in
-    app.py/webapp/viewer.html. `link_owner_telegram_id=None` (e.g. no
-    link context yet) always falls back to the platform default.
+    right now — a category-level override on this specific link's own
+    category (if any), then the owning Admin/Sub Admin's own
+    `Admin.ad_count` profile override if the Owner set one, otherwise
+    the platform-wide `AdNetworkSetting.slot_sequence` length — see
+    models.effective_ad_count()'s full priority order. Used only for the
+    human-readable count in bot messages (the "চালিয়ে যান (Nটি বিজ্ঞাপন
+    দেখুন)" button text); the real enforcement lives in
+    app.py/webapp/viewer.html — this must stay in sync with that so the
+    number a viewer sees before tapping through never disagrees with the
+    actual ad-lock page they land on. `link_owner_telegram_id=None`
+    (e.g. no link context yet) always falls back to the platform
+    default; `category_id=None` (a link with no category, or the caller
+    genuinely has no link context) skips the category-level check.
     """
     ans = await storage.get_ad_network_setting()
     owner = await storage.get_admin(link_owner_telegram_id) if link_owner_telegram_id else None
-    return effective_ad_count(owner, ans)
+    category = storage._category_for_id(link_owner_telegram_id, category_id) if link_owner_telegram_id else None
+    return effective_ad_count(owner, ans, category)
 
 
 def register_handlers(dp: Dispatcher, storage, settings) -> None:
@@ -611,7 +620,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         if not link:
             await message.answer("এই শর্ট লিংকটি খুঁজে পাওয়া যায়নি বা মেয়াদোত্তীর্ণ।")
             return
-        ad_count = await _effective_ad_count(storage, link.owner_telegram_id)
+        ad_count = await _effective_ad_count(storage, link.owner_telegram_id, link.category_id)
         view_url = f"{settings.WEBAPP_BASE_URL}/r/{code}"
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
@@ -652,7 +661,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         if resume_code and resume_code != _NO_RESUME:
             link = await storage.get_link(resume_code)
             if link:
-                ad_count = await _effective_ad_count(storage, link.owner_telegram_id)
+                ad_count = await _effective_ad_count(storage, link.owner_telegram_id, link.category_id)
                 view_url = f"{settings.WEBAPP_BASE_URL}/r/{resume_code}"
                 kb = InlineKeyboardMarkup(
                     inline_keyboard=[

@@ -46,28 +46,54 @@ def effective_cpm(admin: "Admin", cpm_setting: "CPMSetting") -> float:
     return cpm_setting.current_cpm
 
 
-def effective_ad_count(admin: Optional["Admin"], ad_network_setting: "AdNetworkSetting") -> int:
+def effective_ad_count(
+    admin: Optional["Admin"],
+    ad_network_setting: "AdNetworkSetting",
+    category: Optional["Category"] = None,
+) -> int:
     """How many sequential ads a viewer must watch to unlock any link
     owned by `admin`, checked in priority order:
 
-      1. `Admin.ad_count` — this specific Admin/Sub Admin's own
+      1. `Category.ad_count` — the *link's own category's* Owner-set ad
+         count (storage.set_category_ad_count / POST /api/admin/admins/
+         {telegram_id}/categories/{category_id}/ad-count), if this link
+         is tagged with a category and the Owner gave that specific
+         category its own count. Checked before the per-Admin override
+         because a category is a statement about the *content* a link
+         points to (e.g. every link an Admin tags "Movie" showing 10
+         ads, "Natok" showing 7), which is a more specific signal than a
+         blanket per-Admin setting — an Admin with their own
+         `Admin.ad_count` set can still have individual categories
+         override it link-by-link.
+      2. `Admin.ad_count` — this specific Admin/Sub Admin's own
          profile-level override (storage.set_admin_ad_count /
          POST /api/admin/admins/{telegram_id}/ad-count), if the Owner
-         set one for them individually. Unlike the old per-link
+         set one for them individually and the link's category (if any)
+         didn't already decide the count above. Unlike the old per-link
          control, this is read fresh on every view rather than baked
          into a Link at creation time, so setting it once on an
          Admin/Sub Admin's profile applies instantly to every link they
          already have and every new one — no per-link action needed.
-      2. `len(AdNetworkSetting.slot_sequence)` — the platform-wide
+      3. `len(AdNetworkSetting.slot_sequence)` — the platform-wide
          default (Owner's "Ad display order" screen), used for any
-         Admin/Sub Admin with no override, and for `admin=None`.
+         Admin/Sub Admin with no override, any category with no override
+         (or no category at all), and for `admin=None`.
 
     Mirrors effective_cpm()'s per-Admin-override-over-platform-default
     shape, but is available to Role.ADMIN as well as Role.SUB_ADMIN —
     the ad-count override isn't tier-restricted the way CPM overrides
     are. `Link.ad_count` is never consulted here; see its docstring.
+
+    `category` is optional and independent of `admin` — pass None
+    whenever the link has no `category_id`, or the caller genuinely
+    doesn't have per-link context (e.g. resolving a generic "your admin
+    tools" count with no specific link in view); every existing caller
+    that predates categories still works unchanged by simply omitting
+    this argument.
     """
     base_count = max(1, len(ad_network_setting.slot_sequence or []))
+    if category is not None and category.ad_count is not None:
+        return category.ad_count
     if admin is not None and admin.ad_count is not None:
         return admin.ad_count
     return base_count
@@ -153,10 +179,10 @@ class TrafficSource(BaseModel):
 
 class Category(BaseModel):
     """One user-defined label an Admin/Sub Admin can tag their own short
-    links with (e.g. "Movies", "Giveaway", "YouTube promo") — purely a
-    personal organizational tool, not read by ad-serving or CPM
-    crediting anywhere. Scoped to whichever Admin created it, the same
-    way TrafficSource is: it lives inside that Admin's own `categories`
+    links with (e.g. "Movies", "Giveaway", "YouTube promo") — mostly a
+    personal organizational tool, plus one Owner-only lever: a fixed ad
+    count per category (see `ad_count` below). Never read by CPM
+    crediting. Scoped to whichever Admin created it, the same way TrafficSource is: it lives inside that Admin's own `categories`
     list rather than a shared platform-wide table, so two different
     Admins can each have a category named the same thing without
     colliding, and one Admin's categories are never shown or selectable
@@ -172,6 +198,18 @@ class Category(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
     created_at: str = Field(default_factory=now_iso)
+
+    # Owner-only per-category ad count override (storage.
+    # set_category_ad_count / POST /api/admin/admins/{telegram_id}/
+    # categories/{category_id}/ad-count) — e.g. every link this Admin
+    # tags "Movie" shows 10 ads, "Natok" shows 7, regardless of the
+    # Admin's own Admin.ad_count profile setting. None means "no
+    # category-level override" — falls through to the Admin-level
+    # override, then the platform default; see effective_ad_count()'s
+    # full priority order in this module. Unlike the category itself,
+    # this can never be set by the Admin who owns the category — only
+    # the Owner's per-Admin detail page can change it.
+    ad_count: Optional[int] = None
 
 
 class Admin(BaseModel):
