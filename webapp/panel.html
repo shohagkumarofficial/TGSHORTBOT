@@ -1494,6 +1494,7 @@
     return [
       ["links", icon("link", 17), "My Links", "Create & manage your own short links"],
       ["traffic", icon("radio", 17), "Traffic Source", "Set where your own links get shared"],
+      ["categories", icon("layers", 17), "Categories", "Organize your own links into categories"],
       ["withdraw", icon("banknote", 17), "Request Withdrawal", "Cash out your own confirmed balance"],
     ];
   }
@@ -1654,6 +1655,7 @@
       else if (state.tab === "links") await renderLinks(el);
       else if (state.tab === "profile") await renderProfile(el);
       else if (state.tab === "traffic") await renderTraffic(el);
+      else if (state.tab === "categories") await renderCategoriesPage(el);
       else if (state.tab === "withdraw") await renderWithdraw(el);
       else if (state.tab === "payouts") await renderPayouts(el);
       else if (state.tab === "adminrequests") await renderAdminRequests(el);
@@ -1683,6 +1685,27 @@
       const pa = state.platformAnalytics;
 
       el.innerHTML = `
+        <div class="section-title">Quick actions</div>
+        <div class="card">
+          <button class="btn btn-primary btn-block" id="qaPayouts">Review pending withdrawals${state.withdrawalsPending.length ? ` (${state.withdrawalsPending.length})` : ""}</button>
+          <div class="btn-row">
+            <button class="btn btn-outline btn-block" id="qaAdmins">View all admins</button>
+          </div>
+        </div>
+        <div class="section-title" style="margin-top:18px;">Your owner tools</div>
+        <div class="card" style="padding:6px;">
+          ${ownerToolItems().map(([id, icon, title, sub]) => `
+            <div class="drawer-item" data-tab="${id}">
+              <div class="ic">${icon}</div>
+              <div class="label-col"><div class="t">${title}</div><div class="s">${sub}</div></div>
+            </div>
+          `).join("")}
+        </div>
+        <p style="color:var(--text-faint); font-size:12px; line-height:1.6; margin-bottom:18px;">
+          CPM settings and platform stats live behind the ${icon("settings", 12)} menu, top right.
+        </p>
+
+        <div class="section-title">Platform analytics</div>
         <div class="card">
           <h3>${icon("users", 15)} Filter</h3>
           <label>Show data for</label>
@@ -1754,26 +1777,6 @@
               `).join("")
             : `<div class="empty">এই সময়সীমায় কোনো ভিউ পাওয়া যায়নি।</div>`}
         </div>
-
-        <div class="section-title" style="margin-top:18px;">Quick actions</div>
-        <div class="card">
-          <button class="btn btn-primary btn-block" id="qaPayouts">Review pending withdrawals${state.withdrawalsPending.length ? ` (${state.withdrawalsPending.length})` : ""}</button>
-          <div class="btn-row">
-            <button class="btn btn-outline btn-block" id="qaAdmins">View all admins</button>
-          </div>
-        </div>
-        <div class="section-title" style="margin-top:18px;">Your admin tools</div>
-        <div class="card" style="padding:6px;">
-          ${ownerToolItems().map(([id, icon, title, sub]) => `
-            <div class="drawer-item" data-tab="${id}">
-              <div class="ic">${icon}</div>
-              <div class="label-col"><div class="t">${title}</div><div class="s">${sub}</div></div>
-            </div>
-          `).join("")}
-        </div>
-        <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
-          CPM settings and platform stats live behind the ${icon("settings", 12)} menu, top right.
-        </p>
       `;
       el.querySelector("#qaPayouts").addEventListener("click", () => { state.tab = "payouts"; renderTab(); });
       el.querySelector("#qaAdmins").addEventListener("click", () => { state.tab = "admins"; renderTab(); });
@@ -1908,6 +1911,19 @@
     await loadMe();
     el.innerHTML = trafficSourceSectionHTML("ts", state.me.traffic_sources);
     wireTrafficSourceSection(el, "ts", () => { renderTopCard(); renderTraffic(el); });
+  }
+
+  // ---- Categories ---------------------------------------------------
+  // Reached from the bottom-nav Profile tab (Admin/Sub Admin — see
+  // renderProfile) or, for the Owner (who has no Profile tab of their
+  // own), from the Overview tab's "Your owner tools" list — same
+  // dedicated-single-purpose-page pattern as renderTraffic above, so
+  // the Owner has an actual place to land on tapping "Categories"
+  // instead of that entry silently going nowhere.
+  async function renderCategoriesPage(el) {
+    await loadMe();
+    el.innerHTML = categorySectionHTML("cat", state.me.categories);
+    wireCategorySection(el, "cat", () => renderCategoriesPage(el));
   }
 
   // ---- Short Link (quick create) -----------------------------------
