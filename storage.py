@@ -607,16 +607,28 @@ class Storage:
     async def set_category_ad_count(
         self, owner_telegram_id: int, category_id: str, ad_count: Optional[int], changed_by: int
     ) -> Optional[Category]:
-        """Owner-only per-category ad count override — e.g. every link
-        an Admin tags "Movie" shows 10 ads, "Natok" shows 7, regardless
-        of that Admin's own `Admin.ad_count` profile setting (see
-        `effective_ad_count()`'s full priority order in models.py, where
-        a category's own count is checked *before* the per-Admin one).
-        `ad_count=None` clears the override, falling back to the
-        Admin-level override (if any) or the platform default. Bounds
-        (Storage.MIN_AD_COUNT..MAX_AD_COUNT) are enforced by the caller
-        (app.py), same as set_admin_ad_count leaves its own range check
-        to the caller.
+        """Sets a fixed ad count on one of the Owner's own categories —
+        every link the Owner tags with it (existing and future) shows
+        this many ads, regardless of the Owner's own `Admin.ad_count`
+        profile setting if they have one (see `effective_ad_count()`'s
+        full priority order in models.py, where a category's own count
+        is checked first). `ad_count=None` clears the override, falling
+        back to the Owner's profile-level override (if any) or the
+        platform default. Bounds (Storage.MIN_AD_COUNT..MAX_AD_COUNT)
+        are enforced by the caller (app.py), same as set_admin_ad_count
+        leaves its own range check to the caller.
+
+        `owner_telegram_id` is always the platform Owner's own telegram
+        ID here — app.py's POST /api/categories/{category_id}/ad-count
+        endpoint never accepts any other value, since this lever is
+        deliberately scoped to the Owner's own categories only (see
+        Category.ad_count's docstring for why). This method itself
+        doesn't re-enforce that restriction — it just looks up whatever
+        telegram_id it's given and edits that account's own category —
+        so it stays a plain "does this category belong to this account"
+        operation or a future caller with a different access rule to
+        reuse cleanly, with app.py as the single place the actual
+        Owner-only-and-self-only policy is decided.
 
         Real-time by construction: nothing here touches any existing
         Link row. `effective_ad_count()` reads this category's current

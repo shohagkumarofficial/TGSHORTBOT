@@ -1122,13 +1122,14 @@ async def admin_detail(telegram_id: int, owner: Admin = Depends(require_owner)):
 async def admin_links(telegram_id: int, owner: Admin = Depends(require_owner)):
     """Every link this Admin/Sub Admin owns — the list the Owner's
     per-Admin detail page shows alongside their profile-level ad count
-    control (see POST /api/admin/admins/{telegram_id}/ad-count) and any
-    of their categories' own ad count overrides (see POST
-    /api/admin/admins/{telegram_id}/categories/{category_id}/ad-count).
-    `effective_ad_count` is computed per-link now, not repeated as one
-    value for the whole Admin — two links in different categories can
-    genuinely show different counts even though the same Admin owns
-    both; see effective_ad_count()'s full priority order in models.py.
+    control (see POST /api/admin/admins/{telegram_id}/ad-count).
+    `effective_ad_count` is computed per-link, using each link's own
+    category if it has one — though a category-level override only ever
+    applies to the *Owner's own* categories (see POST /api/categories/
+    {category_id}/ad-count and Category.ad_count's docstring), so in
+    practice this only varies within another Admin's own links if the
+    Owner has separately changed their profile-level override, not from
+    anything category-related on their side.
     """
     target = await storage.get_admin(telegram_id)
     if not target or not await storage.admin_stats(telegram_id):
@@ -1372,17 +1373,20 @@ async def set_admin_ad_count(telegram_id: int, payload: dict, owner: Admin = Dep
     return updated.model_dump()
 
 
-@app.post("/api/admin/admins/{telegram_id}/categories/{category_id}/ad-count")
-async def set_category_ad_count(
-    telegram_id: int, category_id: str, payload: dict, owner: Admin = Depends(require_owner)
-):
-    """Owner-only per-category ad count override — every link this
-    Admin/Sub Admin has tagged with this specific category (existing and
-    future) shows this many ads, taking priority over their own profile-
-    level `Admin.ad_count` override (see effective_ad_count()'s full
-    priority order in models.py). `ad_count: null` clears the category's
-    own override, falling back to that Admin's profile-level setting or
-    the platform default.
+@app.post("/api/categories/{category_id}/ad-count")
+async def set_own_category_ad_count(category_id: str, payload: dict, owner: Admin = Depends(require_owner)):
+    """Owner-only, and scoped to the Owner's *own* categories only — not
+    any other Admin/Sub Admin's. Sets a fixed ad count on one of the
+    Owner's own categories; every link the Owner tags with it (existing
+    and future) shows that many ads, taking priority over the Owner's
+    own profile-level `Admin.ad_count` if they have one set (see
+    effective_ad_count()'s full priority order in models.py).
+    `ad_count: null` clears the override, falling back to the Owner's
+    profile-level setting or the platform default. Deliberately not
+    reachable for any category other than the Owner's own — see
+    Category.ad_count's docstring for why this stays a purely
+    Owner-personal lever rather than a way to change what an Admin's own
+    viewers see behind their back.
     """
     raw = payload.get("ad_count")
     ad_count = None
@@ -1396,7 +1400,7 @@ async def set_category_ad_count(
                 status_code=400,
                 detail=f"ad_count must be between {Storage.MIN_AD_COUNT} and {Storage.MAX_AD_COUNT}",
             )
-    updated = await storage.set_category_ad_count(telegram_id, category_id, ad_count, changed_by=owner.telegram_id)
+    updated = await storage.set_category_ad_count(owner.telegram_id, category_id, ad_count, changed_by=owner.telegram_id)
     if not updated:
         raise HTTPException(status_code=404, detail="category not found")
     return updated.model_dump()

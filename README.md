@@ -489,10 +489,9 @@ title just won't survive a restart until the column exists.
 Every Admin/Sub Admin can keep their own list of categories (e.g.
 "Movies", "Giveaway", "YouTube") from the panel's Profile tab, and
 optionally tag a link with one at creation time (or add/change it later
-via the link's Edit button) — mostly a personal organizational tool,
-plus one Owner-only lever: a fixed ad count per category. Categories are
-per-Admin: two different Admins can each have one named the same thing
-without colliding, and one Admin's categories are never visible or
+via the link's Edit button) — a personal organizational tool. Categories
+are per-Admin: two different Admins can each have one named the same
+thing without colliding, and one Admin's categories are never visible or
 selectable by another (the Owner can still see and edit the category on
 any Admin's link from their per-Admin detail page, using that Admin's
 own category list). There's no rename — delete and recreate covers it,
@@ -501,31 +500,31 @@ attached to a category itself); deleting one clears `category_id` back
 to null on any of that Admin's own links that referenced it, rather than
 leaving a dangling reference.
 
-**Category ad count override** (Owner-only, from an Admin's detail page
-in the panel — Admins tab → tap an Admin → "Category ad count
-overrides"): gives one specific category its own fixed ad count, e.g.
-every link tagged "Movie" shows 10 ads while every link tagged "Natok"
-shows 7 — regardless of that Admin's own profile-level ad count
-override. Checked *before* the per-Admin override in
-`models.effective_ad_count()`'s priority order, since a category is a
-statement about the content a link points to, which is more specific
-than a blanket per-Admin setting. Leaving a category's override blank
-falls back to that Admin's own `Admin.ad_count` (if set), then the
-platform-wide default (Ad Networks tab) — the same three-level fallback
-`effective_ad_count()` has always used, just with one more level added
-at the top. Like the per-Admin override, this is real-time: it's read
-fresh on every `/r/{short_code}` and `/api/ad-config/{short_code}` call,
-so a change applies instantly to every link already tagged with that
-category, no per-link action needed. The Admin who owns the category can
-see its ad count in their own "My Links"/panel views but can't change
-it — only the Owner's per-Admin detail page can.
+**Category ad count override** (Owner-only, and scoped to the *Owner's
+own* categories only — from the panel's "Your owner tools" → Categories
+page): gives one of the Owner's own categories a fixed ad count, e.g.
+every link the Owner tags "Movie" shows 10 ads while every link tagged
+"Natok" shows 7 — regardless of the Owner's own profile-level ad count
+override, if they have one. This is deliberately not available on any
+other Admin/Sub Admin's categories — it's a lever over the Owner's own
+link-shortening activity, not a way to change what an Admin's own
+viewers see behind that Admin's back. Checked *before* the per-Admin
+override in `models.effective_ad_count()`'s priority order (though for
+anyone but the Owner that check is simply always empty, since the field
+can never be set on their categories in the first place). Leaving the
+override blank falls back to the Owner's own `Admin.ad_count` (if set),
+then the platform-wide default (Ad Networks tab). Like the per-Admin
+override, this is real-time: read fresh on every `/r/{short_code}` and
+`/api/ad-config/{short_code}` call, so a change applies instantly to
+every link already tagged with that category, no per-link action
+needed.
 
 Managed only from the panel (`GET/POST /api/categories`,
-`DELETE /api/categories/{id}`, and the Owner-only `POST
-/api/admin/admins/{telegram_id}/categories/{category_id}/ad-count`) —
-same as Traffic Sources, there's no bot command or public-API equivalent
-for creating/deleting categories or setting their ad count, only for
-using an existing `category_id` when creating or editing a link via
+`DELETE /api/categories/{id}`, and the Owner-only, Owner-self-only
+`POST /api/categories/{category_id}/ad-count`) — same as Traffic
+Sources, there's no bot command or public-API equivalent for creating/
+deleting categories or setting their ad count, only for using an
+existing `category_id` when creating or editing a link via
 `POST/PUT /api/links` or their `/api/v1/*` counterparts.
 
 **Required Supabase migration** — run once (safe to re-run):

@@ -55,16 +55,16 @@ def effective_ad_count(
     owned by `admin`, checked in priority order:
 
       1. `Category.ad_count` — the *link's own category's* Owner-set ad
-         count (storage.set_category_ad_count / POST /api/admin/admins/
-         {telegram_id}/categories/{category_id}/ad-count), if this link
-         is tagged with a category and the Owner gave that specific
-         category its own count. Checked before the per-Admin override
-         because a category is a statement about the *content* a link
-         points to (e.g. every link an Admin tags "Movie" showing 10
-         ads, "Natok" showing 7), which is a more specific signal than a
-         blanket per-Admin setting — an Admin with their own
-         `Admin.ad_count` set can still have individual categories
-         override it link-by-link.
+         count (storage.set_category_ad_count / POST /api/categories/
+         {category_id}/ad-count), if this link is tagged with a
+         category and the Owner gave that specific category its own
+         count. In practice this only ever fires for the Owner's own
+         links tagged with one of the Owner's own categories — every
+         other Admin/Sub Admin's categories can never have `ad_count`
+         set on them at all (see Category.ad_count's docstring), so this
+         check is a no-op for anyone else's links. Checked first purely
+         for priority-order completeness alongside the per-Admin
+         override below.
       2. `Admin.ad_count` — this specific Admin/Sub Admin's own
          profile-level override (storage.set_admin_ad_count /
          POST /api/admin/admins/{telegram_id}/ad-count), if the Owner
@@ -86,7 +86,7 @@ def effective_ad_count(
 
     `category` is optional and independent of `admin` — pass None
     whenever the link has no `category_id`, or the caller genuinely
-    doesn't have per-link context (e.g. resolving a generic "your admin
+    doesn't have per-link context (e.g. resolving a generic "your owner
     tools" count with no specific link in view); every existing caller
     that predates categories still works unchanged by simply omitting
     this argument.
@@ -199,16 +199,20 @@ class Category(BaseModel):
     name: str
     created_at: str = Field(default_factory=now_iso)
 
-    # Owner-only per-category ad count override (storage.
-    # set_category_ad_count / POST /api/admin/admins/{telegram_id}/
-    # categories/{category_id}/ad-count) — e.g. every link this Admin
-    # tags "Movie" shows 10 ads, "Natok" shows 7, regardless of the
-    # Admin's own Admin.ad_count profile setting. None means "no
-    # category-level override" — falls through to the Admin-level
-    # override, then the platform default; see effective_ad_count()'s
-    # full priority order in this module. Unlike the category itself,
-    # this can never be set by the Admin who owns the category — only
-    # the Owner's per-Admin detail page can change it.
+    # Owner-only per-category ad count override, settable ONLY on
+    # categories the Owner's own account created (storage.
+    # set_category_ad_count / POST /api/categories/{category_id}/
+    # ad-count) — e.g. the Owner tags their own links "Movie" and shows
+    # 10 ads, "Natok" shows 7. Deliberately not settable on any other
+    # Admin/Sub Admin's categories: this is a purely Owner-personal
+    # lever over the Owner's own link-shortening activity, not a way
+    # for the Owner to change what an Admin's own viewers see behind
+    # that Admin's back. For every category belonging to anyone other
+    # than the Owner, this field simply stays None forever — nothing in
+    # the app ever writes to it for them. None means "no category-level
+    # override" — falls through to the Owner's own Admin.ad_count
+    # profile setting, then the platform default; see
+    # effective_ad_count()'s full priority order in this module.
     ad_count: Optional[int] = None
 
 
