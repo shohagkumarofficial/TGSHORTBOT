@@ -1253,18 +1253,35 @@
   }
 
   // Categories — a simpler cousin of Traffic Sources above: add/remove
-  // only, no in-place edit (see Category's docstring in models.py on
+  // only, no in-place rename (see Category's docstring in models.py on
   // why renaming isn't worth supporting). `prefix` namespaces element
-  // ids the same way trafficSourceSectionHTML does, in case this ever
-  // needs to appear in more than one tab.
+  // ids the same way trafficSourceSectionHTML does, since this appears
+  // in more than one tab (an Admin/Sub Admin's own Profile tab, and —
+  // since the Owner has no Profile tab of their own — the Owner's
+  // dedicated "Your owner tools" -> Categories page).
+  //
+  // `canEditAdCount` controls the one thing that differs between those
+  // two call sites: the Owner-only, Owner's-own-categories-only ad
+  // count override (see effective_ad_count()'s priority order in
+  // models.py and Category.ad_count's own docstring on why this never
+  // applies to anyone else's categories). Only renderCategoriesPage's
+  // own call, when the signed-in account is the Owner, ever passes
+  // `canEditAdCount=true`; a regular Admin/Sub Admin's own category list
+  // (via renderProfile) never shows any ad-count UI at all, since that
+  // field can never be set on their categories in the first place.
   const MAX_CATEGORIES_PER_ADMIN = 30;
 
-  function categorySectionHTML(prefix, categories) {
+  function categorySectionHTML(prefix, categories, canEditAdCount) {
     const listHtml = (categories && categories.length)
       ? categories.map((c) => `
           <div class="ts-item">
             <div class="ts-info">
               <div class="ts-platform">${esc(c.name)}</div>
+              ${canEditAdCount ? `
+                <div class="btn-row" style="margin-top:6px; gap:6px;">
+                  <input type="number" class="${prefix}AdCountInput" data-category-id="${c.id}" min="${AD_COUNT_MIN}" max="${AD_COUNT_MAX}" step="1" value="${c.ad_count != null ? c.ad_count : ""}" placeholder="Platform default" style="width:110px; flex:0 0 auto;" />
+                  <button class="btn btn-outline btn-sm ${prefix}AdCountSaveBtn" data-category-id="${c.id}">Save ad count</button>
+                </div>` : ""}
             </div>
             <div class="ts-actions">
               <button class="ts-icon-btn danger ${prefix}DelBtn" data-id="${c.id}" data-name="${esc(c.name)}" title="Remove">${icon("trash", 14)}</button>
@@ -1275,7 +1292,7 @@
     return `
       <div class="card">
         <h3>Categories</h3>
-        <div class="meta">Organize your own links into categories (e.g. Movies, Giveaway, YouTube) — purely for your own reference; pick one when creating a link.</div>
+        <div class="meta">Organize your own links into categories (e.g. Movies, Giveaway, YouTube) — purely for your own reference; pick one when creating a link.${canEditAdCount ? " You can also give any category here its own fixed ad count, shown to viewers of every link tagged with it." : ""}</div>
         <div id="${prefix}List" style="margin-top:6px;">${listHtml}</div>
       </div>
       <div class="card">
@@ -1286,7 +1303,14 @@
     `;
   }
 
-  function wireCategorySection(el, prefix, afterChange) {
+  // `canEditAdCount` is only ever true from the Owner's own
+  // renderCategoriesPage call — it's what shows the ad-count Save
+  // button below, which calls POST /api/categories/{id}/ad-count.
+  // That endpoint only ever accepts the Owner's own categories (see
+  // set_own_category_ad_count's docstring in app.py) — this lever is
+  // deliberately never reachable for any other Admin/Sub Admin's
+  // categories, so no telegram_id needs passing here at all.
+  function wireCategorySection(el, prefix, afterChange, canEditAdCount) {
     const nameInput = el.querySelector(`#${prefix}Name`);
     const saveBtn = el.querySelector(`#${prefix}Save`);
 
@@ -1308,6 +1332,34 @@
         saveBtn.disabled = false; saveBtn.textContent = "Add category";
       }
     });
+
+    if (canEditAdCount) {
+      el.querySelectorAll(`.${prefix}AdCountSaveBtn`).forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const categoryId = btn.dataset.categoryId;
+          const input = el.querySelector(`.${prefix}AdCountInput[data-category-id="${categoryId}"]`);
+          const raw = input.value.trim();
+          const ad_count = raw === "" ? null : parseInt(raw, 10);
+          if (ad_count !== null && (!Number.isFinite(ad_count) || ad_count < AD_COUNT_MIN || ad_count > AD_COUNT_MAX)) {
+            toast(`Ad count must be between ${AD_COUNT_MIN} and ${AD_COUNT_MAX}, or left blank`, "err");
+            return;
+          }
+          btn.disabled = true; btn.textContent = "Saving…";
+          try {
+            await api(`/api/categories/${categoryId}/ad-count`, {
+              method: "POST",
+              body: JSON.stringify({ ad_count }),
+            });
+            toast("Category ad count updated", "ok");
+            await loadMe();
+            afterChange();
+          } catch (e) {
+            toast(e.message, "err");
+            btn.disabled = false; btn.textContent = "Save ad count";
+          }
+        });
+      });
+    }
 
     el.querySelectorAll(`.${prefix}DelBtn`).forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -1919,11 +1971,16 @@
   // own), from the Overview tab's "Your owner tools" list — same
   // dedicated-single-purpose-page pattern as renderTraffic above, so
   // the Owner has an actual place to land on tapping "Categories"
-  // instead of that entry silently going nowhere.
+  // instead of that entry silently going nowhere. Only this call site
+  // passes canEditAdCount=true, since the Owner is the only role
+  // allowed to set a category's ad count, and only on their own
+  // categories — see categorySectionHTML/wireCategorySection's own
+  // docstrings.
   async function renderCategoriesPage(el) {
     await loadMe();
-    el.innerHTML = categorySectionHTML("cat", state.me.categories);
-    wireCategorySection(el, "cat", () => renderCategoriesPage(el));
+    const ownerCanEdit = isOwner();
+    el.innerHTML = categorySectionHTML("cat", state.me.categories, ownerCanEdit);
+    wireCategorySection(el, "cat", () => renderCategoriesPage(el), ownerCanEdit);
   }
 
   // ---- Short Link (quick create) -----------------------------------
@@ -3152,20 +3209,6 @@
         <div class="meta" style="color:var(--text-faint);">Applies instantly to every link this ${esc(roleMeta(a.role).label)} already has, and every new one — no need to set it per link.</div>
         <div class="btn-row"><button class="btn btn-primary btn-block" id="adminAdCountSaveBtn">Save ad count</button></div>
       </div>
-
-      ${a.categories && a.categories.length ? `
-        <div class="section-title" style="margin-top:14px;">${icon("layers", 14)} Category ad count overrides</div>
-        <div class="card">
-          <div class="meta">Give any of this ${esc(roleMeta(a.role).label)}'s own categories a fixed ad count — every link tagged with it (existing and future) shows that many ads, taking priority over the profile-level override above. Leave a category blank to fall back to that override, or the platform default if that's blank too.</div>
-          ${a.categories.map((c) => `
-            <div class="row-between" style="margin-top:12px; gap:8px; align-items:center;">
-              <div style="flex:1; min-width:0; font-size:13px; color:var(--text); font-weight:600;">${esc(c.name)}</div>
-              <input type="number" class="categoryAdCountInput" data-category-id="${c.id}" min="${AD_COUNT_MIN}" max="${AD_COUNT_MAX}" step="1" value="${c.ad_count != null ? c.ad_count : ""}" placeholder="Default" style="width:84px; flex:0 0 auto;" />
-              <button class="btn btn-outline btn-sm categoryAdCountSaveBtn" data-category-id="${c.id}" style="flex:0 0 auto;">Save</button>
-            </div>
-          `).join("")}
-        </div>
-      ` : ""}
       <div id="adminLinksList">${adminLinksListHTML(adminLinks)}</div>
 
       ${a.admin_request_status === "pending" ? `
@@ -3311,31 +3354,6 @@
         }
       });
     }
-
-    el.querySelectorAll(".categoryAdCountSaveBtn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const categoryId = btn.dataset.categoryId;
-        const input = el.querySelector(`.categoryAdCountInput[data-category-id="${categoryId}"]`);
-        const raw = input.value.trim();
-        const ad_count = raw === "" ? null : parseInt(raw, 10);
-        if (ad_count !== null && (!Number.isFinite(ad_count) || ad_count < AD_COUNT_MIN || ad_count > AD_COUNT_MAX)) {
-          toast(`Ad count must be between ${AD_COUNT_MIN} and ${AD_COUNT_MAX}, or left blank`, "err");
-          return;
-        }
-        btn.disabled = true; btn.textContent = "Saving…";
-        try {
-          await api(`/api/admin/admins/${telegramId}/categories/${categoryId}/ad-count`, {
-            method: "POST",
-            body: JSON.stringify({ ad_count }),
-          });
-          toast("Category ad count updated", "ok");
-          renderAdminDetail(el, telegramId);
-        } catch (e) {
-          toast(e.message, "err");
-          btn.disabled = false; btn.textContent = "Save";
-        }
-      });
-    });
 
     const autoDeleteSaveBtn = el.querySelector("#autoDeleteSaveBtn");
     if (autoDeleteSaveBtn) {
