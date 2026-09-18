@@ -46,54 +46,28 @@ def effective_cpm(admin: "Admin", cpm_setting: "CPMSetting") -> float:
     return cpm_setting.current_cpm
 
 
-def effective_ad_count(
-    admin: Optional["Admin"],
-    ad_network_setting: "AdNetworkSetting",
-    category: Optional["Category"] = None,
-) -> int:
+def effective_ad_count(admin: Optional["Admin"], ad_network_setting: "AdNetworkSetting") -> int:
     """How many sequential ads a viewer must watch to unlock any link
     owned by `admin`, checked in priority order:
 
-      1. `Category.ad_count` — the *link's own category's* Owner-set ad
-         count (storage.set_category_ad_count / POST /api/categories/
-         {category_id}/ad-count), if this link is tagged with a
-         category and the Owner gave that specific category its own
-         count. In practice this only ever fires for the Owner's own
-         links tagged with one of the Owner's own categories — every
-         other Admin/Sub Admin's categories can never have `ad_count`
-         set on them at all (see Category.ad_count's docstring), so this
-         check is a no-op for anyone else's links. Checked first purely
-         for priority-order completeness alongside the per-Admin
-         override below.
-      2. `Admin.ad_count` — this specific Admin/Sub Admin's own
+      1. `Admin.ad_count` — this specific Admin/Sub Admin's own
          profile-level override (storage.set_admin_ad_count /
          POST /api/admin/admins/{telegram_id}/ad-count), if the Owner
-         set one for them individually and the link's category (if any)
-         didn't already decide the count above. Unlike the old per-link
+         set one for them individually. Unlike the old per-link
          control, this is read fresh on every view rather than baked
          into a Link at creation time, so setting it once on an
          Admin/Sub Admin's profile applies instantly to every link they
          already have and every new one — no per-link action needed.
-      3. `len(AdNetworkSetting.slot_sequence)` — the platform-wide
+      2. `len(AdNetworkSetting.slot_sequence)` — the platform-wide
          default (Owner's "Ad display order" screen), used for any
-         Admin/Sub Admin with no override, any category with no override
-         (or no category at all), and for `admin=None`.
+         Admin/Sub Admin with no override, and for `admin=None`.
 
     Mirrors effective_cpm()'s per-Admin-override-over-platform-default
     shape, but is available to Role.ADMIN as well as Role.SUB_ADMIN —
     the ad-count override isn't tier-restricted the way CPM overrides
     are. `Link.ad_count` is never consulted here; see its docstring.
-
-    `category` is optional and independent of `admin` — pass None
-    whenever the link has no `category_id`, or the caller genuinely
-    doesn't have per-link context (e.g. resolving a generic "your owner
-    tools" count with no specific link in view); every existing caller
-    that predates categories still works unchanged by simply omitting
-    this argument.
     """
     base_count = max(1, len(ad_network_setting.slot_sequence or []))
-    if category is not None and category.ad_count is not None:
-        return category.ad_count
     if admin is not None and admin.ad_count is not None:
         return admin.ad_count
     return base_count
@@ -177,45 +151,6 @@ class TrafficSource(BaseModel):
     updated_at: str = Field(default_factory=now_iso)
 
 
-class Category(BaseModel):
-    """One user-defined label an Admin/Sub Admin can tag their own short
-    links with (e.g. "Movies", "Giveaway", "YouTube promo") — mostly a
-    personal organizational tool, plus one Owner-only lever: a fixed ad
-    count per category (see `ad_count` below). Never read by CPM
-    crediting. Scoped to whichever Admin created it, the same way TrafficSource is: it lives inside that Admin's own `categories`
-    list rather than a shared platform-wide table, so two different
-    Admins can each have a category named the same thing without
-    colliding, and one Admin's categories are never shown or selectable
-    by another.
-
-    Renaming isn't supported — delete and recreate covers it, since
-    (unlike a Link) removing a Category loses nothing: no view history
-    or balance is attached to a category itself, only to the links that
-    once referenced it (and storage.delete_category clears their
-    `category_id` back to None rather than leaving it dangling).
-    """
-
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    name: str
-    created_at: str = Field(default_factory=now_iso)
-
-    # Owner-only per-category ad count override, settable ONLY on
-    # categories the Owner's own account created (storage.
-    # set_category_ad_count / POST /api/categories/{category_id}/
-    # ad-count) — e.g. the Owner tags their own links "Movie" and shows
-    # 10 ads, "Natok" shows 7. Deliberately not settable on any other
-    # Admin/Sub Admin's categories: this is a purely Owner-personal
-    # lever over the Owner's own link-shortening activity, not a way
-    # for the Owner to change what an Admin's own viewers see behind
-    # that Admin's back. For every category belonging to anyone other
-    # than the Owner, this field simply stays None forever — nothing in
-    # the app ever writes to it for them. None means "no category-level
-    # override" — falls through to the Owner's own Admin.ad_count
-    # profile setting, then the platform default; see
-    # effective_ad_count()'s full priority order in this module.
-    ad_count: Optional[int] = None
-
-
 class Admin(BaseModel):
     telegram_id: int
     username: Optional[str] = None
@@ -226,7 +161,6 @@ class Admin(BaseModel):
     status: AdminStatus = AdminStatus.ACTIVE
 
     traffic_sources: list[TrafficSource] = Field(default_factory=list)
-    categories: list[Category] = Field(default_factory=list)
 
     # Which PolicySetting.version this Admin last tapped "Accept" on (see
     # PolicySetting below). 0 means "never accepted anything" — a brand
@@ -329,23 +263,6 @@ class Link(BaseModel):
     short_code: str
     owner_telegram_id: int
     destination_url: str
-    # Optional, Admin-set label for this link (e.g. "August giveaway
-    # post") — purely a display convenience so an Admin with many links
-    # can tell them apart at a glance in "My Links" / the Owner's
-    # per-Admin link list, without having to remember what a bare
-    # short_code or destination_url was for. Always optional: POST
-    # /api/links and POST /api/v1/links both accept it but never require
-    # it, and nothing else in the app (ad-serving, CPM crediting, the
-    # bot's /newlink flow) reads or depends on it — it's display-only.
-    title: Optional[str] = None
-    # References one of the owning Admin's own Category.id values (see
-    # Category's docstring) — never validated against a foreign key at
-    # this model level, only at request time in app.py, the same
-    # division of labor `title`'s own length check follows. A dangling
-    # value (the category was since deleted) is treated as "no
-    # category" everywhere this is read, never an error — see
-    # storage.delete_category and Storage._category_name.
-    category_id: Optional[str] = None
     ad_count: int = 3
     created_at: str = Field(default_factory=now_iso)
 

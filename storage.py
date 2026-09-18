@@ -47,7 +47,7 @@ import logging
 import re
 import secrets
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from supabase import AsyncClient, create_async_client
@@ -59,7 +59,6 @@ from models import (
     AdNetwork,
     AdNetworkSetting,
     ApiKey,
-    Category,
     CountedStatus,
     CPMHistoryEntry,
     CPMSetting,
@@ -133,7 +132,6 @@ class Storage:
         ad_network_setting_res = await self.client.table("ad_network_settings").select("*").eq("id", 1).execute()
         cpm_history_res = await self.client.table("cpm_history").select("*").execute()
         api_keys_res = await self._select_or_empty("api_keys")
-        categories_res = await self._select_or_empty("categories")
 
         traffic_by_admin: Dict[int, List[TrafficSource]] = {}
         for row in traffic_res.data:
@@ -141,17 +139,10 @@ class Storage:
             admin_id = row.pop("admin_telegram_id")
             traffic_by_admin.setdefault(admin_id, []).append(TrafficSource(**row))
 
-        categories_by_admin: Dict[int, List[Category]] = {}
-        for row in categories_res.data:
-            row = dict(row)
-            admin_id = row.pop("admin_telegram_id")
-            categories_by_admin.setdefault(admin_id, []).append(Category(**row))
-
         self.admins = {}
         for row in admins_res.data:
             row = dict(row)
             row["traffic_sources"] = traffic_by_admin.get(row["telegram_id"], [])
-            row["categories"] = categories_by_admin.get(row["telegram_id"], [])
             self.admins[row["telegram_id"]] = Admin(**row)
 
         self.links = {row["short_code"]: Link(**row) for row in links_res.data}
@@ -284,18 +275,11 @@ class Storage:
         in-memory state to Supabase. Batched: one upsert call per table,
         regardless of how many rows changed.
         """
-        admin_rows = [
-            a.model_dump(mode="json", exclude={"traffic_sources", "categories"}) for a in self.admins.values()
-        ]
+        admin_rows = [a.model_dump(mode="json", exclude={"traffic_sources"}) for a in self.admins.values()]
         traffic_rows = [
             {**s.model_dump(mode="json"), "admin_telegram_id": a.telegram_id}
             for a in self.admins.values()
             for s in a.traffic_sources
-        ]
-        category_rows = [
-            {**c.model_dump(mode="json"), "admin_telegram_id": a.telegram_id}
-            for a in self.admins.values()
-            for c in a.categories
         ]
         link_rows = [l.model_dump(mode="json") for l in self.links.values()]
         view_rows = [v.model_dump(mode="json") for v in self.views.values()]
@@ -308,7 +292,6 @@ class Storage:
 
         await self._safe_upsert("admins", admin_rows, on_conflict="telegram_id")
         await self._safe_upsert("traffic_sources", traffic_rows, on_conflict="id")
-        await self._safe_upsert("categories", category_rows, on_conflict="id", tolerate_missing_table=True)
         await self._safe_upsert("links", link_rows, on_conflict="short_code")
         await self._safe_upsert("views", view_rows, on_conflict="view_id")
         await self._safe_upsert("withdrawals", withdrawal_rows, on_conflict="request_id")
@@ -515,162 +498,6 @@ class Storage:
             return changed
 
     # ------------------------------------------------------------------
-    # Categories — per-Admin, user-defined link labels (see Category's
-    # docstring in models.py). Same one-list-per-Admin shape as Traffic
-    # Sources above, just simpler: no edit-in-place, only add/remove,
-    # since renaming isn't supported (delete + recreate covers it at no
-    # real cost — see Category's own docstring for why).
-    # ------------------------------------------------------------------
-
-    MAX_CATEGORIES_PER_ADMIN = 30
-
-    async def add_category(self, telegram_id: int, name: str) -> Optional[Category]:
-        async with self._lock:
-            admin = self.admins.get(telegram_id)
-            if not admin:
-                return None
-            if len(admin.categories) >= self.MAX_CATEGORIES_PER_ADMIN:
-                return None
-            category = Category(name=name)
-            admin.categories.append(category)
-            await self._save_locked()
-            return category
-
-    async def delete_category(self, telegram_id: int, category_id: str) -> bool:
-        """Removes one of this Admin's own categories, and — since a
-        Link's `category_id` would otherwise be left pointing at
-        nothing — clears `category_id` back to None on every one of
-        this same Admin's own links that referenced it, so nothing in
-        `self.links` is left holding a dangling reference after this
-        returns. Mirrors delete_traffic_source's explicit-delete-then-
-        full-save shape (a blanket upsert alone would never remove the
-        row from Supabase); the categories table's own delete is
-        additionally tolerant of not existing yet (pending migration —
-        see README.md), the same self-heal `_safe_upsert` already
-        applies to writes, since this is a newer, optional table.
-        """
-        async with self._lock:
-            admin = self.admins.get(telegram_id)
-            if not admin:
-                return False
-            before = len(admin.categories)
-            admin.categories = [c for c in admin.categories if c.id != category_id]
-            changed = len(admin.categories) != before
-            if changed:
-                for link in self.links.values():
-                    if link.owner_telegram_id == telegram_id and link.category_id == category_id:
-                        link.category_id = None
-                try:
-                    await self.client.table("categories").delete().eq("id", category_id).execute()
-                except Exception as exc:
-                    if not ("PGRST205" in str(exc) or "Could not find the table" in str(exc)):
-                        raise
-                    logger.warning(
-                        "Supabase table 'categories' doesn't exist yet (pending migration — "
-                        "see README.md's schema notes); nothing to delete there yet."
-                    )
-                await self._save_locked()
-            return changed
-
-    def _category_for_id(self, owner_telegram_id: int, category_id: Optional[str]) -> Optional[Category]:
-        """Resolves a link's `category_id` back to the actual Category
-        object, read fresh from the *owning* Admin's own `categories`
-        list — never a global lookup, since categories are per-Admin
-        (see Category's docstring). Returns None for "no category" or a
-        since-deleted category (delete_category already clears
-        `category_id` on that Admin's own links when it happens, but
-        this stays defensive regardless). The shared lookup behind both
-        `_category_name` (display) and `effective_ad_count`'s category
-        argument (ad-serving) — see callers below and in app.py/bot.py —
-        so the two can never disagree about which Category a given
-        `category_id` actually refers to. A plain sync helper (no lock,
-        no await) since it only reads already-in-memory state.
-        """
-        if not category_id:
-            return None
-        owner = self.admins.get(owner_telegram_id)
-        if not owner:
-            return None
-        for c in owner.categories:
-            if c.id == category_id:
-                return c
-        return None
-
-    def _category_name(self, owner_telegram_id: int, category_id: Optional[str]) -> Optional[str]:
-        """Display-name convenience wrapper over `_category_for_id` —
-        every caller that only needs the name (not the full Category,
-        e.g. to also check its `ad_count`) uses this instead.
-        """
-        category = self._category_for_id(owner_telegram_id, category_id)
-        return category.name if category else None
-
-    async def set_category_ad_count(
-        self, owner_telegram_id: int, category_id: str, ad_count: Optional[int], changed_by: int
-    ) -> Optional[Category]:
-        """Sets a fixed ad count on one of the Owner's own categories —
-        every link the Owner tags with it (existing and future) shows
-        this many ads, regardless of the Owner's own `Admin.ad_count`
-        profile setting if they have one (see `effective_ad_count()`'s
-        full priority order in models.py, where a category's own count
-        is checked first). `ad_count=None` clears the override, falling
-        back to the Owner's profile-level override (if any) or the
-        platform default. Bounds (Storage.MIN_AD_COUNT..MAX_AD_COUNT)
-        are enforced by the caller (app.py), same as set_admin_ad_count
-        leaves its own range check to the caller.
-
-        `owner_telegram_id` is always the platform Owner's own telegram
-        ID here — app.py's POST /api/categories/{category_id}/ad-count
-        endpoint never accepts any other value, since this lever is
-        deliberately scoped to the Owner's own categories only (see
-        Category.ad_count's docstring for why). This method itself
-        doesn't re-enforce that restriction — it just looks up whatever
-        telegram_id it's given and edits that account's own category —
-        so it stays a plain "does this category belong to this account"
-        operation or a future caller with a different access rule to
-        reuse cleanly, with app.py as the single place the actual
-        Owner-only-and-self-only policy is decided.
-
-        Real-time by construction: nothing here touches any existing
-        Link row. `effective_ad_count()` reads this category's current
-        `ad_count` fresh on every `/r/{short_code}` and
-        `/api/ad-config/{short_code}` call, so the change is visible on
-        every link tagged with this category — existing and future — the
-        instant it's saved, exactly like the per-Admin override already
-        works.
-        """
-        async with self._lock:
-            owner = self.admins.get(owner_telegram_id)
-            if not owner:
-                return None
-            category = None
-            for c in owner.categories:
-                if c.id == category_id:
-                    category = c
-                    break
-            if not category:
-                return None
-            old = category.ad_count
-            if old == ad_count:
-                return category
-            category.ad_count = ad_count
-            self.cpm_history.append(
-                CPMHistoryEntry(
-                    event="category_ad_count_change",
-                    detail={
-                        "owner_telegram_id": owner_telegram_id,
-                        "category_id": category_id,
-                        "category_name": category.name,
-                        "from": old,
-                        "to": ad_count,
-                        "by": changed_by,
-                    },
-                )
-            )
-            await self._save_locked()
-            return category
-
-
-    # ------------------------------------------------------------------
     # Link
     # ------------------------------------------------------------------
 
@@ -689,8 +516,6 @@ class Storage:
         owner_telegram_id: int,
         destination_url: str,
         ad_count: Optional[int] = None,
-        title: Optional[str] = None,
-        category_id: Optional[str] = None,
     ) -> Link:
         """`expires_at` is derived here, at creation time, from the
         creating Admin's *current* `link_auto_delete_months` — never
@@ -698,14 +523,6 @@ class Storage:
         afterward only ever affects links created from then on, exactly
         like a CPM-rate change never re-prices views that already
         happened.
-
-        `title`/`category_id` are optional and purely cosmetic (see
-        their own docstrings on Link) — passed through with no
-        validation here; app.py is responsible for trimming/length-
-        checking `title` and confirming `category_id` actually belongs
-        to `owner_telegram_id`'s own categories before calling this, the
-        same division of labor as every other request-shaped field this
-        method receives.
         """
         async with self._lock:
             owner = self.admins.get(owner_telegram_id)
@@ -720,8 +537,6 @@ class Storage:
                 destination_url=destination_url,
                 ad_count=ad_count if ad_count is not None else self.DEFAULT_AD_COUNT,
                 expires_at=expires_at,
-                title=title,
-                category_id=category_id,
             )
             self.links[short_code] = link
             await self._save_locked()
@@ -811,61 +626,6 @@ class Storage:
             del self.links[short_code]
             return True
 
-    async def update_link(
-        self,
-        short_code: str,
-        requester_telegram_id: int,
-        is_owner: bool,
-        title: Optional[str] = None,
-        title_provided: bool = False,
-        destination_url: Optional[str] = None,
-        category_id: Optional[str] = None,
-        category_id_provided: bool = False,
-    ) -> Optional[Link]:
-        """Edits an existing link's `title`, `category_id`, and/or
-        `destination_url` in place — added so an Admin can fix a typo or
-        relabel a link without deleting and recreating it, which would
-        otherwise be the only option (and would drop it off "My Links"
-        under a brand-new short_code, losing the view history readers
-        associate with the old one, even though the underlying View rows
-        and balance are untouched either way — see delete_link's own
-        docstring on why views always survive a link's removal).
-
-        Ownership rule mirrors delete_link exactly: an Admin may only
-        edit their own link; the Owner (is_owner=True) may edit anyone's.
-        `ad_count`, `short_code`, `owner_telegram_id`, and `expires_at`
-        are deliberately not editable here — those are either Owner-only
-        controls elsewhere (ad_count) or identity/lifecycle fields that
-        should never silently change after creation.
-
-        `title_provided`/`category_id_provided` distinguish "the request
-        didn't mention this field at all, leave it alone" from "the
-        request explicitly wants it cleared to blank" (`title=None,
-        title_provided=True`) — plain `None` alone can't carry that
-        distinction since None is also each field's own empty value.
-        `destination_url` doesn't need the same two-state trick since a
-        link's destination is never usefully blank, so ordinary `None`
-        there just means "leave unchanged". `category_id` is passed
-        through with no ownership check here — app.py is responsible for
-        confirming a new `category_id` actually belongs to the link's
-        *owning* Admin (not necessarily the requester, if the Owner is
-        editing someone else's link) before calling this.
-        """
-        async with self._lock:
-            link = self.links.get(short_code)
-            if not link:
-                return None
-            if not is_owner and link.owner_telegram_id != requester_telegram_id:
-                return None
-            if title_provided:
-                link.title = title
-            if destination_url is not None:
-                link.destination_url = destination_url
-            if category_id_provided:
-                link.category_id = category_id
-            await self._save_locked()
-            return link
-
     async def set_link_ad_count(self, short_code: str, ad_count: int) -> Optional[Link]:
         """Owner-only: how many sequential ads this one link requires
         before it unlocks. Nothing about an Admin's own access changes —
@@ -896,9 +656,6 @@ class Storage:
             out.append(
                 {
                     "short_code": l.short_code,
-                    "title": l.title,
-                    "category_id": l.category_id,
-                    "category_name": self._category_name(owner_telegram_id, l.category_id),
                     "destination_url": l.destination_url,
                     "ad_count": l.ad_count,
                     "created_at": l.created_at,
@@ -1497,290 +1254,6 @@ class Storage:
             "withdrawn_trend": [
                 {"date": d.isoformat(), "amount": round(withdrawn_buckets[d], 4)} for d in sorted(withdrawn_buckets)
             ],
-        }
-
-    async def own_analytics_summary(
-        self, telegram_id: int, days: int = 30, include_daily_capped: bool = False
-    ) -> dict:
-        """Personal earnings + views dashboard for one Admin/Sub Admin's
-        own home screen (webapp/panel.html's Overview tab) — the
-        self-service, single-Admin counterpart to platform_income_summary
-        above. Everything here is scoped to `telegram_id`'s own links via
-        list_views_by_owner, so two different Admins calling this never
-        see each other's numbers, unlike the Owner-only, platform-wide
-        methods.
-
-        `total_views`/`income_trend`/`top_links` are always built from
-        genuine (non-`daily_capped`) views only — a capped view never
-        counts toward earnings or the "real" view total anywhere in this
-        method, matching the Anti-Abuse System's rule everywhere else it
-        applies.
-
-        `include_daily_capped` additionally stamps a `capped_views` count
-        onto every `views_trend` point (the Anti-Abuse System's daily cap
-        — see CPMSetting.max_daily_views_per_admin) and adds a
-        `total_capped_views` figure to the response. This is Owner-only
-        information, the same visibility boundary `daily_capped` already
-        has everywhere else it's surfaced (admin_stats / platform_stats /
-        platform_analytics_summary) — an Admin must never learn that one
-        of their views was capped, it should simply not be there. Defaults
-        to False specifically so GET /api/my-analytics (an Admin looking
-        at their own dashboard) stays safe by construction without the
-        caller having to remember to omit anything; only the Owner-only
-        GET /api/admin/admins/{id}/analytics endpoint passes True.
-
-        `top_links` ranks by view count (not income) since that's the
-        more actionable number for someone deciding which of their
-        traffic sources to lean into — each row's income is shown
-        alongside it, not used to sort.
-        """
-        views = await self.list_views_by_owner(telegram_id)
-        genuine_views = [v for v in views if not v.daily_capped]
-
-        today = datetime.now(timezone.utc).date()
-        earliest = today - timedelta(days=days - 1)
-        income_buckets: Dict[object, float] = {earliest + timedelta(days=i): 0.0 for i in range(days)}
-        view_buckets: Dict[object, int] = {earliest + timedelta(days=i): 0 for i in range(days)}
-        capped_view_buckets: Dict[object, int] = {earliest + timedelta(days=i): 0 for i in range(days)}
-
-        lifetime_income = 0.0
-        per_link: Dict[str, dict] = {}
-        for v in views:
-            link = self.links.get(v.short_code)
-            try:
-                created = datetime.fromisoformat(v.created_at)
-            except ValueError:
-                created = None
-            if created is not None and created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
-            bucket_date = created.astimezone(timezone.utc).date() if created is not None else None
-
-            if v.daily_capped:
-                # Only ever tallied into capped_view_buckets — never
-                # touches view_buckets, income_buckets, or per_link below,
-                # so a capped view can't leak into any "genuine" figure
-                # regardless of include_daily_capped.
-                if bucket_date is not None and bucket_date in capped_view_buckets:
-                    capped_view_buckets[bucket_date] += 1
-                continue
-
-            if bucket_date is not None and bucket_date in view_buckets:
-                view_buckets[bucket_date] += 1
-
-            row = per_link.setdefault(
-                v.short_code,
-                {
-                    "short_code": v.short_code,
-                    "title": link.title if link else None,
-                    "category_name": self._category_name(telegram_id, link.category_id) if link else None,
-                    "destination_url": link.destination_url if link else None,
-                    "views": 0,
-                    "income": 0.0,
-                },
-            )
-            row["views"] += 1
-
-            if v.counted_status == CountedStatus.CONFIRMED:
-                amount = v.credited_amount or 0.0
-                lifetime_income += amount
-                row["income"] = round(row["income"] + amount, 6)
-                if bucket_date is not None and bucket_date in income_buckets:
-                    income_buckets[bucket_date] += amount
-
-        today_income = income_buckets.get(today, 0.0)
-        last_7 = today - timedelta(days=6)
-        income_7d = sum(v for d, v in income_buckets.items() if d >= last_7)
-        views_7d = sum(v for d, v in view_buckets.items() if d >= last_7)
-
-        top_links = sorted(per_link.values(), key=lambda r: r["views"], reverse=True)[:5]
-        for r in top_links:
-            r["income"] = round(r["income"], 4)
-
-        links = await self.list_links_by_owner(telegram_id)
-
-        views_trend = []
-        for d in sorted(view_buckets):
-            point = {"date": d.isoformat(), "views": view_buckets[d]}
-            if include_daily_capped:
-                point["capped_views"] = capped_view_buckets[d]
-            views_trend.append(point)
-
-        result = {
-            "lifetime_income": round(lifetime_income, 4),
-            "today_income": round(today_income, 4),
-            "income_last_7_days": round(income_7d, 4),
-            "views_last_7_days": views_7d,
-            "total_links": len(links),
-            "total_views": len(genuine_views),
-            "window_days": days,
-            "income_trend": [
-                {"date": d.isoformat(), "amount": round(income_buckets[d], 4)} for d in sorted(income_buckets)
-            ],
-            "views_trend": views_trend,
-            "top_links": top_links,
-        }
-        if include_daily_capped:
-            result["total_capped_views"] = len(views) - len(genuine_views)
-        return result
-
-    async def platform_analytics_summary(
-        self,
-        role_filter: str = "both",
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-    ) -> dict:
-        """Platform-wide earnings + views dashboard for the Owner's home
-        screen (webapp/panel.html's Overview tab) — the aggregate,
-        multi-Admin counterpart to own_analytics_summary above. Rather
-        than one Admin's own links, this sums every Admin/Sub Admin's
-        genuine (non-daily-capped) views across the caller-chosen
-        `role_filter` and `[start_date, end_date]` window, so the Owner
-        can compare "how is the whole Admin tier doing" against "how is
-        the whole Sub Admin tier doing" without opening each profile
-        individually.
-
-        `role_filter` is one of "admin" (Role.ADMIN only), "sub_admin"
-        (Role.SUB_ADMIN only), "owner" (the Owner's own links only), or
-        "both" (default — every Admin and Sub Admin combined, excluding
-        the Owner). The Owner's own personal link income sits behind its
-        own explicit filter value rather than always being folded into
-        "both", since an Owner who also runs their own links may want to
-        check that performance in isolation the same way they'd check
-        any one Admin's — not blended into the Admin/Sub Admin tier
-        totals where it would just look like noise. Any Viewer is always
-        excluded regardless of filter — a Viewer has no links to speak
-        of.
-
-        `start_date`/`end_date` default to a trailing 30-day window
-        ending today (UTC) when omitted, matching own_analytics_summary's
-        own 30-day default — but unlike that method, both can be set to
-        any explicit day so the Owner can look back further than 30 days
-        with exact boundaries (webapp/panel.html's custom date-range
-        picker). The window is capped at 366 days to keep a single
-        request's bucket count sane; an overlong request is silently
-        clamped to the most recent 366 days rather than rejected
-        outright, since a slightly-shorter-than-requested chart is more
-        useful than an error.
-
-        `top_performers` ranks by income (not view count, unlike
-        own_analytics_summary's own `top_links`) since "who is actually
-        earning well" is the more direct answer to what the Owner is
-        checking here than a raw view count, which per-Admin CPM
-        overrides can make misleading on its own.
-
-        `views_trend` carries a `capped_views` count alongside `views`
-        on every point — this whole method is Owner-only to begin with
-        (unlike own_analytics_summary, which gates the same figure
-        behind an `include_daily_capped` flag for its Admin-facing use),
-        so there's no equivalent visibility boundary to enforce here;
-        the Owner already sees daily-capped figures everywhere else in
-        the app (admin_stats / platform_stats).
-        """
-        role_map = {
-            "admin": {Role.ADMIN},
-            "sub_admin": {Role.SUB_ADMIN},
-            "both": {Role.ADMIN, Role.SUB_ADMIN},
-            "owner": {Role.OWNER},
-        }
-        normalized_filter = role_filter if role_filter in role_map else "both"
-        wanted_roles = role_map[normalized_filter]
-        target_ids = {a.telegram_id for a in self.admins.values() if a.role in wanted_roles}
-
-        today = datetime.now(timezone.utc).date()
-        if end_date is None:
-            end_date = today
-        if start_date is None:
-            start_date = end_date - timedelta(days=29)
-        if end_date < start_date:
-            start_date, end_date = end_date, start_date
-        if (end_date - start_date).days > 365:
-            start_date = end_date - timedelta(days=365)
-
-        num_days = (end_date - start_date).days + 1
-        income_buckets: Dict[object, float] = {start_date + timedelta(days=i): 0.0 for i in range(num_days)}
-        view_buckets: Dict[object, int] = {start_date + timedelta(days=i): 0 for i in range(num_days)}
-        capped_view_buckets: Dict[object, int] = {start_date + timedelta(days=i): 0 for i in range(num_days)}
-
-        total_income = 0.0
-        total_views = 0
-        total_capped_views = 0
-        per_admin: Dict[int, dict] = {}
-
-        for v in self.views.values():
-            link = self.links.get(v.short_code)
-            if not link or link.owner_telegram_id not in target_ids:
-                continue
-            try:
-                created = datetime.fromisoformat(v.created_at)
-            except ValueError:
-                continue
-            if created.tzinfo is None:
-                created = created.replace(tzinfo=timezone.utc)
-            d = created.astimezone(timezone.utc).date()
-            if d < start_date or d > end_date:
-                continue
-
-            if v.daily_capped:
-                # Tallied separately, under the same role/date filters as
-                # everything else here — this is the Owner-only
-                # "Daily-capped views" line on the platform Views Trend
-                # chart, never blended into total_views/per_admin/income
-                # below (a capped view earned nothing and was never
-                # "genuine" to begin with, same rule as everywhere else
-                # daily_capped is checked in this module).
-                total_capped_views += 1
-                if d in capped_view_buckets:
-                    capped_view_buckets[d] += 1
-                continue
-
-            total_views += 1
-            if d in view_buckets:
-                view_buckets[d] += 1
-
-            admin = self.admins.get(link.owner_telegram_id)
-            row = per_admin.setdefault(
-                link.owner_telegram_id,
-                {
-                    "telegram_id": link.owner_telegram_id,
-                    "username": admin.username if admin else None,
-                    "role": admin.role.value if admin else None,
-                    "views": 0,
-                    "income": 0.0,
-                },
-            )
-            row["views"] += 1
-
-            if v.counted_status == CountedStatus.CONFIRMED:
-                amount = v.credited_amount or 0.0
-                total_income += amount
-                row["income"] = round(row["income"] + amount, 6)
-                if d in income_buckets:
-                    income_buckets[d] += amount
-
-        top_performers = sorted(per_admin.values(), key=lambda r: r["income"], reverse=True)[:5]
-        for r in top_performers:
-            r["income"] = round(r["income"], 4)
-
-        avg_daily_income = round(total_income / num_days, 4) if num_days else 0.0
-
-        return {
-            "role_filter": normalized_filter,
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-            "window_days": num_days,
-            "total_admins": len(target_ids),
-            "total_income": round(total_income, 4),
-            "total_views": total_views,
-            "total_capped_views": total_capped_views,
-            "avg_daily_income": avg_daily_income,
-            "income_trend": [
-                {"date": d.isoformat(), "amount": round(income_buckets[d], 4)} for d in sorted(income_buckets)
-            ],
-            "views_trend": [
-                {"date": d.isoformat(), "views": view_buckets[d], "capped_views": capped_view_buckets[d]}
-                for d in sorted(view_buckets)
-            ],
-            "top_performers": top_performers,
         }
 
     async def platform_stats(self) -> dict:

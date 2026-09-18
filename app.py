@@ -359,8 +359,7 @@ async def redirect_entry(short_code: str):
     cs = await storage.get_cpm_setting()
     ans = await storage.get_ad_network_setting()
     owner = await storage.get_admin(link.owner_telegram_id)
-    category = storage._category_for_id(link.owner_telegram_id, link.category_id)
-    ad_config = _build_ad_config(ans, cs, effective_ad_count(owner, ans, category))
+    ad_config = _build_ad_config(ans, cs, effective_ad_count(owner, ans))
     with open("webapp/viewer.html", "r", encoding="utf-8") as f:
         html = f.read()
     html = (
@@ -407,8 +406,7 @@ async def get_ad_config(short_code: str):
     cs = await storage.get_cpm_setting()
     ans = await storage.get_ad_network_setting()
     owner = await storage.get_admin(link.owner_telegram_id)
-    category = storage._category_for_id(link.owner_telegram_id, link.category_id)
-    return _build_ad_config(ans, cs, effective_ad_count(owner, ans, category))
+    return _build_ad_config(ans, cs, effective_ad_count(owner, ans))
 
 
 @app.get("/panel", response_class=HTMLResponse)
@@ -475,20 +473,6 @@ async def me(admin: Admin = Depends(require_admin)):
     return admin.model_dump()
 
 
-@app.get("/api/my-analytics")
-async def my_analytics(admin: Admin = Depends(require_admin)):
-    """Personal earnings + views dashboard payload for the Overview tab's
-    Admin/Sub Admin home screen (webapp/panel.html) — scoped to the
-    calling Admin's own links via storage.own_analytics_summary. The
-    Owner gets a separate, platform-wide dashboard (Stats tab, backed by
-    platform_stats/platform_income_summary) instead of this endpoint;
-    kept apart deliberately since "my links" and platform-aggregate
-    numbers are different concepts, not just different scopes of the
-    same one.
-    """
-    return await storage.own_analytics_summary(admin.telegram_id)
-
-
 @app.get("/api/traffic-sources")
 async def list_traffic_sources(admin: Admin = Depends(require_admin)):
     return {"traffic_sources": [s.model_dump() for s in admin.traffic_sources]}
@@ -548,63 +532,6 @@ async def remove_traffic_source(source_id: str, admin: Admin = Depends(require_a
 
 
 # ---------------------------------------------------------------------------
-# Categories — per-Admin, user-defined labels an Admin/Sub Admin can tag
-# their own links with (see models.Category). Panel-only, same as Traffic
-# Sources: there's no public-API or bot equivalent for managing these,
-# only for using an existing category_id when creating/editing a link.
-# ---------------------------------------------------------------------------
-
-MAX_CATEGORY_NAME_LENGTH = 40
-
-
-@app.get("/api/categories")
-async def list_categories(admin: Admin = Depends(require_admin)):
-    return {"categories": [c.model_dump() for c in admin.categories]}
-
-
-@app.post("/api/categories")
-async def add_category(payload: dict, admin: Admin = Depends(require_admin)):
-    name = (payload.get("name") or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="name is required")
-    if len(name) > MAX_CATEGORY_NAME_LENGTH:
-        raise HTTPException(status_code=400, detail=f"name must be {MAX_CATEGORY_NAME_LENGTH} characters or fewer")
-    if len(admin.categories) >= Storage.MAX_CATEGORIES_PER_ADMIN:
-        raise HTTPException(
-            status_code=400,
-            detail=f"you can have at most {Storage.MAX_CATEGORIES_PER_ADMIN} categories",
-        )
-    category = await storage.add_category(admin.telegram_id, name)
-    if not category:
-        raise HTTPException(status_code=400, detail="couldn't create category")
-    return category.model_dump()
-
-
-@app.delete("/api/categories/{category_id}")
-async def remove_category(category_id: str, admin: Admin = Depends(require_admin)):
-    ok = await storage.delete_category(admin.telegram_id, category_id)
-    if not ok:
-        raise HTTPException(status_code=404, detail="category not found")
-    return {"ok": True}
-
-
-def _category_name_for(categories, category_id: Optional[str]) -> Optional[str]:
-    """Resolves `category_id` to its display name from an already-loaded
-    `categories` list (e.g. `admin.categories`) — the app.py-side twin of
-    storage._category_name, used by the two endpoints below that build
-    their link dicts directly in this module rather than through a
-    storage helper. Returns None for "no category" or a since-deleted
-    category, same fallback both resolvers share.
-    """
-    if not category_id:
-        return None
-    for c in categories:
-        if c.id == category_id:
-            return c.name
-    return None
-
-
-# ---------------------------------------------------------------------------
 # Admin: links
 # ---------------------------------------------------------------------------
 
@@ -631,12 +558,6 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
     destination_url = (payload.get("destination_url") or "").strip()
     if not destination_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
-    title = (payload.get("title") or "").strip() or None
-    if title and len(title) > 100:
-        raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
-    category_id = (payload.get("category_id") or "").strip() or None
-    if category_id and not any(c.id == category_id for c in admin.categories):
-        raise HTTPException(status_code=400, detail="category not found")
 
     code = _gen_short_code()
     while await storage.get_link(code):
@@ -645,15 +566,8 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
     # starts at storage.Storage.DEFAULT_AD_COUNT regardless of who
     # creates it; only the Owner can change it afterward, per-link, via
     # POST /api/admin/links/{short_code}/ad-count.
-    link = await storage.create_link(code, admin.telegram_id, destination_url, title=title, category_id=category_id)
-    return {
-        "short_code": link.short_code,
-        "short_url": _short_url_for(link.short_code),
-        "ad_count": link.ad_count,
-        "title": link.title,
-        "category_id": link.category_id,
-        "category_name": _category_name_for(admin.categories, link.category_id),
-    }
+    link = await storage.create_link(code, admin.telegram_id, destination_url)
+    return {"short_code": link.short_code, "short_url": _short_url_for(link.short_code), "ad_count": link.ad_count}
 
 
 @app.delete("/api/links/{short_code}")
@@ -662,73 +576,6 @@ async def delete_link(short_code: str, admin: Admin = Depends(require_admin)):
     if not ok:
         raise HTTPException(status_code=404, detail="link not found")
     return {"ok": True}
-
-
-@app.put("/api/links/{short_code}")
-async def edit_link(short_code: str, payload: dict, admin: Admin = Depends(require_admin)):
-    """Lets an Admin fix a typo in their own link's title, category, or
-    destination URL after the fact, instead of deleting (losing its
-    "My Links" history) and recreating it under a new short_code. Owner
-    accounts can edit anyone's link, mirroring DELETE
-    /api/links/{short_code}'s own is_owner bypass. All three fields are
-    optional and independent — a request can send just one of them.
-
-    A new `category_id` is validated against the *link's own owner's*
-    categories, not necessarily the caller's — when the Owner edits
-    someone else's link, "does this category exist" has to mean "does
-    it exist for the Admin who actually owns this link", since the
-    Owner's own category list (if they have one at all) is a completely
-    different set.
-    """
-    link_existing = await storage.get_link(short_code)
-    if not link_existing:
-        raise HTTPException(status_code=404, detail="link not found")
-    if admin.role != Role.OWNER and link_existing.owner_telegram_id != admin.telegram_id:
-        raise HTTPException(status_code=404, detail="link not found")
-
-    title_provided = "title" in payload
-    title = None
-    if title_provided:
-        title = (payload.get("title") or "").strip() or None
-        if title and len(title) > 100:
-            raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
-
-    destination_url = None
-    if "destination_url" in payload:
-        destination_url = (payload.get("destination_url") or "").strip()
-        if not destination_url.startswith(("http://", "https://")):
-            raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
-
-    category_id_provided = "category_id" in payload
-    category_id = None
-    owner_admin = await storage.get_admin(link_existing.owner_telegram_id)
-    if category_id_provided:
-        category_id = (payload.get("category_id") or "").strip() or None
-        owner_categories = owner_admin.categories if owner_admin else []
-        if category_id and not any(c.id == category_id for c in owner_categories):
-            raise HTTPException(status_code=400, detail="category not found")
-
-    link = await storage.update_link(
-        short_code,
-        admin.telegram_id,
-        admin.role == Role.OWNER,
-        title=title,
-        title_provided=title_provided,
-        destination_url=destination_url,
-        category_id=category_id,
-        category_id_provided=category_id_provided,
-    )
-    if not link:
-        raise HTTPException(status_code=404, detail="link not found")
-    return {
-        "short_code": link.short_code,
-        "short_url": _short_url_for(link.short_code),
-        "title": link.title,
-        "category_id": link.category_id,
-        "category_name": _category_name_for(owner_admin.categories, link.category_id) if owner_admin else None,
-        "destination_url": link.destination_url,
-        "ad_count": link.ad_count,
-    }
 
 
 @app.get("/api/links")
@@ -748,27 +595,24 @@ async def my_links(admin: Admin = Depends(require_admin)):
     can see the old per-link value — it's legacy and read-only either
     way (see Link.ad_count's docstring). `effective_ad_count` is the
     number that actually matters now: how many ads a viewer of this
-    link really watches — see effective_ad_count()'s full priority
-    order in models.py (a category-level override, if this link has one
-    and the Owner set one for it, wins over this Admin's own
-    `Admin.ad_count` profile override, which wins over the platform
-    default). Computed per-link, not once for the whole Admin, since two
-    links in different categories can now genuinely show different
-    counts even though they're owned by the same Admin.
+    link really watches, i.e. this Admin's own `Admin.ad_count`
+    profile override if the Owner set one for them, otherwise
+    len(AdNetworkSetting.slot_sequence) — see effective_ad_count()'s
+    docstring in models.py. It's the same value for every link in this
+    list, since it's a per-Admin setting, not a per-link one.
     """
     ans = await storage.get_ad_network_setting()
+    my_ad_count = effective_ad_count(admin, ans)
     links = await storage.list_links_by_owner(admin.telegram_id)
     out = []
     for l in links:
         views = await storage.list_views_by_short_code(l.short_code)
         genuine_views = [v for v in views if not v.daily_capped]
-        category = storage._category_for_id(admin.telegram_id, l.category_id)
         out.append(
             {
                 **l.model_dump(),
                 "short_url": _short_url_for(l.short_code),
-                "category_name": category.name if category else None,
-                "effective_ad_count": effective_ad_count(admin, ans, category),
+                "effective_ad_count": my_ad_count,
                 "view_count": len(genuine_views),
                 "confirmed_views": len(
                     [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]
@@ -1123,41 +967,18 @@ async def admin_links(telegram_id: int, owner: Admin = Depends(require_owner)):
     """Every link this Admin/Sub Admin owns — the list the Owner's
     per-Admin detail page shows alongside their profile-level ad count
     control (see POST /api/admin/admins/{telegram_id}/ad-count).
-    `effective_ad_count` is computed per-link, using each link's own
-    category if it has one — though a category-level override only ever
-    applies to the *Owner's own* categories (see POST /api/categories/
-    {category_id}/ad-count and Category.ad_count's docstring), so in
-    practice this only varies within another Admin's own links if the
-    Owner has separately changed their profile-level override, not from
-    anything category-related on their side.
-    """
+    `effective_ad_count` is the same value repeated on every row (a
+    per-Admin setting, not a per-link one), included per-link only so
+    the panel doesn't need a second round trip."""
     target = await storage.get_admin(telegram_id)
     if not target or not await storage.admin_stats(telegram_id):
         raise HTTPException(status_code=404, detail="admin not found")
     ans = await storage.get_ad_network_setting()
+    my_ad_count = effective_ad_count(target, ans)
     links = await storage.admin_links_detail(telegram_id)
     for l in links:
-        category = storage._category_for_id(telegram_id, l.get("category_id"))
-        l["effective_ad_count"] = effective_ad_count(target, ans, category)
+        l["effective_ad_count"] = my_ad_count
     return {"links": links}
-
-
-@app.get("/api/admin/admins/{telegram_id}/analytics")
-async def admin_detail_analytics(telegram_id: int, owner: Admin = Depends(require_owner)):
-    """Same personal earnings+views dashboard payload as GET
-    /api/my-analytics (storage.own_analytics_summary), just Owner-only
-    and scoped to any Admin/Sub Admin's telegram_id via the path —
-    powers the Obsidian-style glow-card + trend-chart dashboard on the
-    Owner's per-Admin detail page (webapp/panel.html's Admins tab ->
-    tap an Admin), so the Owner sees the exact same chart shape for
-    someone else's links that an Admin sees for their own — plus a
-    Daily-capped-views line on the Views Trend chart that only the
-    Owner ever sees (include_daily_capped=True), never the Admin's own
-    GET /api/my-analytics call.
-    """
-    if not await storage.get_admin(telegram_id):
-        raise HTTPException(status_code=404, detail="admin not found")
-    return await storage.own_analytics_summary(telegram_id, include_daily_capped=True)
 
 
 @app.post("/api/admin/links/{short_code}/ad-count")
@@ -1223,40 +1044,6 @@ async def set_admin_status(telegram_id: int, payload: dict, owner: Admin = Depen
 @app.get("/api/admin/stats")
 async def platform_stats(owner: Admin = Depends(require_owner)):
     return await storage.platform_stats()
-
-
-@app.get("/api/admin/analytics")
-async def owner_platform_analytics(
-    role_filter: str = "both",
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    owner: Admin = Depends(require_owner),
-):
-    """Owner-only platform-wide earnings + views dashboard for the
-    panel's Overview (home) tab — see storage.platform_analytics_summary
-    for the aggregation itself. Every Admin and/or Sub Admin's own
-    genuine views are summed, filterable by role and by an explicit
-    date range (both optional; default is every Admin+Sub Admin
-    combined, trailing 30 days). Kept as its own endpoint rather than a
-    mode of GET /api/my-analytics: an Owner's own personal link income
-    (if they have any) is a different, single-person concept from "how
-    is the whole platform doing", and conflating the two would answer
-    neither question well.
-    """
-    if role_filter not in ("admin", "sub_admin", "both", "owner"):
-        raise HTTPException(status_code=400, detail="role_filter must be 'admin', 'sub_admin', 'owner', or 'both'")
-
-    def _parse_date(raw: Optional[str], field: str):
-        if not raw:
-            return None
-        try:
-            return datetime.strptime(raw, "%Y-%m-%d").date()
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"{field} must be in YYYY-MM-DD format")
-
-    parsed_start = _parse_date(start_date, "start_date")
-    parsed_end = _parse_date(end_date, "end_date")
-    return await storage.platform_analytics_summary(role_filter, parsed_start, parsed_end)
 
 
 # ---------------------------------------------------------------------------
@@ -1373,39 +1160,6 @@ async def set_admin_ad_count(telegram_id: int, payload: dict, owner: Admin = Dep
     return updated.model_dump()
 
 
-@app.post("/api/categories/{category_id}/ad-count")
-async def set_own_category_ad_count(category_id: str, payload: dict, owner: Admin = Depends(require_owner)):
-    """Owner-only, and scoped to the Owner's *own* categories only — not
-    any other Admin/Sub Admin's. Sets a fixed ad count on one of the
-    Owner's own categories; every link the Owner tags with it (existing
-    and future) shows that many ads, taking priority over the Owner's
-    own profile-level `Admin.ad_count` if they have one set (see
-    effective_ad_count()'s full priority order in models.py).
-    `ad_count: null` clears the override, falling back to the Owner's
-    profile-level setting or the platform default. Deliberately not
-    reachable for any category other than the Owner's own — see
-    Category.ad_count's docstring for why this stays a purely
-    Owner-personal lever rather than a way to change what an Admin's own
-    viewers see behind their back.
-    """
-    raw = payload.get("ad_count")
-    ad_count = None
-    if raw is not None and raw != "":
-        try:
-            ad_count = int(raw)
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=400, detail="ad_count must be a whole number or null")
-        if not (Storage.MIN_AD_COUNT <= ad_count <= Storage.MAX_AD_COUNT):
-            raise HTTPException(
-                status_code=400,
-                detail=f"ad_count must be between {Storage.MIN_AD_COUNT} and {Storage.MAX_AD_COUNT}",
-            )
-    updated = await storage.set_category_ad_count(owner.telegram_id, category_id, ad_count, changed_by=owner.telegram_id)
-    if not updated:
-        raise HTTPException(status_code=404, detail="category not found")
-    return updated.model_dump()
-
-
 @app.post("/api/admin/admins/{telegram_id}/auto-delete")
 async def set_link_auto_delete(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
     months_raw = payload.get("months")
@@ -1501,42 +1255,28 @@ async def v1_create_link(payload: dict, admin: Admin = Depends(require_api_key))
     destination_url = (payload.get("destination_url") or "").strip()
     if not destination_url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
-    title = (payload.get("title") or "").strip() or None
-    if title and len(title) > 100:
-        raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
-    category_id = (payload.get("category_id") or "").strip() or None
-    if category_id and not any(c.id == category_id for c in admin.categories):
-        raise HTTPException(status_code=400, detail="category not found")
 
     code = _gen_short_code()
     while await storage.get_link(code):
         code = _gen_short_code()
-    link = await storage.create_link(code, admin.telegram_id, destination_url, title=title, category_id=category_id)
-    return {
-        "short_code": link.short_code,
-        "short_url": _short_url_for(link.short_code),
-        "ad_count": link.ad_count,
-        "title": link.title,
-        "category_id": link.category_id,
-        "category_name": _category_name_for(admin.categories, link.category_id),
-    }
+    link = await storage.create_link(code, admin.telegram_id, destination_url)
+    return {"short_code": link.short_code, "short_url": _short_url_for(link.short_code), "ad_count": link.ad_count}
 
 
 @app.get("/api/v1/links")
 async def v1_my_links(admin: Admin = Depends(require_api_key)):
     ans = await storage.get_ad_network_setting()
+    my_ad_count = effective_ad_count(admin, ans)
     links = await storage.list_links_by_owner(admin.telegram_id)
     out = []
     for l in links:
         views = await storage.list_views_by_short_code(l.short_code)
         genuine_views = [v for v in views if not v.daily_capped]
-        category = storage._category_for_id(admin.telegram_id, l.category_id)
         out.append(
             {
                 **l.model_dump(),
                 "short_url": _short_url_for(l.short_code),
-                "category_name": category.name if category else None,
-                "effective_ad_count": effective_ad_count(admin, ans, category),
+                "effective_ad_count": my_ad_count,
                 "view_count": len(genuine_views),
                 "confirmed_views": len(
                     [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]
@@ -1556,66 +1296,6 @@ async def v1_delete_link(short_code: str, admin: Admin = Depends(require_api_key
     if not ok:
         raise HTTPException(status_code=404, detail="link not found")
     return {"ok": True}
-
-
-@app.put("/api/v1/links/{short_code}")
-async def v1_edit_link(short_code: str, payload: dict, admin: Admin = Depends(require_api_key)):
-    """Mirrors PUT /api/links/{short_code} (the Mini App's own edit
-    endpoint, see its docstring) for the public REST API — lets an
-    Admin fix a link's title, category, or destination URL after
-    creation via their own site/server instead of only from the panel.
-    All three fields are optional and independent, same as the Mini App
-    version.
-    """
-    link_existing = await storage.get_link(short_code)
-    if not link_existing:
-        raise HTTPException(status_code=404, detail="link not found")
-    if admin.role != Role.OWNER and link_existing.owner_telegram_id != admin.telegram_id:
-        raise HTTPException(status_code=404, detail="link not found")
-
-    title_provided = "title" in payload
-    title = None
-    if title_provided:
-        title = (payload.get("title") or "").strip() or None
-        if title and len(title) > 100:
-            raise HTTPException(status_code=400, detail="title must be 100 characters or fewer")
-
-    destination_url = None
-    if "destination_url" in payload:
-        destination_url = (payload.get("destination_url") or "").strip()
-        if not destination_url.startswith(("http://", "https://")):
-            raise HTTPException(status_code=400, detail="destination_url must be a valid http(s) URL")
-
-    category_id_provided = "category_id" in payload
-    category_id = None
-    owner_admin = await storage.get_admin(link_existing.owner_telegram_id)
-    if category_id_provided:
-        category_id = (payload.get("category_id") or "").strip() or None
-        owner_categories = owner_admin.categories if owner_admin else []
-        if category_id and not any(c.id == category_id for c in owner_categories):
-            raise HTTPException(status_code=400, detail="category not found")
-
-    link = await storage.update_link(
-        short_code,
-        admin.telegram_id,
-        admin.role == Role.OWNER,
-        title=title,
-        title_provided=title_provided,
-        destination_url=destination_url,
-        category_id=category_id,
-        category_id_provided=category_id_provided,
-    )
-    if not link:
-        raise HTTPException(status_code=404, detail="link not found")
-    return {
-        "short_code": link.short_code,
-        "short_url": _short_url_for(link.short_code),
-        "title": link.title,
-        "category_id": link.category_id,
-        "category_name": _category_name_for(owner_admin.categories, link.category_id) if owner_admin else None,
-        "destination_url": link.destination_url,
-        "ad_count": link.ad_count,
-    }
 
 
 @app.get("/api/v1/cpm")
