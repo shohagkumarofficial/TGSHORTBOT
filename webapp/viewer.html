@@ -145,39 +145,6 @@
   .status-line.error{ color: var(--red); }
   .status-line.ok{ color: var(--emerald); }
 
-  /* --- DNS / network-block warning ---------------------------------
-     Shown only when an ad SDK's own <script> tag fails to load (a
-     network-level failure — DNS resolution refused, blocked domain,
-     etc.) rather than the SDK loading fine but simply having "no fill"
-     for this viewer right now. The two look identical to a viewer
-     ("ad didn't load"), but only the first is something the viewer can
-     actually fix themselves — most commonly a phone-wide Private/Custom
-     DNS (AdGuard, NextDNS, Cloudflare DNS, etc.) that blocks known ad
-     domains. See isLikelyDnsOrNetworkBlock() below for the detection
-     rule and showAdError() for where this is toggled. */
-  .dns-warning{
-    margin-top: 18px;
-    max-width: 320px;
-    background: rgba(226,104,92,.08);
-    border: 1px solid rgba(226,104,92,.35);
-    border-radius: 14px;
-    padding: 14px 16px;
-    text-align: left;
-  }
-  .dns-warning-title{
-    font-family: var(--display);
-    font-weight:600;
-    font-size: 14px;
-    color: var(--red);
-    margin-bottom: 8px;
-  }
-  .dns-warning-body{
-    font-size: 12.5px;
-    line-height:1.65;
-    color: var(--text-dim);
-  }
-  .dns-warning-body b{ color: var(--text); }
-
   .footer-note{
     position:fixed; bottom:14px; left:0; right:0;
     text-align:center;
@@ -232,16 +199,6 @@
     <button class="ghost" id="retryBtn" style="display:none;">Try that ad again</button>
 
     <div class="status-line" id="statusLine"></div>
-
-    <div class="dns-warning" id="dnsWarning" style="display:none;">
-      <div class="dns-warning-title">⚠️ Custom DNS-এর কারণে বিজ্ঞাপন ব্লক হচ্ছে বলে মনে হচ্ছে</div>
-      <div class="dns-warning-body">
-        আপনার ফোনে Private/Custom DNS (যেমন AdGuard DNS, NextDNS, Cloudflare DNS ইত্যাদি)
-        চালু থাকলে বিজ্ঞাপনের সার্ভার ব্লক হয়ে যেতে পারে, ফলে লিংক আনলক করা যায় না।<br><br>
-        <b>সমাধান:</b> ফোনের Settings → Network &amp; Internet → Private DNS-এ গিয়ে
-        সেটি বন্ধ করুন (Off অথবা Automatic করুন), তারপর নিচের বাটনে চেপে আবার চেষ্টা করুন।
-      </div>
-    </div>
   </div>
 
   <div class="footer-note">Ads served by our ad partners · <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a></div>
@@ -566,28 +523,6 @@
     }
   }
 
-  // Distinguishes a network-level failure (the ad SDK's own <script> tag
-  // never loaded at all — DNS refused it, a blocked domain, no route to
-  // the CDN) from the ad SDK loading fine but simply having no ad to
-  // show this viewer right now ("no fill", the normal/expected case a
-  // low-traffic zone hits constantly). Both surface to the viewer as
-  // "the ad didn't load", but only the first is something the viewer can
-  // fix themselves — almost always a phone-wide Private/Custom DNS
-  // (AdGuard, NextDNS, Cloudflare DNS, etc.) that blocks known ad
-  // domains before the request even leaves the device.
-  //
-  // Matches on loadScript()'s own reject message ("failed to load " +
-  // src, thrown on the <script> tag's onerror) and
-  // loadGigaPubWithFallback()'s per-domain timeout/failure messages —
-  // i.e. errors that happen *before* any ad SDK's own show()/showFn()
-  // call ever runs, as opposed to a rejection from that call itself
-  // (wrapped as "Adsgram: ...", "Monetag: ...", "GigaPub: ..." by
-  // showAdForNetwork, which are real SDK-level responses like no-fill).
-  function isLikelyDnsOrNetworkBlock(err) {
-    const msg = (err && err.message) || "";
-    return /failed to load/i.test(msg) || /timed out loading/i.test(msg);
-  }
-
   function showAdError(err) {
     mainBtn.style.display = "none";
     retryBtn.style.display = "inline-block";
@@ -597,21 +532,11 @@
     // fine but this network had no ad to show" (no fill) without asking
     // the viewer to plug their phone into a computer.
     const detail = err && err.message ? String(err.message) : "";
-    const dnsBanner = document.getElementById("dnsWarning");
-    if (isLikelyDnsOrNetworkBlock(err)) {
-      dnsBanner.style.display = "block";
-      setStatus(
-        "বিজ্ঞাপন সার্ভারে পৌঁছানো যাচ্ছে না।" + (detail ? "\n" + detail : ""),
-        "error"
-      );
-    } else {
-      dnsBanner.style.display = "none";
-      setStatus(
-        "The ad didn't load. This happens sometimes — try again." +
-          (detail ? "\n" + detail : ""),
-        "error"
-      );
-    }
+    setStatus(
+      "The ad didn't load. This happens sometimes — try again." +
+        (detail ? "\n" + detail : ""),
+      "error"
+    );
   }
 
   function showAdStep(n) {
@@ -622,7 +547,6 @@
     retryBtn.style.display = "none";
     mainBtn.disabled = false;
     setStatus("");
-    document.getElementById("dnsWarning").style.display = "none";
   }
 
   // Ad networks generally need a short gap to have the next ad ready —
@@ -676,7 +600,6 @@
     if (inFlight) return;
     inFlight = true;
     mainBtn.disabled = true;
-    document.getElementById("dnsWarning").style.display = "none";
     setBusyStatus(" Loading ad…");
 
     const network = AD_CONFIG.sequence[adsWatched] || AD_CONFIG.sequence[0];
