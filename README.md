@@ -459,6 +459,101 @@ Quick summary:
   how `_safe_upsert` already tolerates a missing column elsewhere), but
   `POST /api/apikeys` needs it to actually persist anything.
 
+## Link titles (optional)
+
+Both `POST /api/links` (Mini App) and `POST /api/v1/links` (public REST
+API) accept an optional `title` field (e.g. `{"destination_url": "...",
+"title": "August giveaway post"}`) — purely a display label so an Admin
+with many links can tell them apart at a glance. Nothing else in the app
+reads it: it doesn't affect the short_code, the ad-serving flow, or CPM
+crediting. Leaving it out (or the bot's `/newlink`, which doesn't ask for
+one) works exactly as before — every existing link simply has
+`title: null`. When set, it's shown in place of the bare short_code on
+"My Links", the Owner's per-Admin link list, and every "Top Links"
+breakdown; the short_code itself is still shown alongside it as a
+secondary line so it's never hidden.
+
+**Required Supabase migration** — run once (safe to re-run):
+
+```sql
+alter table links add column if not exists title text;
+```
+
+Until this is run, `_safe_upsert` silently drops the `title` field from
+every write to the `links` table (logging a warning each time, per its
+usual missing-column tolerance) — link creation still succeeds, the
+title just won't survive a restart until the column exists.
+
+## Categories
+
+Every Admin/Sub Admin can keep their own list of categories (e.g.
+"Movies", "Giveaway", "YouTube") from the panel's Profile tab, and
+optionally tag a link with one at creation time (or add/change it later
+via the link's Edit button) — a personal organizational tool. Categories
+are per-Admin: two different Admins can each have one named the same
+thing without colliding, and one Admin's categories are never visible or
+selectable by another (the Owner can still see and edit the category on
+any Admin's link from their per-Admin detail page, using that Admin's
+own category list). There's no rename — delete and recreate covers it,
+since removing a category costs nothing (no view history or balance is
+attached to a category itself); deleting one clears `category_id` back
+to null on any of that Admin's own links that referenced it, rather than
+leaving a dangling reference.
+
+**Category ad count override** (Owner-only, and scoped to the *Owner's
+own* categories only — from the panel's "Your owner tools" → Categories
+page): gives one of the Owner's own categories a fixed ad count, e.g.
+every link the Owner tags "Movie" shows 10 ads while every link tagged
+"Natok" shows 7 — regardless of the Owner's own profile-level ad count
+override, if they have one. This is deliberately not available on any
+other Admin/Sub Admin's categories — it's a lever over the Owner's own
+link-shortening activity, not a way to change what an Admin's own
+viewers see behind that Admin's back. Checked *before* the per-Admin
+override in `models.effective_ad_count()`'s priority order (though for
+anyone but the Owner that check is simply always empty, since the field
+can never be set on their categories in the first place). Leaving the
+override blank falls back to the Owner's own `Admin.ad_count` (if set),
+then the platform-wide default (Ad Networks tab). Like the per-Admin
+override, this is real-time: read fresh on every `/r/{short_code}` and
+`/api/ad-config/{short_code}` call, so a change applies instantly to
+every link already tagged with that category, no per-link action
+needed.
+
+Managed only from the panel (`GET/POST /api/categories`,
+`DELETE /api/categories/{id}`, and the Owner-only, Owner-self-only
+`POST /api/categories/{category_id}/ad-count`) — same as Traffic
+Sources, there's no bot command or public-API equivalent for creating/
+deleting categories or setting their ad count, only for using an
+existing `category_id` when creating or editing a link via
+`POST/PUT /api/links` or their `/api/v1/*` counterparts.
+
+**Required Supabase migration** — run once (safe to re-run):
+
+```sql
+create table if not exists categories (
+  id text primary key,
+  admin_telegram_id bigint not null,
+  name text not null,
+  created_at text not null,
+  ad_count integer
+);
+
+alter table categories add column if not exists ad_count integer;
+alter table links add column if not exists category_id text;
+```
+
+(The standalone `alter table categories add column if not exists
+ad_count` is redundant with the `create table`'s own `ad_count` column
+for a brand-new install, but covers anyone who created the `categories`
+table before this ad-count override existed — safe to run either way.)
+
+Both writes self-heal the same way `api_keys`/`title` do if this hasn't
+been run yet: category creation still works for the life of the running
+process (kept in memory), it just won't persist across a restart until
+the migration is applied — `categories` rows are silently skipped
+(`_safe_upsert`'s `tolerate_missing_table=True`) and `links.category_id`
+is silently dropped from each write, both logging a warning.
+
 ## Deploying to Render
 
 `render.yaml` is ready to use as-is:
