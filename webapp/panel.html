@@ -451,17 +451,6 @@
     stats: null,
     drawerOpen: false,
     apiKeys: [],
-    // Owner's Admins-tab view preference: Viewers (no Traffic Source yet,
-    // no earning power) clutter the list when hunting for a specific
-    // Admin/Sub Admin, so they're hidden by default — this toggle brings
-    // them back without needing a separate endpoint or server-side filter.
-    showViewersInAdminsList: false,
-    // Per-Admin-detail "show all links" state, keyed by telegram_id (as a
-    // string) — an Admin with many links otherwise pushes Role/CPM/Balance
-    // controls far down the page; the links list starts collapsed
-    // (adminLinksListHTML's `limit`) and stays expanded across re-renders
-    // of that same Admin's detail view once the Owner asks to see more.
-    expandedAdminLinksIds: new Set(),
   };
 
   // ---- helpers ------------------------------------------------------
@@ -613,26 +602,6 @@
   // scoped by whichever `missed_earnings_trend` / `missed_earnings_by_link`
   // payload is passed in (platform-wide vs one Admin's own links).
 
-  // Both bar charts below rely on an SVG <title> for the per-bar figure —
-  // that only ever shows on a desktop mouse hover, never on a mobile tap,
-  // which is the only pointer this Mini App actually gets used with. Each
-  // bar also gets a full-height *invisible* rect (class "trend-bar",
-  // tagged with the same text as a `data-tip` attribute) layered on top,
-  // so a tap anywhere in that day's column — not just on the visible bar,
-  // which can be just 1-2px tall for a zero/near-zero day — registers.
-  // wireTrendChartTaps() (below) turns a tap on any `.trend-bar` into a
-  // toast with that day's numbers; call it once after the chart's HTML is
-  // actually in the DOM (querySelectorAll on a template string does
-  // nothing).
-  function wireTrendChartTaps(container) {
-    container.querySelectorAll(".trend-bar").forEach((rect) => {
-      rect.addEventListener("click", () => {
-        const tip = rect.getAttribute("data-tip");
-        if (tip) toast(tip);
-      });
-    });
-  }
-
   function missedTrendChartSVG(trend) {
     if (!trend || !trend.length) return `<div class="empty">No view history yet.</div>`;
     const W = 320, H = 110, padL = 3, padR = 3, padB = 16, padT = 6;
@@ -648,11 +617,9 @@
       const y = padT + (plotH - h);
       const shortLabel = (d.date || "").slice(5).replace("-", "/");
       const showLabel = i === 0 || i === n - 1 || i === Math.floor(n / 2);
-      const tip = `${shortLabel} — ${d.capped_views} missed view(s), ~${fmt(d.estimated_missed_amount)} estimated`;
       return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"
-          fill="${d.capped_views > 0 ? "var(--red)" : "var(--hairline)"}" opacity="${d.capped_views > 0 ? "0.88" : "0.6"}"></rect>
-        <rect class="trend-bar" x="${x.toFixed(1)}" y="${padT}" width="${barW.toFixed(1)}" height="${plotH}" fill="transparent" style="cursor:pointer;" data-tip="${esc(tip)}">
-          <title>${esc(tip)}</title>
+          fill="${d.capped_views > 0 ? "var(--red)" : "var(--hairline)"}" opacity="${d.capped_views > 0 ? "0.88" : "0.6"}">
+          <title>${esc(shortLabel)} — ${d.capped_views} missed view(s), ~${fmt(d.estimated_missed_amount)}</title>
         </rect>${showLabel ? `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>` : ""}`;
     }).join("");
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
@@ -679,24 +646,15 @@
       const y = padT + (plotH - h);
       const shortLabel = (d.date || "").slice(5).replace("-", "/");
       const showLabel = i === 0 || i === n - 1 || i === Math.floor(n / 2);
-      const tip = `${shortLabel} — ${fmt(d.amount)}`;
       return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5"
-          fill="${color}" opacity="${d.amount > 0 ? "0.88" : "0.35"}"></rect>
-        <rect class="trend-bar" x="${x.toFixed(1)}" y="${padT}" width="${barW.toFixed(1)}" height="${plotH}" fill="transparent" style="cursor:pointer;" data-tip="${esc(tip)}">
-          <title>${esc(tip)}</title>
+          fill="${color}" opacity="${d.amount > 0 ? "0.88" : "0.35"}">
+          <title>${esc(shortLabel)} — ${fmt(d.amount)}</title>
         </rect>${showLabel ? `<text x="${(x + barW / 2).toFixed(1)}" y="${H - 4}" font-size="8" fill="var(--text-faint)" text-anchor="middle">${esc(shortLabel)}</text>` : ""}`;
     }).join("");
     return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="display:block;">${bars}</svg>`;
   }
 
-  // How many of an Admin's links render before "show more" — keeps the
-  // detail page short for an Admin/Sub Admin who has shortened a lot of
-  // links, since the full list otherwise sits between the Ad Count
-  // override card and the Role/CPM/Balance controls (see the links
-  // section's new position at the bottom of renderAdminDetail).
-  const ADMIN_LINKS_PAGE_SIZE = 6;
-
-  function adminLinksListHTML(links, limit) {
+  function adminLinksListHTML(links) {
     if (!links || !links.length) {
       return `<div class="card"><div class="empty">This Admin hasn't created any links yet.</div></div>`;
     }
@@ -704,9 +662,7 @@
     // profile (see the "Ad count override" card above) rather than per
     // link — every row shows the same effective_ad_count for that
     // reason, not a per-link value.
-    const showAll = limit == null || links.length <= limit;
-    const visible = showAll ? links : links.slice(0, limit);
-    const cardsHtml = visible.map((l) => `
+    return links.map((l) => `
       <div class="card" data-short-code="${esc(l.short_code)}">
         <div class="meta" style="color:var(--text); font-weight:600;">/${esc(l.short_code)}</div>
         <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(l.destination_url)}</div>
@@ -714,8 +670,6 @@
         <div class="meta">${icon("play", 12)} ${l.effective_ad_count} ad${l.effective_ad_count === 1 ? "" : "s"} to unlock</div>
       </div>
     `).join("");
-    if (showAll) return cardsHtml;
-    return cardsHtml + `<div class="btn-row"><button class="btn btn-outline btn-block" id="expandAdminLinksBtn">আরও ${links.length - limit}টি লিংক দেখুন</button></div>`;
   }
 
   function missedByLinkListHTML(rows, opts) {
@@ -2271,23 +2225,7 @@
   async function renderAdmins(el) {
     const data = await api("/api/admin/admins");
     state.admins = data.admins;
-
-    // Viewers (no Traffic Source yet, no earning power) can badly outnumber
-    // actual Admins/Sub Admins on this list, making a specific person hard
-    // to find — hidden by default, with a one-tap toggle to bring them
-    // back rather than dropping the data entirely.
-    const viewers = state.admins.filter((a) => a.role === "viewer");
-    const visibleAdmins = state.showViewersInAdminsList
-      ? state.admins
-      : state.admins.filter((a) => a.role !== "viewer");
-
-    const toggleBarHtml = viewers.length ? `
-      <div class="card" style="padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <div class="meta" style="margin:0;">${icon("eye", 13)} ${viewers.length} জন Viewer লুকানো আছে</div>
-        <button class="btn btn-outline btn-sm" id="toggleViewersBtn">${state.showViewersInAdminsList ? "লুকান" : "দেখান"}</button>
-      </div>` : "";
-
-    const cardsHtml = visibleAdmins.length ? visibleAdmins.map((a) => `
+    el.innerHTML = state.admins.map((a) => `
       <div class="card${a.role !== "owner" ? " admin-card" : ""}" ${a.role !== "owner" ? `data-id="${a.telegram_id}"` : ""}>
         <div class="row-between">
           <h3>${esc(a.username ? "@" + a.username : "id " + a.telegram_id)}</h3>
@@ -2310,18 +2248,7 @@
               : `<button class="btn btn-success btn-sm banBtn" data-id="${a.telegram_id}" data-status="active">Reactivate</button>`}
           </div>` : ""}
       </div>
-    `).join("") : `<div class="card"><div class="empty">এখনো কোনো Admin/Sub Admin নেই।</div></div>`;
-
-    el.innerHTML = toggleBarHtml + cardsHtml;
-
-    const toggleBtn = el.querySelector("#toggleViewersBtn");
-    if (toggleBtn) {
-      toggleBtn.addEventListener("click", () => {
-        state.showViewersInAdminsList = !state.showViewersInAdminsList;
-        renderAdmins(el);
-      });
-    }
-
+    `).join("");
     el.querySelectorAll(".banBtn").forEach((btn) => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
@@ -2361,7 +2288,6 @@
     }
     const a = d.admin;
     const adminLinks = linksResp.links || [];
-    const linksExpanded = state.expandedAdminLinksIds.has(String(telegramId));
 
     el.innerHTML = `
       <button class="btn btn-outline btn-sm" id="backToAdmins" style="margin-bottom:12px;">← Back to Admins</button>
@@ -2405,6 +2331,7 @@
         <div class="meta" style="color:var(--text-faint);">Applies instantly to every link this ${esc(roleMeta(a.role).label)} already has, and every new one — no need to set it per link.</div>
         <div class="btn-row"><button class="btn btn-primary btn-block" id="adminAdCountSaveBtn">Save ad count</button></div>
       </div>
+      <div id="adminLinksList">${adminLinksListHTML(adminLinks)}</div>
 
       ${a.admin_request_status === "pending" ? `
         <div class="section-title" style="margin-top:14px;">${icon("trendingUp", 14)} Pending Admin request</div>
@@ -2477,24 +2404,12 @@
             `).join("")
           : `<div class="card"><div class="empty">No balance corrections yet.</div></div>`}
       </div>
-
-      <div class="section-title" style="margin-top:14px;">${icon("link", 14)} লিংক সমূহ (${adminLinks.length})</div>
-      <div id="adminLinksList">${adminLinksListHTML(adminLinks, linksExpanded ? null : ADMIN_LINKS_PAGE_SIZE)}</div>
     `;
 
     el.querySelector("#backToAdmins").addEventListener("click", () => renderAdmins(el));
-    wireTrendChartTaps(el);
 
     const detailReqEl = el.querySelector("#detailAdminRequest");
     if (detailReqEl) wireAdminRequestActions(detailReqEl, () => renderAdminDetail(el, telegramId));
-
-    const expandLinksBtn = el.querySelector("#expandAdminLinksBtn");
-    if (expandLinksBtn) {
-      expandLinksBtn.addEventListener("click", () => {
-        state.expandedAdminLinksIds.add(String(telegramId));
-        renderAdminDetail(el, telegramId);
-      });
-    }
 
     const roleSaveBtn = el.querySelector("#roleSaveBtn");
     if (roleSaveBtn) {
@@ -2668,7 +2583,6 @@
       <div class="section-title" style="margin-top:14px;">${icon("link", 14)} Top links by missed views</div>
       <div id="missedByLink">${missedByLinkListHTML(s.missed_earnings_by_link, { showOwner: true })}</div>
     `;
-    wireTrendChartTaps(el);
     const applyBtn = el.querySelector("#applySuggestedLimit");
     if (applyBtn) {
       applyBtn.addEventListener("click", async () => {
