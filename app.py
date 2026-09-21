@@ -1056,6 +1056,7 @@ async def admin_pending_withdrawals(owner: Admin = Depends(require_owner)):
         requester = await storage.get_admin(w.admin_telegram_id)
         d = w.model_dump()
         d["admin_username"] = requester.username if requester else None
+        d["admin_display_name"] = requester.display_name if requester else None
         d["traffic_sources"] = [s.model_dump() for s in requester.traffic_sources] if requester else []
         out.append(d)
     return {"withdrawals": out}
@@ -1215,6 +1216,23 @@ async def set_admin_status(telegram_id: int, payload: dict, owner: Admin = Depen
     if telegram_id == owner.telegram_id:
         raise HTTPException(status_code=400, detail="cannot change your own status")
     admin = await storage.set_admin_status(telegram_id, AdminStatus(status))
+    if not admin:
+        raise HTTPException(status_code=404, detail="admin not found")
+    return admin.model_dump()
+
+
+@app.post("/api/admin/admins/{telegram_id}/display-name")
+async def set_admin_display_name(telegram_id: int, payload: dict, owner: Admin = Depends(require_owner)):
+    """Owner-only nickname for an Admin/Sub Admin with no (or an
+    unhelpful) Telegram username — see Admin.display_name's docstring.
+    `display_name: null` (or omitted/blank) clears it back to the
+    `@username`/bare-telegram_id fallback used everywhere else.
+    """
+    raw = payload.get("display_name")
+    display_name = (raw or "").strip() or None
+    if display_name and len(display_name) > 60:
+        raise HTTPException(status_code=400, detail="display_name must be 60 characters or fewer")
+    admin = await storage.set_admin_display_name(telegram_id, display_name, changed_by=owner.telegram_id)
     if not admin:
         raise HTTPException(status_code=404, detail="admin not found")
     return admin.model_dump()

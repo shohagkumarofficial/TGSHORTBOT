@@ -366,6 +366,36 @@ class Storage:
             await self._save_locked()
             return admin
 
+    async def set_admin_display_name(
+        self, telegram_id: int, display_name: Optional[str], changed_by: int
+    ) -> Optional[Admin]:
+        """Owner-only nickname for an Admin/Sub Admin with no (or an
+        unhelpful) Telegram `username` — see Admin.display_name's own
+        docstring for the full rationale. `display_name=None` clears it,
+        falling back to `@username`/bare telegram_id everywhere it's
+        shown. Logged the same lightweight way set_sub_admin_cpm/
+        set_admin_ad_count are — old value, new value, who changed it —
+        though unlike those, the affected Admin is never notified: this
+        is purely a label the Owner sees, not a change to how the Admin
+        or their viewers experience the platform.
+        """
+        async with self._lock:
+            admin = self.admins.get(telegram_id)
+            if not admin:
+                return None
+            old = admin.display_name
+            if old == display_name:
+                return admin
+            admin.display_name = display_name
+            self.cpm_history.append(
+                CPMHistoryEntry(
+                    event="admin_display_name_change",
+                    detail={"telegram_id": telegram_id, "from": old, "to": display_name, "by": changed_by},
+                )
+            )
+            await self._save_locked()
+            return admin
+
     async def set_admin_balance(
         self, telegram_id: int, new_balance: float, reason: Optional[str], changed_by: int
     ) -> Optional[Admin]:
@@ -1743,6 +1773,7 @@ class Storage:
                 {
                     "telegram_id": link.owner_telegram_id,
                     "username": admin.username if admin else None,
+                    "display_name": admin.display_name if admin else None,
                     "role": admin.role.value if admin else None,
                     "views": 0,
                     "income": 0.0,
@@ -1992,6 +2023,7 @@ class Storage:
                     "destination_url": link.destination_url if link else None,
                     "owner_telegram_id": link.owner_telegram_id if link else None,
                     "owner_username": owner.username if owner else None,
+                    "owner_display_name": owner.display_name if owner else None,
                     "total_attempts": row["total"],
                     "capped_views": row["capped"],
                     "capped_rate": round(row["capped"] / row["total"], 4) if row["total"] else 0.0,

@@ -326,7 +326,7 @@ async def notify_owner_of_withdrawal(bot: Bot, settings, admin, req) -> None:
     the panel's withdrawal form — so the Owner never has to go looking
     for it.
     """
-    who = f"@{admin.username}" if admin.username else f"id {admin.telegram_id}"
+    who = admin.display_name or (f"@{admin.username}" if admin.username else f"id {admin.telegram_id}")
     if admin.traffic_sources:
         ts_line = "\n" + "\n".join(
             f'• {s.platform}: <a href="{s.url}">{s.url}</a>' for s in admin.traffic_sources
@@ -393,7 +393,7 @@ async def notify_owner_of_admin_request(bot: Bot, settings, admin, note: str | N
     regularly" bar, plus one-tap Approve/Reject right from the DM so the
     Owner doesn't have to open the panel just to say yes.
     """
-    who = f"@{admin.username}" if admin.username else f"id {admin.telegram_id}"
+    who = admin.display_name or (f"@{admin.username}" if admin.username else f"id {admin.telegram_id}")
     if admin.traffic_sources:
         ts_line = "\n" + "\n".join(
             f'• {s.platform}: <a href="{s.url}">{s.url}</a>' for s in admin.traffic_sources
@@ -1077,7 +1077,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
         if callback.message:
             try:
                 await callback.message.edit_reply_markup(reply_markup=None)
-                who = f"@{admin.username}" if admin.username else f"id {admin.telegram_id}"
+                who = admin.display_name or (f"@{admin.username}" if admin.username else f"id {admin.telegram_id}")
                 await callback.message.answer(f"✅ {who} এখন Admin।")
             except Exception:
                 pass
@@ -1119,7 +1119,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             return
         await notify_sub_admin_of_admin_request_resolution(message.bot, admin, approved=False, reason=reason)
         panel_url = f"{settings.WEBAPP_BASE_URL}/panel"
-        who = f"@{admin.username}" if admin.username else f"id {admin.telegram_id}"
+        who = admin.display_name or (f"@{admin.username}" if admin.username else f"id {admin.telegram_id}")
         await message.answer(f"❌ {who}-এর Admin রিকোয়েস্ট প্রত্যাখ্যান করা হয়েছে এবং তাকে জানানো হয়েছে।", reply_markup=_main_menu_keyboard(panel_url))
 
     # ------------------------------------------------------------------

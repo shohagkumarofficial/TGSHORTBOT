@@ -219,6 +219,20 @@ class Category(BaseModel):
 class Admin(BaseModel):
     telegram_id: int
     username: Optional[str] = None
+    # Owner-set, human-friendly label for this Admin/Sub Admin
+    # (storage.set_admin_display_name / POST /api/admin/admins/
+    # {telegram_id}/display-name) — purely a display convenience for
+    # the Owner's own panel, since many Admins have no Telegram
+    # `username` at all and otherwise only show up as a bare numeric
+    # telegram_id everywhere in the Owner's UI (Admins list, per-Admin
+    # detail, withdrawal queue, Admin request queue, top performers),
+    # making them hard to tell apart at a glance. Never shown to anyone
+    # but the Owner as an identifier, never used for auth, and not
+    # editable by the Admin themselves — only the Owner's per-Admin
+    # detail page can set or clear it. None means "no nickname set" —
+    # every display falls back to `@username`, then a bare telegram_id,
+    # exactly as before this field existed.
+    display_name: Optional[str] = None
     role: Role = Role.VIEWER
     balance_confirmed: float = 0.0
     balance_pending: float = 0.0

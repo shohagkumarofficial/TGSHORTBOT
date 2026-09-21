@@ -554,6 +554,38 @@ the migration is applied — `categories` rows are silently skipped
 (`_safe_upsert`'s `tolerate_missing_table=True`) and `links.category_id`
 is silently dropped from each write, both logging a warning.
 
+## Admin display names (Owner-only)
+
+Many Admins/Sub Admins never set a Telegram username, so the Owner's
+panel — Admins list, per-Admin detail page, withdrawal queue, Admin
+request queue, top performers — otherwise has nothing to show but a bare
+numeric Telegram ID for them, which is hard to recognize at a glance.
+From an Admin's own detail page (Admins tab → tap an Admin), the Owner
+can give that person a nickname (e.g. "Rahim (Facebook page)") that's
+shown everywhere in the Owner's own UI and in the Owner's own Telegram
+DMs (withdrawal/Admin-request notifications) instead of `@username`/the
+bare ID. This is purely a private label for the Owner: the Admin
+themselves never sees it, can't set it, and it plays no role in
+authentication — clearing it (leave the field blank and save) falls
+straight back to `@username`, then the bare ID, exactly as before this
+feature existed. The Owner's own "Admins" list also no longer shows
+Viewers (accounts that haven't added a Traffic Source yet) — there's
+nothing to manage on them yet, so hiding them keeps the list to Admins/
+Sub Admins the Owner actually needs to find; a Viewer appears here
+automatically the moment they add their first Traffic Source and get
+auto-promoted to Sub Admin.
+
+**Required Supabase migration** — run once (safe to re-run):
+
+```sql
+alter table admins add column if not exists display_name text;
+```
+
+Until this is run, `_safe_upsert` silently drops the `display_name`
+field from every write to the `admins` table (logging a warning each
+time, per its usual missing-column tolerance) — saving a nickname still
+succeeds, it just won't survive a restart until the column exists.
+
 ## Deploying to Render
 
 `render.yaml` is ready to use as-is:
