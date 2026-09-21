@@ -530,6 +530,28 @@
     }[c]));
   }
 
+  // The one place that decides how an Admin/Sub Admin is identified
+  // anywhere in the Owner's UI (Admins list, per-Admin detail,
+  // withdrawal queue, Admin request queue, top performers, missed-views
+  // breakdown): the Owner's own nickname for them if one is set
+  // (Admin.display_name — see its docstring in models.py), else their
+  // Telegram @username, else a bare "id <telegram_id>". Accepts either
+  // a full Admin-shaped object (`display_name`/`username`/`telegram_id`
+  // fields) or one of the smaller ad-hoc dicts a few endpoints build by
+  // hand (which use prefixed field names, e.g. `admin_display_name` on
+  // a withdrawal row, `owner_display_name` on a missed-views row) — pass
+  // `prefix` to match those. Returns plain, unescaped text; callers
+  // still need their own esc() when interpolating into HTML.
+  function adminLabel(obj, prefix) {
+    prefix = prefix || "";
+    const displayName = obj[prefix + "display_name"];
+    const username = obj[prefix + "username"];
+    const telegramId = obj[prefix + "telegram_id"];
+    if (displayName) return displayName;
+    if (username) return "@" + username;
+    return "id " + telegramId;
+  }
+
   function withdrawalsPaused() {
     return !!(state.cpm && state.cpm.withdrawals_paused);
   }
@@ -661,6 +683,13 @@
   // the server-side check in POST /api/admin/admins/{telegram_id}/ad-count.
   const AD_COUNT_MIN = 1;
   const AD_COUNT_MAX = 10;
+
+  // How many of an Admin's own links renderAdminDetail shows before
+  // collapsing the rest behind a "Show all" button — a heavy Admin's
+  // links list used to push every other section (role controls, CPM
+  // override, balance history) far down the page, requiring a lot of
+  // scrolling just to reach them.
+  const ADMIN_LINKS_PREVIEW_COUNT = 5;
 
   // ---- Missed-earnings analytics (Anti-Abuse System read side) --------
   // Shared by the platform-wide Stats tab and the per-Admin detail view,
@@ -973,7 +1002,7 @@
     return rows.map((r) => `
       <div class="card">
         <div class="meta" style="color:var(--text); font-weight:600;">/r/${esc(r.short_code)}${
-          opts.showOwner ? ` · ${r.owner_username ? "@" + esc(r.owner_username) : "id " + r.owner_telegram_id}` : ""
+          opts.showOwner ? ` · ${esc(adminLabel(r, "owner_"))}` : ""
         }</div>
         <div class="meta" style="word-break:break-all; color:var(--text-faint);">${esc(r.destination_url || "")}</div>
         <div class="meta">${r.capped_views} of ${r.total_attempts} views missed (${Math.round(r.capped_rate * 100)}%) · ~${fmt(r.estimated_missed_amount)} estimated missed</div>
@@ -1821,7 +1850,7 @@
             ? pa.top_performers.map((p) => `
                 <div class="top-link-row">
                   <div>
-                    <div class="tl-code">${p.username ? "@" + esc(p.username) : "id " + p.telegram_id}</div>
+                    <div class="tl-code">${esc(adminLabel(p))}</div>
                     <span class="pill ${p.role}" style="font-size:9.5px; padding:1px 6px;">${esc(roleMeta(p.role).label)}</span>
                   </div>
                   <div class="tl-stats">${p.views} views<br><b>${fmt(p.income)}</b></div>
@@ -2355,7 +2384,7 @@
       <div class="profile-header">
         <div class="profile-avatar">${esc((state.me.username || "A").slice(0, 1).toUpperCase())}</div>
         <div>
-          <div class="profile-name">${state.me.username ? "@" + esc(state.me.username) : "id " + state.me.telegram_id}</div>
+          <div class="profile-name">${esc(adminLabel(state.me))}</div>
           <div class="profile-sub">${esc(roleMeta(state.me.role).label)}</div>
         </div>
       </div>
@@ -2526,7 +2555,7 @@
           <h3>${fmt(w.amount)} · ${w.method === "bkash" ? "bKash" : "Nagad"}</h3>
           <span class="pill pending">pending</span>
         </div>
-        <div class="meta">Admin: ${esc(w.admin_username ? "@" + w.admin_username : "id " + w.admin_telegram_id)}</div>
+        <div class="meta">Admin: ${esc(adminLabel(w, "admin_"))}</div>
         <div class="meta">Account: ${esc(w.account_number)}</div>
         <div class="meta">Requested ${esc(new Date(w.created_at).toLocaleString())}</div>
         ${(w.traffic_sources && w.traffic_sources.length)
@@ -2563,7 +2592,7 @@
 
   function adminRequestCardHTML(r) {
     const a = r.admin;
-    const who = a.username ? "@" + esc(a.username) : "id " + a.telegram_id;
+    const who = esc(adminLabel(a));
     return `
       <div class="card" data-req-id="${a.telegram_id}">
         <div class="row-between">
@@ -3037,10 +3066,18 @@
   async function renderAdmins(el) {
     const data = await api("/api/admin/admins");
     state.admins = data.admins;
-    el.innerHTML = state.admins.map((a) => `
+    // Viewers are excluded here on purpose — they've never added a
+    // Traffic Source, can't create links, and there's nothing for the
+    // Owner to manage on them yet, so showing them alongside real
+    // Admins/Sub Admins just makes the ones the Owner actually cares
+    // about harder to find in a long list. (accepted a Viewer once
+    // adds a Traffic Source, storage.add_traffic_source auto-promotes
+    // them to Sub Admin, and they show up here from that point on.)
+    const visibleAdmins = state.admins.filter((a) => a.role !== "viewer");
+    el.innerHTML = visibleAdmins.map((a) => `
       <div class="card${a.role !== "owner" ? " admin-card" : ""}" ${a.role !== "owner" ? `data-id="${a.telegram_id}"` : ""}>
         <div class="row-between">
-          <h3>${esc(a.username ? "@" + a.username : "id " + a.telegram_id)}</h3>
+          <h3>${esc(adminLabel(a))}</h3>
           <span class="pill ${a.role === "owner" ? "owner" : a.status}">${a.role === "owner" ? "owner" : a.status}</span>
         </div>
         <div class="meta">
@@ -3056,8 +3093,8 @@
           <div class="btn-row">
             <button class="btn btn-outline btn-sm detailBtn" data-id="${a.telegram_id}">${icon("eye", 14)} View details</button>
             ${a.status === "active"
-              ? `<button class="btn btn-danger btn-sm banBtn" data-id="${a.telegram_id}" data-status="banned" data-who="${esc(a.username ? "@" + a.username : "id " + a.telegram_id)}">Suspend</button>`
-              : `<button class="btn btn-success btn-sm banBtn" data-id="${a.telegram_id}" data-status="active" data-who="${esc(a.username ? "@" + a.username : "id " + a.telegram_id)}">Reactivate</button>`}
+              ? `<button class="btn btn-danger btn-sm banBtn" data-id="${a.telegram_id}" data-status="banned" data-who="${esc(adminLabel(a))}">Suspend</button>`
+              : `<button class="btn btn-success btn-sm banBtn" data-id="${a.telegram_id}" data-status="active" data-who="${esc(adminLabel(a))}">Reactivate</button>`}
           </div>` : ""}
       </div>
     `).join("");
@@ -3120,11 +3157,18 @@
       <button class="btn btn-outline btn-sm" id="backToAdmins" style="margin-bottom:12px;">← Back to Admins</button>
 
       <div class="profile-header">
-        <div class="profile-avatar">${esc((a.username || "A").slice(0, 1).toUpperCase())}</div>
+        <div class="profile-avatar">${esc((a.display_name || a.username || "A").slice(0, 1).toUpperCase())}</div>
         <div>
-          <div class="profile-name">${a.username ? "@" + esc(a.username) : "id " + a.telegram_id}</div>
+          <div class="profile-name">${esc(adminLabel(a))}</div>
           <div class="profile-sub">${esc(roleMeta(a.role).label)} since ${esc((a.created_at || "").slice(0, 10))} · <span class="pill ${a.status}" style="margin-left:4px;">${a.status}</span></div>
         </div>
+      </div>
+
+      <div class="card">
+        <label>Display name <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional — only you see this)</span></label>
+        <div class="meta">${a.username ? `Telegram username: @${esc(a.username)}` : "This person has no Telegram username — give them a name here so they're easier to recognize than a bare account ID."}</div>
+        <input type="text" id="adminDisplayNameInput" maxlength="60" value="${esc(a.display_name || "")}" placeholder="e.g. Rahim (Facebook page)" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="adminDisplayNameSaveBtn">Save name</button></div>
       </div>
 
       <div class="glow-grid">
@@ -3209,7 +3253,13 @@
         <div class="meta" style="color:var(--text-faint);">Applies instantly to every link this ${esc(roleMeta(a.role).label)} already has, and every new one — no need to set it per link.</div>
         <div class="btn-row"><button class="btn btn-primary btn-block" id="adminAdCountSaveBtn">Save ad count</button></div>
       </div>
-      <div id="adminLinksList">${adminLinksListHTML(adminLinks)}</div>
+      <div class="section-title" style="margin-top:14px; display:flex; align-items:center; justify-content:space-between;">
+        <span>${icon("link", 14)} Links (${adminLinks.length})</span>
+      </div>
+      <div id="adminLinksList">${adminLinksListHTML(adminLinks.slice(0, ADMIN_LINKS_PREVIEW_COUNT))}</div>
+      ${adminLinks.length > ADMIN_LINKS_PREVIEW_COUNT
+        ? `<div class="btn-row"><button class="btn btn-outline btn-block" id="showAllAdminLinksBtn">Show all ${adminLinks.length} links</button></div>`
+        : ""}
 
       ${a.admin_request_status === "pending" ? `
         <div class="section-title" style="margin-top:14px;">${icon("trendingUp", 14)} Pending Admin request</div>
@@ -3287,14 +3337,44 @@
     el.querySelector("#backToAdmins").addEventListener("click", () => renderAdmins(el));
     wireChartTooltips(el);
 
-    el.querySelectorAll(".linkEditBtn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        openEditLinkModal(
-          btn.dataset.code, btn.dataset.title, btn.dataset.url, btn.dataset.category, a.categories,
-          () => renderAdminDetail(el, telegramId)
-        );
-      });
+    el.querySelector("#adminDisplayNameSaveBtn").addEventListener("click", async () => {
+      const saveBtn = el.querySelector("#adminDisplayNameSaveBtn");
+      const display_name = el.querySelector("#adminDisplayNameInput").value.trim();
+      saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+      try {
+        await api(`/api/admin/admins/${telegramId}/display-name`, {
+          method: "POST",
+          body: JSON.stringify({ display_name: display_name || null }),
+        });
+        toast("Display name updated", "ok");
+        renderAdminDetail(el, telegramId);
+      } catch (e) {
+        toast(e.message, "err");
+        saveBtn.disabled = false; saveBtn.textContent = "Save name";
+      }
     });
+
+    function wireAdminLinkEditButtons(container) {
+      container.querySelectorAll(".linkEditBtn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          openEditLinkModal(
+            btn.dataset.code, btn.dataset.title, btn.dataset.url, btn.dataset.category, a.categories,
+            () => renderAdminDetail(el, telegramId)
+          );
+        });
+      });
+    }
+    wireAdminLinkEditButtons(el);
+
+    const showAllLinksBtn = el.querySelector("#showAllAdminLinksBtn");
+    if (showAllLinksBtn) {
+      showAllLinksBtn.addEventListener("click", () => {
+        const listEl = el.querySelector("#adminLinksList");
+        listEl.innerHTML = adminLinksListHTML(adminLinks);
+        wireAdminLinkEditButtons(listEl);
+        showAllLinksBtn.remove();
+      });
+    }
 
     const detailReqEl = el.querySelector("#detailAdminRequest");
     if (detailReqEl) wireAdminRequestActions(detailReqEl, () => renderAdminDetail(el, telegramId));
