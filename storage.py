@@ -758,39 +758,29 @@ class Storage:
             return link
 
     async def purge_expired_links(self) -> int:
-        """Removes every Link whose `expires_at` has passed from memory
-        (Sub Admin auto-delete feature) — so it stops resolving, stops
-        showing up in `list_links_by_owner`/the panel, and stops counting
-        toward anyone's link total. Intended to be called periodically
+        """Soft-deletes every Link whose `expires_at` has passed (Sub
+        Admin auto-delete feature) — sets `deleted_at` so it stops
+        resolving for viewers and stops showing up in
+        `list_links_by_owner`/the panel/total_links counts, exactly like
+        a manual storage.delete_link. Intended to be called periodically
         from a background loop (see app.py's lifespan, alongside the CPM
         cycle watcher) — not from any request path.
 
-        Deliberately does NOT delete the Supabase `links` row (this used
-        to also run a matching `.delete()` against Supabase; that was
-        removed after it caused a production incident — see below). That
-        link's View rows are left alone either way, same reasoning as
-        delete_link: they've already been credited, so removing them
-        would only make old earnings harder to audit without changing
-        anyone's balance. But `views.short_code` has a foreign-key
-        constraint on `links.short_code`, so hard-deleting the Link row
-        while its Views survive left those Views permanently orphaned —
-        and since `_save_locked()` re-upserts the *entire* views table on
-        every single mutation (see its docstring), one orphaned row was
-        then enough to make every future write to *any* table fail with a
-        `views_short_code_fkey` violation, not just writes touching that
-        link. Leaving the Supabase `links` row in place keeps the foreign
-        key satisfied forever, at the cost of an inert row lingering in
-        Postgres for an expired link — a fine trade, since nothing in the
-        app ever reads `links` from Supabase again after `load()` rebuilds
-        `self.links` at startup, and `load()`'s own call to this method
-        (via app.py's periodic watcher) purges it from memory again before
-        it could ever look like an active link.
+        Deliberately does NOT remove the Link from `self.links` or the
+        Supabase `links` row — see `Link.deleted_at`'s own docstring for
+        the full reasoning (in short: doing so would both orphan the
+        `views.short_code` foreign key on a hard Supabase delete, and,
+        even for the purely in-memory removal this method used before
+        `deleted_at` existed, silently zero out the owning Admin's
+        Lifetime Earning/Total Views/trend charts for every view this
+        link ever earned, since `list_views_by_owner` resolves a view's
+        owner by looking the view's `short_code` up in `self.links`).
         """
         async with self._lock:
             now = datetime.now(timezone.utc)
             expired_codes = []
             for code, link in self.links.items():
-                if not link.expires_at:
+                if not link.expires_at or link.deleted_at:
                     continue
                 try:
                     expires = datetime.fromisoformat(link.expires_at)
@@ -800,45 +790,71 @@ class Storage:
                     expires = expires.replace(tzinfo=timezone.utc)
                 if expires <= now:
                     expired_codes.append(code)
+            if not expired_codes:
+                return 0
+            now_str = now_iso()
             for code in expired_codes:
-                del self.links[code]
+                self.links[code].deleted_at = now_str
+            await self._save_locked()
             return len(expired_codes)
 
     async def get_link(self, short_code: str) -> Optional[Link]:
-        return self.links.get(short_code)
+        """Returns the active Link for `short_code`, or None if it
+        doesn't exist *or* has been soft-deleted (see `Link.deleted_at`'s
+        docstring) — every ad-serving/redirect path treats the two
+        identically, a deleted link 404s exactly like a never-created
+        one. Use `code_exists()` instead when a truly-unused short_code
+        is what's needed (e.g. generating a fresh one), since a deleted
+        link's code must never be handed out again.
+        """
+        link = self.links.get(short_code)
+        if link and link.deleted_at:
+            return None
+        return link
+
+    def code_exists(self, short_code: str) -> bool:
+        """True if `short_code` has ever been assigned to a Link, active
+        or soft-deleted — the check new-short-code generation loops
+        (app.py/bot.py) must use instead of `get_link()`, so a freshly
+        generated code can never collide with a deleted link's old one
+        (which `get_link()` alone wouldn't catch, since it treats a
+        deleted link as if it doesn't exist). A plain sync helper (no
+        lock, no await) since it only reads already-in-memory state.
+        """
+        return short_code in self.links
 
     async def list_links_by_owner(self, owner_telegram_id: int) -> List[Link]:
-        return [l for l in self.links.values() if l.owner_telegram_id == owner_telegram_id]
+        return [l for l in self.links.values() if l.owner_telegram_id == owner_telegram_id and not l.deleted_at]
 
     async def delete_link(self, short_code: str, requester_telegram_id: int, is_owner: bool) -> bool:
-        """Removes a Link so it 404s for any future viewer and drops off
-        the owning Admin's "My Links" list. An Admin may only delete
-        their own links; the Owner (is_owner=True) may delete anyone's.
+        """Soft-deletes a Link (sets `deleted_at`) so it 404s for any
+        future viewer and drops off the owning Admin's "My Links" list
+        and total_links counts. An Admin may only delete their own
+        links; the Owner (is_owner=True) may delete anyone's.
 
-        Deliberately leaves that link's View rows alone — they've
-        already fed into the owning Admin's stored balance_confirmed /
-        balance_pending (see Admin's docstring), so deleting them here
-        wouldn't change anyone's balance, it'd just make old earnings
-        harder to audit later. For that reason this only removes the
-        Link from memory and does NOT delete the Supabase `links` row
-        (used to also run a matching `.delete()` there; removed after it
-        caused a production incident — same one purge_expired_links hit
-        and explains in more detail): `views.short_code` has a foreign
-        key on `links.short_code`, so hard-deleting a Link while its
-        Views survive leaves those Views permanently orphaned, and
-        `_save_locked()`'s blanket views upsert then fails on every
-        future write anywhere in the app, not just ones touching this
-        link. Leaving the inert Supabase row behind costs nothing —
-        nothing reads `links` from Supabase again after `load()` builds
-        `self.links` at startup.
+        Deliberately leaves the Link itself in `self.links` (and its
+        View rows exactly as they were either way) rather than removing
+        it — see `Link.deleted_at`'s own docstring for the full
+        reasoning: this is what lets `list_views_by_owner` keep
+        resolving every one of this link's past views back to the
+        correct owner, so a deletion never silently zeroes out the
+        owning Admin's Lifetime Earning/Total Views/trend charts (their
+        `balance_confirmed`, credited separately at view time, was never
+        going to be touched by this either way — only the *read-side*
+        stats used to break). Nothing here ever removes the Supabase
+        `links` row either, for the same `views.short_code` foreign-key
+        reason `purge_expired_links` explains in more detail — the two
+        methods now behave identically, just triggered manually vs. on
+        a schedule.
         """
         async with self._lock:
             link = self.links.get(short_code)
-            if not link:
+            if not link or link.deleted_at:
                 return False
             if not is_owner and link.owner_telegram_id != requester_telegram_id:
                 return False
-            del self.links[short_code]
+            link.deleted_at = now_iso()
+            await self._save_locked()
             return True
 
     async def update_link(
@@ -883,7 +899,7 @@ class Storage:
         """
         async with self._lock:
             link = self.links.get(short_code)
-            if not link:
+            if not link or link.deleted_at:
                 return None
             if not is_owner and link.owner_telegram_id != requester_telegram_id:
                 return None
@@ -904,7 +920,7 @@ class Storage:
         """
         async with self._lock:
             link = self.links.get(short_code)
-            if not link:
+            if not link or link.deleted_at:
                 return None
             link.ad_count = ad_count
             await self._save_locked()
@@ -986,6 +1002,16 @@ class Storage:
         return [v for v in self.views.values() if v.short_code == short_code]
 
     async def list_views_by_owner(self, owner_telegram_id: int) -> List[View]:
+        """Every View belonging to one Admin's own links — deliberately
+        cross-references `self.links` *without* filtering out
+        soft-deleted ones (no `not l.deleted_at` check), unlike
+        `list_links_by_owner`. This is what lets a view keep resolving
+        back to its correct owner forever, even after the link that
+        earned it is deleted — see `Link.deleted_at`'s docstring for why
+        that matters (an Admin's Lifetime Earning/Total Views/trend
+        charts must never drop a view just because its link was later
+        deleted). Do not add a `deleted_at` filter here.
+        """
         owned_codes = {l.short_code for l in self.links.values() if l.owner_telegram_id == owner_telegram_id}
         if not owned_codes:
             return []
@@ -1838,7 +1864,7 @@ class Storage:
         total_paid_out = sum(w.amount for w in self.withdrawals.values() if w.status == WithdrawStatus.PAID)
         return {
             "total_admins": len(self.admins),
-            "total_links": len(self.links),
+            "total_links": len([l for l in self.links.values() if not l.deleted_at]),
             "total_views": len(genuine_views),
             "pending_payout_views": pending_payout_views,
             "daily_capped_views": daily_capped_views,

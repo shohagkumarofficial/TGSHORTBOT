@@ -370,6 +370,36 @@ class Link(BaseModel):
     # lifespan alongside the CPM cycle watcher.
     expires_at: Optional[str] = None
 
+    # Set by storage.delete_link (manual, Admin/Owner-initiated) or
+    # storage.purge_expired_links (automatic, Sub Admin auto-delete) the
+    # moment this link is "deleted" — a soft delete, not a removal from
+    # `self.links`/Supabase. None means still active.
+    #
+    # This link keeps living in `self.links` forever specifically so
+    # every View row that ever pointed at it (`View.short_code`) can
+    # still resolve its owner via storage.list_views_by_owner's own
+    # `self.links` cross-reference — without this, an Admin's Lifetime
+    # Earning/Today's Earning/Total Views/trend charts would all
+    # silently drop every view a deleted link ever earned the instant
+    # it was deleted, even though `Admin.balance_confirmed` (credited
+    # separately, at view time, in cpm_engine.py) was never touched —
+    # exactly the "balance looks right but every other number went to
+    # zero" bug this field exists to prevent.
+    #
+    # Every other read path treats a `deleted_at`-set link as gone:
+    # `get_link()` returns None for it (so `/r/{short_code}` 404s, same
+    # as before), `list_links_by_owner()` excludes it (so it drops off
+    # "My Links"/total_links counts, same as before). Only the
+    # ownership-lookup path in `list_views_by_owner()` deliberately
+    # keeps reading through it. Nothing ever hard-deletes the underlying
+    # Supabase row for the same reason `expires_at`-based purging never
+    # did: `views.short_code`'s foreign key on `links.short_code` would
+    # orphan every one of this link's Views the instant the row is
+    # actually removed, and `_save_locked()`'s blanket views upsert
+    # would then fail on every future write anywhere in the app, not
+    # just ones touching this link.
+    deleted_at: Optional[str] = None
+
 
 class View(BaseModel):
     """One row per completed ad-viewing (the number of ads is the

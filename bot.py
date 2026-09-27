@@ -554,7 +554,7 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
 
     async def _create_link_and_reply(message: Message, admin, url: str) -> None:
         code = _gen_short_code()
-        while await storage.get_link(code):
+        while storage.code_exists(code):
             code = _gen_short_code()
         link = await storage.create_link(code, admin.telegram_id, url)
         short_url = _bot_short_url_for(code, settings)

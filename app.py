@@ -639,7 +639,7 @@ async def create_link(payload: dict, admin: Admin = Depends(require_admin)):
         raise HTTPException(status_code=400, detail="category not found")
 
     code = _gen_short_code()
-    while await storage.get_link(code):
+    while storage.code_exists(code):
         code = _gen_short_code()
     # ad_count is never taken from the request here — every new link
     # starts at storage.Storage.DEFAULT_AD_COUNT regardless of who
@@ -1527,7 +1527,7 @@ async def v1_create_link(payload: dict, admin: Admin = Depends(require_api_key))
         raise HTTPException(status_code=400, detail="category not found")
 
     code = _gen_short_code()
-    while await storage.get_link(code):
+    while storage.code_exists(code):
         code = _gen_short_code()
     link = await storage.create_link(code, admin.telegram_id, destination_url, title=title, category_id=category_id)
     return {

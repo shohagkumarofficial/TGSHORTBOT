@@ -586,6 +586,52 @@ field from every write to the `admins` table (logging a warning each
 time, per its usual missing-column tolerance) — saving a nickname still
 succeeds, it just won't survive a restart until the column exists.
 
+## Link deletion is a soft delete (`Link.deleted_at`)
+
+Fixes a real bug: deleting a link used to remove it from `self.links`
+entirely, and since `storage.list_views_by_owner` (the source of an
+Admin's Lifetime Earning, Today's Earning, Total Views, and every trend
+chart) resolves a view's owner by looking its `short_code` up in
+`self.links`, that removal silently erased every view the deleted link
+had ever earned from all of those numbers — even though
+`Admin.balance_confirmed` itself (credited separately, at view-time, in
+`cpm_engine.py`) was correct the whole time. The same bug applied to a
+link auto-expiring via the Sub Admin auto-delete feature
+(`storage.purge_expired_links`), not just a manual delete.
+
+Both now set `Link.deleted_at` instead of removing the link from
+`self.links` — the link keeps existing internally (never resolvable by
+a viewer, absent from "My Links"/total_links counts, exactly as before)
+specifically so its historical views can still resolve their owner
+forever. See `Link.deleted_at`'s own docstring in `models.py` for the
+full reasoning, including why the underlying Supabase row was never
+hard-deleted by either path even before this fix (a `views.short_code`
+foreign key would orphan that link's Views the moment the row is
+actually removed).
+
+One related fix that shipped alongside this: new short-code generation
+(`POST /api/links`/`/api/v1/links`, and the bot's `/newlink`) now checks
+`storage.code_exists()` instead of `storage.get_link()` for collisions —
+`get_link()` deliberately treats a deleted link as if it doesn't exist,
+so relying on it alone could (astronomically rarely, given the ~3.5
+trillion possible 7-character codes) hand a *deleted* link's old code to
+a brand new one.
+
+**Required Supabase migration** — run once (safe to re-run):
+
+```sql
+alter table links add column if not exists deleted_at text;
+```
+
+Until this is run, `_safe_upsert` silently drops the `deleted_at` field
+from every write to the `links` table (logging a warning, per its usual
+missing-column tolerance) — deleting a link still works for the life of
+the running process, but the deletion won't survive a restart until the
+column exists (the link would reappear as active, and its Owner-visible
+stats would go back to under-counting once its views scattered back into
+"orphaned" territory on the next delete). Run the migration before
+relying on this fix in production.
+
 ## Deploying to Render
 
 `render.yaml` is ready to use as-is:
@@ -634,13 +680,15 @@ succeeds, it just won't survive a restart until the column exists.
   above).
 - If your `views` table has a foreign key on `links.short_code` (as
   README's earlier setup instructions have it), do **not** hard-delete a
-  row from `links` while `views` referencing it still exist — do what
-  `storage.delete_link`/`purge_expired_links` do and only remove it from
-  the in-memory `self.links`, leaving the Supabase row in place. Deleting
-  it directly orphans those Views, and since `storage._save_locked()`
-  re-upserts the *entire* `views` table on every mutation, one orphaned
-  row is enough to break every future write to any table until it's
-  cleaned up.
+  row from `links` while `views` referencing it still exist — `storage.
+  delete_link`/`purge_expired_links` never do this themselves (both are
+  a soft delete: they set `Link.deleted_at` and leave the row in place
+  in both `self.links` and Supabase), so this only matters if you're
+  ever tempted to clean up "deleted" links by hand with a raw SQL
+  `delete`. Deleting one directly orphans those Views, and since
+  `storage._save_locked()` re-upserts the *entire* `views` table on
+  every mutation, one orphaned row is enough to break every future write
+  to any table until it's cleaned up.
 - The `/webhook` endpoint checks Telegram's
   `X-Telegram-Bot-Api-Secret-Token` header against `WEBHOOK_SECRET`
   before processing any update.
