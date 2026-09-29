@@ -123,17 +123,24 @@ class Storage:
         once at startup (same as the JSON version's `load()`)."""
         self.client = await create_async_client(self.supabase_url, self.supabase_key)
 
-        admins_res = await self.client.table("admins").select("*").execute()
-        traffic_res = await self.client.table("traffic_sources").select("*").execute()
-        links_res = await self.client.table("links").select("*").execute()
-        views_res = await self.client.table("views").select("*").execute()
-        withdrawals_res = await self.client.table("withdrawals").select("*").execute()
+        # IMPORTANT: Supabase/PostgREST silently caps every plain
+        # `.select("*")` at 1000 rows (API "Max Rows" setting). Once a
+        # table (mainly `views`) grows past that, the rows beyond the
+        # first 1000 never reach memory, so charts / Lifetime Earning /
+        # Total Views computed from `self.views` lose everything after
+        # the cut-off on every restart/redeploy. `_fetch_all` pages
+        # through with `.range()` so *every* row is loaded.
+        admins_res = await self._fetch_all("admins", "telegram_id")
+        traffic_res = await self._fetch_all("traffic_sources", "id")
+        links_res = await self._fetch_all("links", "short_code")
+        views_res = await self._fetch_all("views", "view_id")
+        withdrawals_res = await self._fetch_all("withdrawals", "request_id")
         cpm_setting_res = await self.client.table("cpm_settings").select("*").eq("id", 1).execute()
         policy_setting_res = await self.client.table("policy_settings").select("*").eq("id", 1).execute()
         ad_network_setting_res = await self.client.table("ad_network_settings").select("*").eq("id", 1).execute()
-        cpm_history_res = await self.client.table("cpm_history").select("*").execute()
-        api_keys_res = await self._select_or_empty("api_keys")
-        categories_res = await self._select_or_empty("categories")
+        cpm_history_res = await self._fetch_all("cpm_history", "entry_id")
+        api_keys_res = await self._select_or_empty("api_keys", "key_id")
+        categories_res = await self._select_or_empty("categories", "id")
 
         traffic_by_admin: Dict[int, List[TrafficSource]] = {}
         for row in traffic_res.data:
@@ -195,9 +202,36 @@ class Storage:
             await self._save_locked()
         self._loaded = True
 
-    async def _select_or_empty(self, table: str):
-        """Like `self.client.table(table).select("*").execute()`, but
-        self-heals to an empty result instead of crash-looping the whole
+    async def _fetch_all(self, table: str, order_by: str, page_size: int = 1000):
+        """Reads *every* row of `table`, paging with `.range()` because
+        PostgREST truncates a single request at its Max Rows limit
+        (1000 by default) without raising any error. Ordered by a
+        unique column so pages never overlap or skip rows."""
+
+        class _Result:
+            pass
+
+        rows: list = []
+        start = 0
+        while True:
+            res = await (
+                self.client.table(table)
+                .select("*")
+                .order(order_by)
+                .range(start, start + page_size - 1)
+                .execute()
+            )
+            batch = res.data or []
+            rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            start += page_size
+        out = _Result()
+        out.data = rows
+        return out
+
+    async def _select_or_empty(self, table: str, order_by: str = "id"):
+        """Like `_fetch_all`, but self-heals to an empty result instead of crash-looping the whole
         `load()` if `table` doesn't exist yet — i.e. the `create table`
         migration for a newer feature (e.g. `api_keys`, see README.md)
         hasn't been run against this Supabase project yet. Mirrors the
@@ -205,7 +239,7 @@ class Storage:
         single missing *column*, just one level up, for a missing table.
         """
         try:
-            return await self.client.table(table).select("*").execute()
+            return await self._fetch_all(table, order_by)
         except Exception as exc:
             if "PGRST205" in str(exc) or "Could not find the table" in str(exc):
                 logger.warning(
