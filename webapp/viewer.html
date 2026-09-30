@@ -623,6 +623,31 @@
     }
   }
 
+  // Server-issued, single-use proof that this page really started an ad
+  // flow for this link (see view_guard.py). Requested up front so the
+  // server can measure how long the viewer actually took.
+  let sessionToken = null;
+  let sessionPromise = null;
+  function startSession() {
+    const initData = tg ? tg.initData : "";
+    sessionPromise = fetch("/api/view-session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": initData },
+      body: JSON.stringify({ short_code: SHORT_CODE }),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("view-session failed: " + r.status);
+        return r.json();
+      })
+      .then((d) => { sessionToken = d.token; })
+      .catch(() => { sessionPromise = null; });
+    return sessionPromise;
+  }
+
+  // Once log-view succeeds, a retry (e.g. the destination lookup failed)
+  // must NOT log the view a second time.
+  let viewLogged = false;
+
   async function finishAndRedirect() {
     headline.textContent = "Unlocked — taking you there";
     subtext.textContent = "Hold on a second while we confirm your view.";
@@ -633,15 +658,22 @@
     const initData = tg ? tg.initData : "";
 
     try {
-      const logResp = await fetch("/api/log-view", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Telegram-Init-Data": initData,
-        },
-        body: JSON.stringify({ short_code: SHORT_CODE }),
-      });
-      if (!logResp.ok) throw new Error("log-view failed: " + logResp.status);
+      if (!viewLogged) {
+        if (!sessionToken) {
+          if (sessionPromise) await sessionPromise;
+          if (!sessionToken) await startSession();
+        }
+        const logResp = await fetch("/api/log-view", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Telegram-Init-Data": initData,
+          },
+          body: JSON.stringify({ short_code: SHORT_CODE, session_token: sessionToken }),
+        });
+        if (!logResp.ok) throw new Error("log-view failed: " + logResp.status);
+        viewLogged = true;
+      }
 
       const linkResp = await fetch("/api/link/" + encodeURIComponent(SHORT_CODE), {
         headers: { "X-Telegram-Init-Data": initData },
@@ -665,6 +697,7 @@
 
   renderProgress();
   showAdStep(1);
+  startSession();
   ensureNetworkLoaded(AD_CONFIG.sequence[0]).catch(() => {});
   } // end initViewer
 
