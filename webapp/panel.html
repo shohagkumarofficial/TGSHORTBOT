@@ -419,6 +419,38 @@
 
   .admin-card{ cursor:pointer; }
   .admin-card:active{ background: var(--panel-raised); }
+
+  /* ===== Navigation redesign: page headings, back button, badges ===== */
+  .pg-title{ font-family: var(--display); font-size:20px; font-weight:700; margin:0 0 4px; }
+  .pg-sub{ font-size:12.5px; color: var(--text-dim); margin:0 0 14px; }
+  .backbtn{ border:0; background:none; color: var(--brass); font:inherit; font-weight:600; font-size:13px; cursor:pointer; padding:0; margin:0 0 10px; }
+  .nav-item{ position:relative; }
+  .nav-badge{ position:absolute; top:1px; left:calc(50% + 6px); background: var(--red); color:#fff; font-size:10px; font-weight:700; min-width:16px; height:16px; border-radius:999px; display:flex; align-items:center; justify-content:center; padding:0 4px; }
+  .pd-sec[hidden]{ display:none; }
+  #pdTabs .tab-btn{ flex:1; padding:8px 6px; text-align:center; font-size:12.5px; }
+  /* The old top-right Settings drawer is replaced by the bottom-nav Settings tab. */
+  .drawer, .drawer-backdrop, .menu-btn{ display:none !important; }
+  /* ===== Business snapshot: blue / violet / red glow, matching the analytics tiles ===== */
+  .owner-card{
+    background:
+      radial-gradient(circle at 92% 8%, rgba(226,104,92,.13), transparent 46%),
+      radial-gradient(circle at 6% 0%, rgba(90,169,230,.16), transparent 50%),
+      linear-gradient(160deg, rgba(156,140,242,.12), var(--panel));
+    border-color: rgba(156,140,242,.3);
+  }
+  .bs-cap{ display:flex; justify-content:space-between; align-items:baseline; font-size:11px; color: var(--text-dim); margin:18px 2px 9px; }
+  .bs-cap b{ font-size:11px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color: var(--text); }
+  .bs-row{ display:grid; grid-template-columns: repeat(3, 1fr); gap:9px; }
+  .bs-tile{ position:relative; overflow:hidden; background: var(--panel-raised); border:1px solid var(--hairline); border-radius:14px; padding:13px 6px 11px; text-align:center; }
+  .bs-tile::before{ content:""; position:absolute; top:-45%; right:-30%; width:84px; height:84px; border-radius:50%; filter: blur(22px); opacity:.36; pointer-events:none; }
+  .bs-tile.gold::before{ background: var(--brass); }
+  .bs-tile.emerald::before{ background: var(--emerald); }
+  .bs-tile.violet::before{ background: var(--violet); }
+  .bs-tile.blue::before{ background:#5aa9e6; }
+  .bs-tile.red::before{ background: var(--red); }
+  .bs-tile .bs-v{ position:relative; font-family: var(--display); font-weight:700; font-size:18px; }
+  .bs-tile .bs-v small{ font-size:10.5px; font-weight:500; color: var(--text-dim); }
+  .bs-tile .bs-l{ position:relative; font-size:10.5px; color: var(--text-dim); margin-top:3px; }
 </style>
 </head>
 <body>
@@ -435,7 +467,8 @@
 
   <div class="balance-card" id="topCard"><div class="skel" style="height:60px;"></div></div>
 
-  <div class="tabs" id="tabs"></div>
+  <div class="tabs" id="tabs" style="display:none;"></div>
+  <div id="subHeader"></div>
   <div id="tabContent"></div>
 </div>
 
@@ -501,6 +534,8 @@
   }
 
   const state = {
+    reqSeg: "w",
+    pdSec: "ov",
     me: null,
     tab: "overview",
     links: [],
@@ -523,6 +558,11 @@
   function fmt(n) {
     return "৳" + Number(n || 0).toFixed(2);
   }
+
+  // CPM is stored per view but shown to people per 1,000 views (the way
+  // YouTube, Adsgram, Monetag and GigaPub all quote it).
+  function toK(x) { return x == null ? "" : Number((x * 1000).toFixed(4)); }
+  function fmtCpm(x) { return "৳" + Number((x * 1000).toFixed(2)); }
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
@@ -1544,24 +1584,50 @@
   }
 
   function bottomNavItems() {
+    if (isOwner()) {
+      const pending = state.withdrawalsPending.length + state.adminRequestsPending.length;
+      return [
+        ["overview", icon("home", 19), "Home", 0],
+        ["requests", icon("clipboard", 19), "Requests", pending],
+        ["admins", icon("users", 19), "People", 0],
+        ["earn", icon("banknote", 19), "Earn", 0],
+        ["settings", icon("settings", 19), "Settings", 0],
+      ];
+    }
     return [
-      ["overview", icon("home", 19), "Home"],
-      ["quicklink", icon("scissors", 19), "Short Link"],
-      ["links", icon("link", 19), "My Links"],
-      ["profile", icon("user", 19), "Profile"],
+      ["overview", icon("home", 19), "Home", 0],
+      ["quicklink", icon("scissors", 19), "Short Link", 0],
+      ["links", icon("link", 19), "My Links", 0],
+      ["profile", icon("user", 19), "Profile", 0],
     ];
   }
 
-  // Traffic Source / Withdraw live inside the Profile tab for the bottom
-  // nav's active-state purposes, even though renderTab() still dispatches
-  // them individually (Owner's own "admin tools" list links straight to
-  // "traffic" / "withdraw" as separate destinations).
+  // Which bottom-nav item lights up for the current page.
   function activeNavTab() {
-    return ["traffic", "withdraw", "policyview"].includes(state.tab) ? "profile" : state.tab;
+    const t = state.tab;
+    if (isOwner()) {
+      if (["requests", "payouts", "adminrequests"].includes(t)) return "requests";
+      if (["earn", "links", "quicklink", "traffic", "categories", "withdraw"].includes(t)) return "earn";
+      if (["settings", "set_money", "set_protect", "adnetworks", "policy", "apikeys", "cpm"].includes(t)) return "settings";
+      if (t === "stats") return "overview";
+      return t;
+    }
+    return ["traffic", "withdraw", "policyview", "categories", "apikeys"].includes(t) ? "profile" : t;
+  }
+
+  // Sub-pages show a "Back" button that returns to the page they came from.
+  function parentTab(t) {
+    if (isOwner()) {
+      if (["links", "quicklink", "traffic", "categories", "withdraw"].includes(t)) return "earn";
+      if (["set_money", "set_protect", "adnetworks", "policy", "apikeys"].includes(t)) return "settings";
+      if (t === "stats") return "overview";
+      return null;
+    }
+    return ["traffic", "withdraw", "policyview", "categories", "apikeys"].includes(t) ? "profile" : null;
   }
 
   function drawerItems() {
-    if (!isOwner()) return [];
+    return [];
     return [
       ["cpm", icon("settings", 17), "CPM Settings", "Real-time / Scheduled mode, rate, cycle, ad delay"],
       ["adnetworks", icon("layers", 17), "Ad Networks", "Adsgram / Monetag / GigaPub IDs & ad order"],
@@ -1581,36 +1647,20 @@
   }
 
   function renderTabs() {
-    document.getElementById("app").classList.toggle("has-bottom-nav", !isOwner());
-
-    const tabsEl = document.getElementById("tabs");
+    document.getElementById("app").classList.add("has-bottom-nav");
+    document.getElementById("tabs").style.display = "none";
     const navEl = document.getElementById("bottomNav");
-
-    if (isOwner()) {
-      tabsEl.style.display = "flex";
-      navEl.style.display = "none";
-      tabsEl.innerHTML = primaryTabs().map(([id, label, badge]) =>
-        `<button class="tab-btn${state.tab === id ? " active" : ""}" data-tab="${id}">${label}${badge ? `<span class="tab-badge">${badge}</span>` : ""}</button>`
-      ).join("");
-      tabsEl.querySelectorAll(".tab-btn").forEach((btn) => {
-        btn.addEventListener("click", () => { state.tab = btn.dataset.tab; renderTab(); });
-      });
-    } else {
-      tabsEl.style.display = "none";
-      navEl.style.display = "flex";
-      const active = activeNavTab();
-      navEl.innerHTML = bottomNavItems().map(([id, icon, label]) =>
-        `<button class="nav-item${active === id ? " active" : ""}" data-tab="${id}">
-          <span class="nav-ic">${icon}</span><span class="nav-label">${label}</span>
-        </button>`
-      ).join("");
-      navEl.querySelectorAll(".nav-item").forEach((btn) => {
-        btn.addEventListener("click", () => { state.tab = btn.dataset.tab; renderTab(); });
-      });
-    }
-
-    const menuBtn = document.getElementById("menuBtn");
-    menuBtn.style.display = isOwner() ? "flex" : "none";
+    navEl.style.display = "flex";
+    const active = activeNavTab();
+    navEl.innerHTML = bottomNavItems().map(([id, ic, label, badge]) =>
+      `<button class="nav-item${active === id ? " active" : ""}" data-tab="${id}">
+        <span class="nav-ic">${ic}</span><span class="nav-label">${label}</span>${badge ? `<span class="nav-badge">${badge}</span>` : ""}
+      </button>`
+    ).join("");
+    navEl.querySelectorAll(".nav-item").forEach((btn) => {
+      btn.addEventListener("click", () => { state.tab = btn.dataset.tab; renderTab(); });
+    });
+    document.getElementById("menuBtn").style.display = "none";
   }
 
   function renderDrawer() {
@@ -1690,11 +1740,16 @@
     if (isOwner()) {
       const pendingCount = state.withdrawalsPending.length;
       const pendingSum = state.withdrawalsPending.reduce((s, w) => s + w.amount, 0);
-      const cpmLine = state.cpm
-        ? (state.cpm.mode === "scheduled"
-            ? `Scheduled · next cycle in <b>${secondsToClock(state.cpm.seconds_to_payout)}</b>`
-            : `Real-time · <b>${fmt(state.cpm.current_cpm)}</b> / view`)
+      const cs = state.cpm || null, st = state.stats || {};
+      const cpmLine = cs
+        ? (cs.mode === "scheduled"
+            ? `Scheduled · next cycle in <b>${secondsToClock(cs.seconds_to_payout)}</b>`
+            : `Real-time · <b>${fmtCpm(cs.current_cpm)}</b> / 1K views`)
         : "";
+      const tile = (c, v, l) => `<div class="bs-tile ${c}"><div class="bs-v">${v}</div><div class="bs-l">${l}</div></div>`;
+      const adminRate = cs ? (cs.admin_cpm != null ? cs.admin_cpm : cs.current_cpm) : null;
+      const subRate = cs ? (cs.sub_admin_cpm != null ? cs.sub_admin_cpm : cs.current_cpm) : null;
+      const limit = cs ? (cs.max_daily_views_per_admin > 0 ? `${cs.max_daily_views_per_admin} <small>/ day</small>` : "Off") : "…";
       card.className = "balance-card owner-card";
       card.innerHTML = `
         <div class="owner-eyebrow">Business snapshot</div>
@@ -1702,6 +1757,19 @@
           <div class="balance-item pending"><div class="label">Pending withdrawals</div><div class="value">${pendingCount}</div></div>
           <div class="balance-item violet"><div class="label">Awaiting payout</div><div class="value">${fmt(pendingSum)}</div></div>
         </div>
+        ${cs ? `
+        <div class="bs-cap"><b>Rates</b><span>paid per 1,000 views</span></div>
+        <div class="bs-row">
+          ${tile("gold", fmtCpm(cs.current_cpm), "Global CPM")}
+          ${tile("blue", fmtCpm(adminRate), "Admin CPM")}
+          ${tile("violet", fmtCpm(subRate), "Sub Admin CPM")}
+        </div>
+        <div class="bs-cap"><b>Team &amp; protection</b><span>whole platform</span></div>
+        <div class="bs-row">
+          ${tile("emerald", st.admin_role_count != null ? st.admin_role_count : "…", "Admins")}
+          ${tile("violet", st.sub_admin_role_count != null ? st.sub_admin_role_count : "…", "Sub Admins")}
+          ${tile("red", limit, "Daily view limit")}
+        </div>` : ""}
         <div class="cycle-note">${icon("users", 13)} <b>${state.stats ? state.stats.total_admins : "…"}</b> admins ·
           ${icon("trendingUp", 13)} CPM: ${cpmLine}</div>
       `;
@@ -1712,7 +1780,7 @@
       if (state.cpm && state.cpm.mode === "scheduled") {
         cycleNote = `${icon("clock", 13)} Next payout in <b>${secondsToClock(state.cpm.seconds_to_payout)}</b> — rate is set at payout time.`;
       } else if (state.cpm) {
-        cycleNote = `${icon("trendingUp", 13)} Real-time CPM active — currently <b>${fmt(myEffectiveCpm())}</b> per view.`;
+        cycleNote = `${icon("trendingUp", 13)} Real-time CPM active — currently <b>${fmtCpm(myEffectiveCpm())}</b> per 1,000 views.`;
       }
       card.innerHTML = `
         <div class="balance-row">
@@ -1728,6 +1796,12 @@
 
   async function renderTab() {
     renderTabs();
+    const subEl = document.getElementById("subHeader");
+    const parent = parentTab(state.tab);
+    subEl.innerHTML = parent ? `<button class="backbtn" id="backBtn">‹ Back</button>` : "";
+    if (parent) subEl.querySelector("#backBtn").addEventListener("click", () => { state.tab = parent; renderTab(); });
+    // The Owner's Business snapshot belongs to Home only.
+    document.getElementById("topCard").style.display = (isOwner() && state.tab !== "overview") ? "none" : "";
     const el = document.getElementById("tabContent");
     el.innerHTML = `<div class="card"><div class="skel" style="height:80px;"></div></div>`;
     try {
@@ -1740,8 +1814,12 @@
       else if (state.tab === "withdraw") await renderWithdraw(el);
       else if (state.tab === "payouts") await renderPayouts(el);
       else if (state.tab === "adminrequests") await renderAdminRequests(el);
-      else if (state.tab === "cpm") await renderCpm(el);
-      else if (state.tab === "adnetworks") await renderAdNetworks(el);
+      else if (state.tab === "requests") await renderRequests(el);
+      else if (state.tab === "earn") await renderEarn(el);
+      else if (state.tab === "settings") await renderSettings(el);
+      else if (state.tab === "cpm" || state.tab === "set_money") await renderCpm(el, "money");
+      else if (state.tab === "set_protect") await renderCpm(el, "protect");
+      else if (state.tab === "adnetworks") await renderAdsPage(el);
       else if (state.tab === "policy") await renderPolicy(el);
       else if (state.tab === "policyview") await renderPolicyView(el);
       else if (state.tab === "admins") await renderAdmins(el);
@@ -1753,6 +1831,85 @@
   }
 
   // ---- Overview ---------------------------------------------------
+
+  // ---- Menu-style pages (Owner: Earn / Settings, Admin: Profile) ----------
+
+  function menuHTML(items) {
+    return `<div class="card" style="padding:6px;">${items.map(([id, ic, title, sub]) => `
+      <div class="drawer-item" data-tab="${id}">
+        <div class="ic">${icon(ic, 17)}</div>
+        <div class="label-col"><div class="t">${title}</div><div class="s">${sub}</div></div>
+        <span style="color:var(--text-faint);">›</span>
+      </div>`).join("")}</div>`;
+  }
+  function wireMenu(el) {
+    el.querySelectorAll(".drawer-item[data-tab]").forEach((item) => {
+      item.addEventListener("click", () => { state.tab = item.dataset.tab; renderTab(); });
+    });
+  }
+
+  async function renderRequests(el) {
+    await Promise.all([loadOwnerWithdrawals(), loadAdminRequests()]);
+    const seg = state.reqSeg || "w";
+    const wN = state.withdrawalsPending.length, aN = state.adminRequestsPending.length;
+    el.innerHTML = `
+      <div class="pg-title">Requests</div>
+      <p class="pg-sub">Everything waiting for your decision.</p>
+      <div class="tabs" id="reqTabs">
+        <button class="tab-btn${seg === "w" ? " active" : ""}" data-seg="w">Withdrawals${wN ? `<span class="tab-badge">${wN}</span>` : ""}</button>
+        <button class="tab-btn${seg === "a" ? " active" : ""}" data-seg="a">Admin requests${aN ? `<span class="tab-badge">${aN}</span>` : ""}</button>
+      </div>
+      <div id="reqBody"></div>`;
+    el.querySelectorAll("#reqTabs .tab-btn").forEach((b) => {
+      b.addEventListener("click", () => { state.reqSeg = b.dataset.seg; renderRequests(el); });
+    });
+    const body = el.querySelector("#reqBody");
+    if (seg === "w") await renderPayouts(body); else await renderAdminRequests(body);
+  }
+
+  async function renderEarn(el) {
+    await Promise.all([loadMe(), loadLinks()]);
+    const views = (state.links || []).reduce((n, l) => n + (l.view_count || 0), 0);
+    el.innerHTML = `
+      <div class="pg-title">Earn</div>
+      <p class="pg-sub">Your own links and income — separate from running the platform.</p>
+      <div class="stat-grid" style="margin-bottom:12px;">
+        <div class="stat-box"><div class="n">${fmt(state.me.balance_confirmed)}</div><div class="l">Your balance</div></div>
+        <div class="stat-box"><div class="n">${views}</div><div class="l">Your views</div></div>
+      </div>
+      ${menuHTML([
+        ["links", "link", "My Links", "Create, edit and delete your links"],
+        ["quicklink", "scissors", "Short Link", "Make a new link"],
+        ["traffic", "radio", "Traffic Sources", "Add, edit and remove"],
+        ["categories", "layers", "Categories", "Organise your links"],
+        ["withdraw", "banknote", "Withdraw", "Cash out your balance"],
+      ])}`;
+    wireMenu(el);
+  }
+
+  async function renderSettings(el) {
+    el.innerHTML = `
+      <div class="pg-title">Settings</div>
+      <p class="pg-sub">Everything that runs the platform, in five groups.</p>
+      ${menuHTML([
+        ["set_money", "banknote", "Money", "CPM rates, minimum withdrawal, pause"],
+        ["adnetworks", "play", "Ads", "Ad networks, display order, delay"],
+        ["set_protect", "alertTriangle", "Protection", "Daily view limit, link auto-delete"],
+        ["policy", "checkCircle", "Legal", "User policy, privacy"],
+        ["apikeys", "key", "Developer", "API keys"],
+      ])}`;
+    wireMenu(el);
+  }
+
+  // Ads = the network credentials + ad display order (renderAdNetworks)
+  // with the delay-between-ads card underneath (it used to live on the
+  // CPM page).
+  async function renderAdsPage(el) {
+    el.innerHTML = `<div id="adsMain"></div><div id="adsDelay"></div>`;
+    await renderAdNetworks(el.querySelector("#adsMain"));
+    await renderCpm(el.querySelector("#adsDelay"), "ads");
+  }
+
 
   async function renderOverview(el) {
     if (isOwner()) {
@@ -1766,27 +1923,7 @@
       const pa = state.platformAnalytics;
 
       el.innerHTML = `
-        <div class="section-title">Quick actions</div>
-        <div class="card">
-          <button class="btn btn-primary btn-block" id="qaPayouts">Review pending withdrawals${state.withdrawalsPending.length ? ` (${state.withdrawalsPending.length})` : ""}</button>
-          <div class="btn-row">
-            <button class="btn btn-outline btn-block" id="qaAdmins">View all admins</button>
-          </div>
-        </div>
-        <div class="section-title" style="margin-top:18px;">Your owner tools</div>
-        <div class="card" style="padding:6px;">
-          ${ownerToolItems().map(([id, icon, title, sub]) => `
-            <div class="drawer-item" data-tab="${id}">
-              <div class="ic">${icon}</div>
-              <div class="label-col"><div class="t">${title}</div><div class="s">${sub}</div></div>
-            </div>
-          `).join("")}
-        </div>
-        <p style="color:var(--text-faint); font-size:12px; line-height:1.6; margin-bottom:18px;">
-          CPM settings and platform stats live behind the ${icon("settings", 12)} menu, top right.
-        </p>
-
-        <div class="section-title">Platform analytics</div>
+        <div class="section-title" style="margin-top:6px;">Platform analytics</div>
         <div class="card">
           <h3>${icon("users", 15)} Filter</h3>
           <label>Show data for</label>
@@ -1858,10 +1995,16 @@
               `).join("")
             : `<div class="empty">এই সময়সীমায় কোনো ভিউ পাওয়া যায়নি।</div>`}
         </div>
+
+        <div class="card" style="padding:6px;">
+          <div class="drawer-item" data-tab="stats">
+            <div class="ic">${icon("barChart", 17)}</div>
+            <div class="label-col"><div class="t">Platform Stats</div><div class="s">Income, withdrawals and missed earnings across every admin</div></div>
+            <span style="color:var(--text-faint);">›</span>
+          </div>
+        </div>
       `;
-      el.querySelector("#qaPayouts").addEventListener("click", () => { state.tab = "payouts"; renderTab(); });
-      el.querySelector("#qaAdmins").addEventListener("click", () => { state.tab = "admins"; renderTab(); });
-      el.querySelectorAll(".drawer-item").forEach((item) => {
+      el.querySelectorAll(".drawer-item[data-tab]").forEach((item) => {
         item.addEventListener("click", () => { state.tab = item.dataset.tab; renderTab(); });
       });
       el.querySelector("#ownerAnalyticsApply").addEventListener("click", async () => {
@@ -1970,19 +2113,7 @@
           : `<div class="empty">এখনো কোনো ভিউ আসেনি — লিংক শেয়ার করা শুরু করুন।</div>`}
       </div>
 
-      <div class="section-title" style="margin-top:18px;">Quick actions</div>
-      <div class="card">
-        <button class="btn btn-primary btn-block" id="qaNewLink">+ Create a new short link</button>
-        <div class="btn-row">
-          <button class="btn btn-outline btn-block" id="qaWithdraw">Request withdrawal</button>
-        </div>
-      </div>
-      <p style="color:var(--text-faint); font-size:12px; line-height:1.6;">
-        Tip: you can also do all of this from the bot chat with <code>/newlink</code>, <code>/mybalance</code> and <code>/withdraw</code>.
-      </p>
     `;
-    el.querySelector("#qaNewLink").addEventListener("click", () => { state.tab = "quicklink"; renderTab(); });
-    el.querySelector("#qaWithdraw").addEventListener("click", () => { state.tab = "profile"; renderTab(); });
     wireChartTooltips(el);
   }
 
@@ -2374,11 +2505,12 @@
   // ---- Profile (balance summary + Traffic Source + Withdraw) -----------
 
   async function renderProfile(el) {
-    await Promise.all([loadMe(), loadMyWithdrawals(), loadApiKeys()]);
+    await Promise.all([loadMe(), loadMyWithdrawals()]);
     const paidTotal = state.withdrawals
       .filter((w) => w.status === "paid")
-      .reduce((s, w) => s + w.amount, 0);
+      .reduce((sum, w) => sum + w.amount, 0);
     const totalIncome = state.me.balance_confirmed + paidTotal;
+    const canApi = state.me.role === "owner" || state.me.role === "admin";
 
     el.innerHTML = `
       <div class="profile-header">
@@ -2389,94 +2521,24 @@
         </div>
       </div>
 
-      <div class="stat-grid stat-grid-3">
+      <div class="stat-grid stat-grid-3" style="margin-bottom:12px;">
         <div class="stat-box"><div class="n">${fmt(state.me.balance_confirmed)}</div><div class="l">Balance</div></div>
         <div class="stat-box"><div class="n">${fmt(totalIncome)}</div><div class="l">Total income</div></div>
         <div class="stat-box"><div class="n">${fmt(paidTotal)}</div><div class="l">Withdrawn</div></div>
       </div>
 
+      ${menuHTML([
+        ["withdraw", "banknote", "Wallet", "Withdraw your balance, see your history"],
+        ["traffic", "radio", "Traffic Sources", "Add, edit and remove"],
+        ["categories", "layers", "Categories", "Organise your links"],
+        ...(canApi ? [["apikeys", "key", "API Access", "Keys for your own tools"]] : []),
+        ["policyview", "checkCircle", "Legal", "Privacy policy and terms"],
+      ])}
+
       ${requestAdminSectionHTML()}
-
-      <div class="section-title" style="margin-top:18px;">Traffic Sources</div>
-      ${trafficSourceSectionHTML("pTs", state.me.traffic_sources)}
-
-      <div class="section-title" style="margin-top:18px;">Categories</div>
-      ${categorySectionHTML("pCat", state.me.categories)}
-
-      <div class="section-title" style="margin-top:18px;">Withdraw</div>
-      ${withdrawPausedBannerHTML()}
-      <div class="card">
-        <div class="meta">Confirmed balance: <b style="color:var(--text)">${fmt(state.me.balance_confirmed)}</b></div>
-        ${state.cpm && state.cpm.min_withdraw_amount > 0 ? `<div class="meta">Minimum withdrawal: <b style="color:var(--text)">${fmt(state.cpm.min_withdraw_amount)}</b></div>` : ""}
-        <label>Method</label>
-        <select id="pWMethod" ${withdrawalsPaused() ? "disabled" : ""}>
-          <option value="bkash">bKash</option>
-          <option value="nagad">Nagad</option>
-        </select>
-        <label>Account number</label>
-        <input type="text" id="pWAccount" inputmode="numeric" placeholder="01XXXXXXXXX (11 digits)" ${withdrawalsPaused() ? "disabled" : ""} />
-        <div class="field-error" id="pWAccountErr"></div>
-        <label>Amount</label>
-        <input type="number" id="pWAmount" min="0" step="0.01" placeholder="0.00" ${withdrawalsPaused() ? "disabled" : ""} />
-        <div class="btn-row"><button class="btn btn-primary btn-block" id="pWSubmit" ${withdrawalsPaused() ? "disabled" : ""}>Submit request</button></div>
-      </div>
-      <div class="section-title">Withdrawal history</div>
-      <div id="pWHistory"></div>
-
-      ${apiKeysSectionHTML()}
-
-      <div class="section-title" style="margin-top:18px;">Legal</div>
-      <div class="card">
-        <button class="btn btn-outline btn-block" id="pViewPolicy">${icon("checkCircle", 15)} Privacy Policy & Terms</button>
-      </div>
     `;
-
-    wireTrafficSourceSection(el, "pTs", () => { renderTopCard(); renderProfile(el); });
-    wireCategorySection(el, "pCat", () => renderProfile(el));
+    wireMenu(el);
     wireRequestAdminSection(el);
-    wireApiKeysSection(el, async () => { await loadApiKeys(); renderProfile(el); });
-
-    el.querySelector("#pViewPolicy").addEventListener("click", () => {
-      state.tab = "policyview";
-      renderTab();
-    });
-
-    const pAccountInput = el.querySelector("#pWAccount");
-    const pAccountErr = el.querySelector("#pWAccountErr");
-    pAccountInput.addEventListener("input", () => setFieldError(pAccountInput, pAccountErr, null));
-
-    el.querySelector("#pWSubmit").addEventListener("click", async () => {
-      const method = el.querySelector("#pWMethod").value;
-      const account_number = pAccountInput.value.trim();
-      const amount = parseFloat(el.querySelector("#pWAmount").value);
-      const accountError = bdMobileError(account_number);
-      if (accountError) {
-        setFieldError(pAccountInput, pAccountErr, accountError);
-        toast(accountError, "err");
-        pAccountInput.focus();
-        return;
-      }
-      setFieldError(pAccountInput, pAccountErr, null);
-      if (!(amount > 0)) { toast("Enter a valid amount", "err"); return; }
-      if (amount > state.me.balance_confirmed) { toast("Amount exceeds your confirmed balance", "err"); return; }
-      const pMinAmt = state.cpm ? state.cpm.min_withdraw_amount : 0;
-      if (pMinAmt > 0 && amount < pMinAmt) { toast(`Minimum withdrawal amount is ${fmt(pMinAmt)}`, "err"); return; }
-      const btn = el.querySelector("#pWSubmit");
-      btn.disabled = true; btn.textContent = "Submitting…";
-      try {
-        await api("/api/withdraw", { method: "POST", body: JSON.stringify({ method, account_number: normalizeBDMobile(account_number), amount }) });
-        toast("Withdrawal requested — the Owner has been notified", "ok");
-        renderTopCard();
-        renderTab();
-      } catch (e) {
-        setFieldError(pAccountInput, pAccountErr, e.message);
-        toast(e.message, "err");
-      } finally {
-        btn.disabled = false; btn.textContent = "Submit request";
-      }
-    });
-
-    renderProfileWithdrawHistory();
   }
 
   function renderProfileWithdrawHistory() {
@@ -2670,7 +2732,7 @@
 
   // ---- Owner: CPM -------------------------------------------------------
 
-  async function renderCpm(el) {
+  async function renderCpm(el, section) {
     const cs = await api("/api/cpm");
     state.cpm = cs;
     el.innerHTML = `
@@ -2682,8 +2744,8 @@
           <option value="realtime" ${cs.mode === "realtime" ? "selected" : ""}>Real-time — credit instantly</option>
           <option value="scheduled" ${cs.mode === "scheduled" ? "selected" : ""}>Scheduled — batch payout every cycle</option>
         </select>
-        <label>CPM rate (per verified view)</label>
-        <input type="number" id="cpmRate" min="0" step="0.0001" value="${cs.current_cpm}" />
+        <label>CPM rate (৳ per 1,000 views)</label>
+        <input type="number" id="cpmRate" min="0" step="0.01" value="${toK(cs.current_cpm)}" />
         <label>Cycle duration (hours) — used only in Scheduled mode</label>
         <input type="number" id="cpmDuration" min="0.5" step="0.5" value="${cs.cycle_duration_hours}" />
         <div class="btn-row"><button class="btn btn-primary btn-block" id="cpmSave">Save CPM settings</button></div>
@@ -2699,10 +2761,10 @@
         CPM above. Leave a field blank to fall back to the base rate for that role. This is different from the
         per-Sub-Admin override on the Admins tab, which — if set — always wins over both of these for that one
         person.</div>
-        <label>Admin CPM (blank = base rate, ${fmt(cs.current_cpm)})</label>
-        <input type="number" id="roleAdminCpmInput" min="0" step="0.0001" value="${cs.admin_cpm != null ? cs.admin_cpm : ""}" placeholder="Base rate" />
-        <label>Sub Admin CPM (blank = base rate, ${fmt(cs.current_cpm)})</label>
-        <input type="number" id="roleSubAdminCpmInput" min="0" step="0.0001" value="${cs.sub_admin_cpm != null ? cs.sub_admin_cpm : ""}" placeholder="Base rate" />
+        <label>Admin CPM — ৳ per 1,000 views (blank = base rate, ${fmtCpm(cs.current_cpm)})</label>
+        <input type="number" id="roleAdminCpmInput" min="0" step="0.01" value="${toK(cs.admin_cpm)}" placeholder="Base rate" />
+        <label>Sub Admin CPM — ৳ per 1,000 views (blank = base rate, ${fmtCpm(cs.current_cpm)})</label>
+        <input type="number" id="roleSubAdminCpmInput" min="0" step="0.01" value="${toK(cs.sub_admin_cpm)}" placeholder="Base rate" />
         <div class="btn-row"><button class="btn btn-primary btn-block" id="roleCpmSave">Save per-role CPM</button></div>
       </div>
       <div class="card">
@@ -2763,10 +2825,25 @@
         <div class="btn-row"><button class="btn btn-outline btn-block" id="maxDailyViewsSave">Save limit</button></div>
       </div>
     `;
-    el.querySelector("#cpmSave").addEventListener("click", async () => {
+    // One handler set serves three pages: keep only this page's cards.
+    const keepBy = {
+      money: ["#cpmSave", "#roleCpmSave", "#minWithdrawSave", "#withdrawPauseToggle"],
+      ads: ["#adDelaySave"],
+      protect: ["#maxDailyViewsSave", "#defaultAutoDeleteSave"],
+    }[section || "money"];
+    [...el.children].forEach((card) => {
+      const keep = keepBy.some((sel) => card.querySelector(sel)) || ((section || "money") === "money" && !card.querySelector("button"));
+      if (!keep) card.remove();
+    });
+    if (section === "protect") {
+      // Daily view limit first, auto-delete default second.
+      const limitCard = el.querySelector("#maxDailyViewsSave")?.closest(".card");
+      if (limitCard) el.prepend(limitCard);
+    }
+    el.querySelector("#cpmSave")?.addEventListener("click", async () => {
       const btn = el.querySelector("#cpmSave");
       const mode = el.querySelector("#cpmMode").value;
-      const current_cpm = parseFloat(el.querySelector("#cpmRate").value);
+      const current_cpm = parseFloat(el.querySelector("#cpmRate").value) / 1000;
       const cycle_duration_hours = parseFloat(el.querySelector("#cpmDuration").value);
       if (!(current_cpm >= 0)) { toast("Enter a valid CPM rate", "err"); return; }
       if (!(cycle_duration_hours > 0)) { toast("Enter a valid cycle duration", "err"); return; }
@@ -2782,12 +2859,12 @@
         btn.disabled = false; btn.textContent = "Save CPM settings";
       }
     });
-    el.querySelector("#roleCpmSave").addEventListener("click", async () => {
+    el.querySelector("#roleCpmSave")?.addEventListener("click", async () => {
       const btn = el.querySelector("#roleCpmSave");
       const adminRaw = el.querySelector("#roleAdminCpmInput").value.trim();
       const subAdminRaw = el.querySelector("#roleSubAdminCpmInput").value.trim();
-      const admin_cpm = adminRaw === "" ? null : parseFloat(adminRaw);
-      const sub_admin_cpm = subAdminRaw === "" ? null : parseFloat(subAdminRaw);
+      const admin_cpm = adminRaw === "" ? null : parseFloat(adminRaw) / 1000;
+      const sub_admin_cpm = subAdminRaw === "" ? null : parseFloat(subAdminRaw) / 1000;
       if (admin_cpm !== null && !(admin_cpm >= 0)) { toast("Enter a valid Admin CPM (0 or more), or leave it blank", "err"); return; }
       if (sub_admin_cpm !== null && !(sub_admin_cpm >= 0)) { toast("Enter a valid Sub Admin CPM (0 or more), or leave it blank", "err"); return; }
       btn.disabled = true; btn.textContent = "Saving…";
@@ -2801,7 +2878,7 @@
         btn.disabled = false; btn.textContent = "Save per-role CPM";
       }
     });
-    el.querySelector("#defaultAutoDeleteSave").addEventListener("click", async () => {
+    el.querySelector("#defaultAutoDeleteSave")?.addEventListener("click", async () => {
       const btn = el.querySelector("#defaultAutoDeleteSave");
       const months = parseInt(el.querySelector("#defaultAutoDeleteSelect").value, 10) || null;
       btn.disabled = true; btn.textContent = "Saving…";
@@ -2815,7 +2892,7 @@
         btn.disabled = false; btn.textContent = "Save default";
       }
     });
-    el.querySelector("#adDelaySave").addEventListener("click", async () => {
+    el.querySelector("#adDelaySave")?.addEventListener("click", async () => {
       const btn = el.querySelector("#adDelaySave");
       const ad_view_delay_seconds = parseFloat(el.querySelector("#adDelaySeconds").value);
       if (!(ad_view_delay_seconds >= 0)) { toast("Enter a valid delay (0 or more seconds)", "err"); return; }
@@ -2830,7 +2907,7 @@
         btn.disabled = false; btn.textContent = "Save delay";
       }
     });
-    el.querySelector("#minWithdrawSave").addEventListener("click", async () => {
+    el.querySelector("#minWithdrawSave")?.addEventListener("click", async () => {
       const btn = el.querySelector("#minWithdrawSave");
       const min_withdraw_amount = parseFloat(el.querySelector("#minWithdrawAmount").value);
       if (!(min_withdraw_amount >= 0)) { toast("Enter a valid minimum amount (0 or more)", "err"); return; }
@@ -2846,7 +2923,7 @@
         btn.disabled = false; btn.textContent = "Save minimum";
       }
     });
-    el.querySelector("#withdrawPauseToggle").addEventListener("click", async () => {
+    el.querySelector("#withdrawPauseToggle")?.addEventListener("click", async () => {
       const btn = el.querySelector("#withdrawPauseToggle");
       const paused = !cs.withdrawals_paused;
       const message = el.querySelector("#withdrawPauseMessage").value.trim();
@@ -2865,7 +2942,7 @@
         btn.disabled = false; btn.textContent = paused ? "⏸ Pause withdrawals" : "▶ Resume withdrawals";
       }
     });
-    el.querySelector("#maxDailyViewsSave").addEventListener("click", async () => {
+    el.querySelector("#maxDailyViewsSave")?.addEventListener("click", async () => {
       const btn = el.querySelector("#maxDailyViewsSave");
       const max_daily_views_per_admin = parseInt(el.querySelector("#maxDailyViews").value, 10);
       if (!(max_daily_views_per_admin >= 0)) { toast("Enter a valid limit (0 or more)", "err"); return; }
@@ -3126,11 +3203,12 @@
     el.querySelectorAll(".detailBtn").forEach((btn) => {
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
+        state.pdSec = "ov";
         renderAdminDetail(el, btn.dataset.id);
       });
     });
     el.querySelectorAll(".admin-card").forEach((card) => {
-      card.addEventListener("click", () => renderAdminDetail(el, card.dataset.id));
+      card.addEventListener("click", () => { state.pdSec = "ov"; renderAdminDetail(el, card.dataset.id); });
     });
   }
 
@@ -3162,15 +3240,17 @@
           <div class="profile-name">${esc(adminLabel(a))}</div>
           <div class="profile-sub">${esc(roleMeta(a.role).label)} since ${esc((a.created_at || "").slice(0, 10))} · <span class="pill ${a.status}" style="margin-left:4px;">${a.status}</span></div>
         </div>
+        <button class="btn btn-outline btn-sm" id="pdRenameBtn" style="margin-left:auto;">${icon("edit", 14)} Rename</button>
       </div>
 
-      <div class="card">
-        <label>Display name <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional — only you see this)</span></label>
-        <div class="meta">${a.username ? `Telegram username: @${esc(a.username)}` : "This person has no Telegram username — give them a name here so they're easier to recognize than a bare account ID."}</div>
-        <input type="text" id="adminDisplayNameInput" maxlength="60" value="${esc(a.display_name || "")}" placeholder="e.g. Rahim (Facebook page)" />
-        <div class="btn-row"><button class="btn btn-primary btn-block" id="adminDisplayNameSaveBtn">Save name</button></div>
+      <div class="tabs" id="pdTabs" style="margin-bottom:12px;">
+        <button class="tab-btn" data-sec="ov">Overview</button>
+        <button class="tab-btn" data-sec="ln">Links</button>
+        <button class="tab-btn" data-sec="ct">Controls</button>
+        <button class="tab-btn" data-sec="bl">Balance</button>
       </div>
 
+      <div class="pd-sec" data-sec="ov">
       <div class="glow-grid">
         <div class="glow-card violet">
           <div class="gc-icon">${icon("trendingUp", 16)}</div>
@@ -3245,14 +3325,9 @@
         <div>${missedByLinkListHTML(d.missed_earnings_by_link, { showOwner: false })}</div>
       ` : ""}
 
-      <div class="section-title" style="margin-top:14px;">${icon("play", 14)} Ad count override</div>
-      <div class="card">
-        <div class="meta">${a.ad_count != null ? `Currently showing <b style="color:var(--text)">${a.ad_count}</b> ad${a.ad_count === 1 ? "" : "s"} to unlock every link this ${esc(roleMeta(a.role).label)} owns.` : "Currently following the platform-wide ad display order (Ad Networks tab)."}</div>
-        <label>Custom ad count (leave blank to use the platform default)</label>
-        <input type="number" id="adminAdCountInput" min="${AD_COUNT_MIN}" max="${AD_COUNT_MAX}" step="1" value="${a.ad_count != null ? a.ad_count : ""}" placeholder="Platform default" />
-        <div class="meta" style="color:var(--text-faint);">Applies instantly to every link this ${esc(roleMeta(a.role).label)} already has, and every new one — no need to set it per link.</div>
-        <div class="btn-row"><button class="btn btn-primary btn-block" id="adminAdCountSaveBtn">Save ad count</button></div>
       </div>
+
+      <div class="pd-sec" data-sec="ln">
       <div class="section-title" style="margin-top:14px; display:flex; align-items:center; justify-content:space-between;">
         <span>${icon("link", 14)} Links (${adminLinks.length})</span>
       </div>
@@ -3261,6 +3336,24 @@
         ? `<div class="btn-row"><button class="btn btn-outline btn-block" id="showAllAdminLinksBtn">Show all ${adminLinks.length} links</button></div>`
         : ""}
 
+      </div>
+
+      <div class="pd-sec" data-sec="ct">
+      <div class="card">
+        <label>Display name <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional — only you see this)</span></label>
+        <div class="meta">${a.username ? `Telegram username: @${esc(a.username)}` : "This person has no Telegram username — give them a name here so they're easier to recognize than a bare account ID."}</div>
+        <input type="text" id="adminDisplayNameInput" maxlength="60" value="${esc(a.display_name || "")}" placeholder="e.g. Rahim (Facebook page)" />
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="adminDisplayNameSaveBtn">Save name</button></div>
+      </div>
+
+      <div class="section-title" style="margin-top:14px;">${icon("play", 14)} Ad count override</div>
+      <div class="card">
+        <div class="meta">${a.ad_count != null ? `Currently showing <b style="color:var(--text)">${a.ad_count}</b> ad${a.ad_count === 1 ? "" : "s"} to unlock every link this ${esc(roleMeta(a.role).label)} owns.` : "Currently following the platform-wide ad display order (Ad Networks tab)."}</div>
+        <label>Custom ad count (leave blank to use the platform default)</label>
+        <input type="number" id="adminAdCountInput" min="${AD_COUNT_MIN}" max="${AD_COUNT_MAX}" step="1" value="${a.ad_count != null ? a.ad_count : ""}" placeholder="Platform default" />
+        <div class="meta" style="color:var(--text-faint);">Applies instantly to every link this ${esc(roleMeta(a.role).label)} already has, and every new one — no need to set it per link.</div>
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="adminAdCountSaveBtn">Save ad count</button></div>
+      </div>
       ${a.admin_request_status === "pending" ? `
         <div class="section-title" style="margin-top:14px;">${icon("trendingUp", 14)} Pending Admin request</div>
         <div id="detailAdminRequest">${adminRequestCardHTML({ admin: a, total_links: d.total_links, total_views: d.total_views, lifetime_income: d.lifetime_income })}</div>
@@ -3285,9 +3378,9 @@
       ${a.role === "sub_admin" ? `
         <div class="section-title" style="margin-top:14px;">${icon("trendingUp", 14)} Sub Admin CPM override</div>
         <div class="card">
-          <div class="meta">${a.sub_admin_cpm != null ? `Currently using a custom rate: <b style="color:var(--text)">${fmt(a.sub_admin_cpm)}</b> per view.` : "Currently using the platform-wide CPM rate."}</div>
-          <label>Custom CPM (leave blank to use the platform rate)</label>
-          <input type="number" id="subAdminCpmInput" min="0" step="0.0001" value="${a.sub_admin_cpm != null ? a.sub_admin_cpm : ""}" placeholder="Platform rate" />
+          <div class="meta">${a.sub_admin_cpm != null ? `Currently using a custom rate: <b style="color:var(--text)">${fmtCpm(a.sub_admin_cpm)}</b> per 1,000 views.` : "Currently using the platform-wide CPM rate."}</div>
+          <label>Custom CPM — ৳ per 1,000 views (leave blank to use the platform rate)</label>
+          <input type="number" id="subAdminCpmInput" min="0" step="0.01" value="${toK(a.sub_admin_cpm)}" placeholder="Platform rate" />
           <div class="btn-row"><button class="btn btn-primary btn-block" id="subAdminCpmSaveBtn">Save CPM</button></div>
         </div>
 
@@ -3310,6 +3403,13 @@
           : `<div class="meta" style="color:var(--text-faint);">No Traffic Source on file</div>`}
       </div>
 
+
+      <div class="btn-row" style="margin-top:6px;">
+        <button class="btn ${a.status === "active" ? "btn-danger" : "btn-success"} btn-block" id="detailBanBtn">${a.status === "active" ? "Suspend this Admin" : "Reactivate this Admin"}</button>
+      </div>
+      </div>
+
+      <div class="pd-sec" data-sec="bl">
       <div class="card">
         <h3>Edit balance</h3>
         <div class="meta">Current confirmed balance: <b style="color:var(--text)">${fmt(a.balance_confirmed)}</b>. This is a manual correction — it's logged below, and the Admin is not notified.</div>
@@ -3332,10 +3432,49 @@
             `).join("")
           : `<div class="card"><div class="empty">No balance corrections yet.</div></div>`}
       </div>
+      </div>
     `;
 
     el.querySelector("#backToAdmins").addEventListener("click", () => renderAdmins(el));
     wireChartTooltips(el);
+
+    // Overview / Links / Controls / Balance — every section stays in the
+    // page (just hidden), so all the buttons below wire up exactly as before.
+    const pdShow = (sec) => {
+      state.pdSec = sec;
+      el.querySelectorAll(".pd-sec").forEach((p) => { p.hidden = p.dataset.sec !== sec; });
+      el.querySelectorAll("#pdTabs .tab-btn").forEach((b) => b.classList.toggle("active", b.dataset.sec === sec));
+    };
+    el.querySelectorAll("#pdTabs .tab-btn").forEach((b) => b.addEventListener("click", () => pdShow(b.dataset.sec)));
+    el.querySelector("#pdRenameBtn").addEventListener("click", () => {
+      pdShow("ct");
+      const inp = el.querySelector("#adminDisplayNameInput");
+      inp.scrollIntoView({ block: "center" });
+      inp.focus();
+    });
+    pdShow(state.pdSec || "ov");
+
+    el.querySelector("#detailBanBtn").addEventListener("click", async () => {
+      const suspending = a.status === "active";
+      const sure = await confirmAction({
+        iconName: suspending ? "alertTriangle" : "checkCircle",
+        danger: suspending,
+        title: suspending ? "Suspend this Admin?" : "Reactivate this Admin?",
+        bodyHtml: `
+          <div class="meta" style="color:var(--text); font-weight:600; margin-bottom:8px;">${esc(adminLabel(a))}</div>
+          <div class="meta">${suspending
+            ? "They'll immediately lose access to the bot and panel, and every API key they hold stops working right away."
+            : "They'll regain access to the bot, panel, and any API keys they held."}</div>
+        `,
+        confirmLabel: suspending ? "Suspend" : "Reactivate",
+      });
+      if (!sure) return;
+      try {
+        await api(`/api/admin/admins/${telegramId}/status`, { method: "POST", body: JSON.stringify({ status: suspending ? "banned" : "active" }) });
+        toast("Status updated", "ok");
+        renderAdminDetail(el, telegramId);
+      } catch (e) { toast(e.message, "err"); }
+    });
 
     el.querySelector("#adminDisplayNameSaveBtn").addEventListener("click", async () => {
       const saveBtn = el.querySelector("#adminDisplayNameSaveBtn");
@@ -3400,7 +3539,7 @@
     if (cpmSaveBtn) {
       cpmSaveBtn.addEventListener("click", async () => {
         const raw = el.querySelector("#subAdminCpmInput").value.trim();
-        const cpm = raw === "" ? null : parseFloat(raw);
+        const cpm = raw === "" ? null : parseFloat(raw) / 1000;
         if (cpm !== null && !(cpm >= 0)) { toast("Enter a valid CPM (0 or more), or leave it blank", "err"); return; }
         cpmSaveBtn.disabled = true; cpmSaveBtn.textContent = "Saving…";
         try {
