@@ -2002,6 +2002,9 @@ class Storage:
         total_paid_out = sum(w.amount for w in self.withdrawals.values() if w.status == WithdrawStatus.PAID)
         return {
             "total_admins": len(self.admins),
+            # Split by role for the Owner's Business snapshot tiles.
+            "admin_role_count": len([a for a in self.admins.values() if a.role == Role.ADMIN]),
+            "sub_admin_role_count": len([a for a in self.admins.values() if a.role == Role.SUB_ADMIN]),
             "total_links": len([l for l in self.links.values() if not l.deleted_at]),
             "total_views": len(genuine_views),
             "pending_payout_views": pending_payout_views,
