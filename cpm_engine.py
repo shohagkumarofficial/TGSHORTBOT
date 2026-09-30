@@ -20,7 +20,17 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from models import CountedStatus, CPMHistoryEntry, CPMMode, Link, View, effective_cpm, now_iso
+from models import (
+    STATS_TZ,
+    CountedStatus,
+    CPMHistoryEntry,
+    CPMMode,
+    Link,
+    View,
+    effective_cpm,
+    now_iso,
+    stats_today,
+)
 from storage import Storage
 
 logger = logging.getLogger("cpm_engine")
@@ -42,7 +52,7 @@ def _is_daily_capped(storage: Storage, view: View, link: Link, max_daily_views: 
     views logged in the same instant could each see a count just under
     the limit and both get credited, letting the cap slip by one.
     """
-    today = datetime.now(timezone.utc).date()
+    today = stats_today()
     counted_today = 0
     for other in storage.views.values():
         if other.view_id == view.view_id or other.daily_capped:
@@ -55,7 +65,7 @@ def _is_daily_capped(storage: Storage, view: View, link: Link, max_daily_views: 
         created = datetime.fromisoformat(other.created_at)
         if created.tzinfo is None:
             created = created.replace(tzinfo=timezone.utc)
-        if created.astimezone(timezone.utc).date() == today:
+        if created.astimezone(STATS_TZ).date() == today:
             counted_today += 1
     return counted_today >= max_daily_views
 
@@ -166,7 +176,7 @@ async def maybe_close_cycle(storage: Storage) -> bool:
                 event="cycle_payout",
                 detail={
                     "closed_cycle_id": closing_cycle_id,
-                    "rate_applied": rate,
+                    "rate_applied": platform_rate,
                     "views_paid": views_paid,
                     "payouts_by_admin": payouts_by_admin,
                 },

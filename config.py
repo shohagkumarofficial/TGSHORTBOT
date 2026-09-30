@@ -6,6 +6,7 @@ called, never at import time — this lets modules import `config` freely
 """
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -38,6 +39,11 @@ def _require(name: str) -> str:
 
 @lru_cache
 def get_settings() -> Settings:
+    if not os.environ.get("WEBHOOK_SECRET"):
+        logging.getLogger("tgshortbot.config").warning(
+            "WEBHOOK_SECRET is not set — falling back to a public default. "
+            "Set a long random value in Render's environment variables."
+        )
     return Settings(
         BOT_TOKEN=_require("BOT_TOKEN"),
         BOT_USERNAME=_require("BOT_USERNAME").lstrip("@"),

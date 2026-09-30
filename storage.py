@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import secrets
@@ -53,6 +54,8 @@ from typing import Dict, List, Optional, Tuple
 from supabase import AsyncClient, create_async_client
 
 from models import (
+    STATS_TZ,
+    stats_today,
     Admin,
     AdminRequestStatus,
     AdminStatus,
@@ -91,6 +94,16 @@ _MISSING_COLUMN_RE = re.compile(r"Could not find the '([a-zA-Z_][a-zA-Z0-9_]*)' 
 _UNSET = object()
 
 
+class InsufficientBalanceError(ValueError):
+    """Raised by create_withdrawal / resolve_withdrawal when the amount is
+    more than the Admin's confirmed balance *minus their other still-
+    pending withdrawal requests* (`available`)."""
+
+    def __init__(self, available: float):
+        super().__init__(f"amount exceeds available balance ({available:.2f})")
+        self.available = available
+
+
 class Storage:
     def __init__(self, supabase_url: str, supabase_key: str):
         self.supabase_url = supabase_url
@@ -113,6 +126,13 @@ class Storage:
         # every single API call.
         self._api_key_hash_index: Dict[str, str] = {}
         self._loaded = False
+
+        # table -> {row key -> canonical JSON of the row as last written to
+        # Supabase}. `_save_locked` compares against this so it only
+        # upserts rows that actually changed since the last successful
+        # write, instead of re-sending every admin/link/view on every
+        # mutation (see `_flush_table`).
+        self._persisted: Dict[str, Dict[str, str]] = {}
 
     # ------------------------------------------------------------------
     # Load / persist
@@ -283,12 +303,12 @@ class Storage:
         should keep raising loudly instead.
         """
         if not rows:
-            return
+            return True
         remaining = rows
         for _ in range(10):  # generous cap: covers a whole migration being missed, not just one column
             try:
                 await self.client.table(table).upsert(remaining, on_conflict=on_conflict).execute()
-                return
+                return True
             except Exception as exc:
                 if tolerate_missing_table and ("PGRST205" in str(exc) or "Could not find the table" in str(exc)):
                     logger.warning(
@@ -297,7 +317,7 @@ class Storage:
                         "for now but won't be persisted until the table is created.",
                         table,
                     )
-                    return
+                    return False
                 match = _MISSING_COLUMN_RE.search(str(exc))
                 if not match:
                     raise
@@ -312,6 +332,51 @@ class Storage:
         # Retries exhausted (10 distinct missing columns in one write is basically
         # "wrong table entirely") — let the real error surface instead of looping forever.
         await self.client.table(table).upsert(remaining, on_conflict=on_conflict).execute()
+        return True
+
+    async def _flush_table(
+        self,
+        table: str,
+        rows: list[dict],
+        key: str,
+        tolerate_missing_table: bool = False,
+        chunk_size: int = 500,
+    ) -> None:
+        """Upserts only the rows of `table` that differ from what was last
+        successfully written (tracked in `self._persisted`), in chunks of
+        `chunk_size`. A failed chunk raises before its snapshot entries
+        are updated, so the next save retries it automatically.
+
+        Besides being much cheaper than re-sending every row on every
+        mutation, this stops a stale process (e.g. the old instance
+        during a Render redeploy overlap) from overwriting rows it never
+        touched with its outdated in-memory copy.
+        """
+        snap = self._persisted.setdefault(table, {})
+        current_keys = set()
+        changed: list[tuple[str, str, dict]] = []
+        for row in rows:
+            k = str(row[key])
+            current_keys.add(k)
+            canon = json.dumps(row, sort_keys=True, default=str)
+            if snap.get(k) != canon:
+                changed.append((k, canon, row))
+
+        for i in range(0, len(changed), chunk_size):
+            chunk = changed[i : i + chunk_size]
+            ok = await self._safe_upsert(
+                table,
+                [r for _, _, r in chunk],
+                on_conflict=key,
+                tolerate_missing_table=tolerate_missing_table,
+            )
+            if ok:
+                for k, canon, _ in chunk:
+                    snap[k] = canon
+
+        # Forget rows that no longer exist in memory (deleted).
+        for k in [k for k in snap if k not in current_keys]:
+            del snap[k]
 
     async def _save_locked(self) -> None:
         """Caller must already hold self._lock. Pushes the full current
@@ -340,17 +405,17 @@ class Storage:
         cpm_history_rows = [e.model_dump(mode="json") for e in self.cpm_history]
         api_key_rows = [k.model_dump(mode="json") for k in self.api_keys.values()]
 
-        await self._safe_upsert("admins", admin_rows, on_conflict="telegram_id")
-        await self._safe_upsert("traffic_sources", traffic_rows, on_conflict="id")
-        await self._safe_upsert("categories", category_rows, on_conflict="id", tolerate_missing_table=True)
-        await self._safe_upsert("links", link_rows, on_conflict="short_code")
-        await self._safe_upsert("views", view_rows, on_conflict="view_id")
-        await self._safe_upsert("withdrawals", withdrawal_rows, on_conflict="request_id")
-        await self._safe_upsert("cpm_settings", [cpm_setting_row], on_conflict="id")
-        await self._safe_upsert("policy_settings", [policy_setting_row], on_conflict="id")
-        await self._safe_upsert("ad_network_settings", [ad_network_setting_row], on_conflict="id")
-        await self._safe_upsert("cpm_history", cpm_history_rows, on_conflict="entry_id")
-        await self._safe_upsert("api_keys", api_key_rows, on_conflict="key_id", tolerate_missing_table=True)
+        await self._flush_table("admins", admin_rows, "telegram_id")
+        await self._flush_table("traffic_sources", traffic_rows, "id")
+        await self._flush_table("categories", category_rows, "id", tolerate_missing_table=True)
+        await self._flush_table("links", link_rows, "short_code")
+        await self._flush_table("views", view_rows, "view_id")
+        await self._flush_table("withdrawals", withdrawal_rows, "request_id")
+        await self._flush_table("cpm_settings", [cpm_setting_row], "id")
+        await self._flush_table("policy_settings", [policy_setting_row], "id")
+        await self._flush_table("ad_network_settings", [ad_network_setting_row], "id")
+        await self._flush_table("cpm_history", cpm_history_rows, "entry_id")
+        await self._flush_table("api_keys", api_key_rows, "key_id", tolerate_missing_table=True)
 
     async def save(self) -> None:
         async with self._lock:
@@ -1035,6 +1100,25 @@ class Storage:
     async def list_views_by_short_code(self, short_code: str) -> List[View]:
         return [v for v in self.views.values() if v.short_code == short_code]
 
+    async def has_recent_view(self, viewer_telegram_id: int, short_code: str, window_seconds: float) -> bool:
+        """True if `viewer_telegram_id` has a logged View of `short_code`
+        created within the last `window_seconds`. Only used as a fallback
+        when the in-memory ViewGuard record is gone (e.g. a restart in the
+        middle of the ad flow)."""
+        now = datetime.now(timezone.utc)
+        for v in self.views.values():
+            if v.viewer_telegram_id != viewer_telegram_id or v.short_code != short_code:
+                continue
+            try:
+                created = datetime.fromisoformat(v.created_at)
+            except ValueError:
+                continue
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            if (now - created).total_seconds() <= window_seconds:
+                return True
+        return False
+
     async def list_views_by_owner(self, owner_telegram_id: int) -> List[View]:
         """Every View belonging to one Admin's own links — deliberately
         cross-references `self.links` *without* filtering out
@@ -1063,6 +1147,21 @@ class Storage:
         account_number: str,
     ) -> WithdrawRequest:
         async with self._lock:
+            # Checked here, under the lock, so every entry point (bot,
+            # panel API, public API) shares one rule: the requested amount
+            # must fit in confirmed balance MINUS the Admin's other
+            # pending requests. Otherwise the same balance could be
+            # requested several times over.
+            admin = self.admins.get(admin_telegram_id)
+            balance = admin.balance_confirmed if admin else 0.0
+            pending = sum(
+                w.amount
+                for w in self.withdrawals.values()
+                if w.admin_telegram_id == admin_telegram_id and w.status == WithdrawStatus.PENDING
+            )
+            available = round(balance - pending, 6)
+            if amount > available + 1e-9:
+                raise InsufficientBalanceError(max(0.0, available))
             req = WithdrawRequest(
                 admin_telegram_id=admin_telegram_id,
                 amount=amount,
@@ -1090,14 +1189,19 @@ class Storage:
             req = self.withdrawals.get(request_id)
             if not req or req.status != WithdrawStatus.PENDING:
                 return None
+            admin = self.admins.get(req.admin_telegram_id)
+            if decision == WithdrawStatus.PAID and admin and admin.balance_confirmed + 1e-9 < req.amount:
+                # Never mark Paid (i.e. never let the Owner send real
+                # money) for more than the Admin's balance actually holds;
+                # nothing has been changed yet, so the request stays
+                # PENDING and can still be rejected.
+                raise InsufficientBalanceError(admin.balance_confirmed)
             req.status = decision
             req.resolved_at = now_iso()
             if reason:
                 req.reject_reason = reason
-            if decision == WithdrawStatus.PAID:
-                admin = self.admins.get(req.admin_telegram_id)
-                if admin:
-                    admin.balance_confirmed = round(max(0.0, admin.balance_confirmed - req.amount), 6)
+            if decision == WithdrawStatus.PAID and admin:
+                admin.balance_confirmed = round(max(0.0, admin.balance_confirmed - req.amount), 6)
             await self._save_locked()
             return req
 
@@ -1528,7 +1632,7 @@ class Storage:
         below is a no-op for the totals but keeps this consistent with
         every other income/view figure in this module.
         """
-        today = datetime.now(timezone.utc).date()
+        today = stats_today()
         earliest = today - timedelta(days=days - 1)
         income_buckets: Dict[object, float] = {earliest + timedelta(days=i): 0.0 for i in range(days)}
         withdrawn_buckets: Dict[object, float] = {earliest + timedelta(days=i): 0.0 for i in range(days)}
@@ -1545,9 +1649,9 @@ class Storage:
                 continue
             if created.tzinfo is None:
                 created = created.replace(tzinfo=timezone.utc)
-            bucket = income_buckets.get(created.astimezone(timezone.utc).date())
+            bucket = income_buckets.get(created.astimezone(STATS_TZ).date())
             if bucket is not None:
-                income_buckets[created.astimezone(timezone.utc).date()] += amount
+                income_buckets[created.astimezone(STATS_TZ).date()] += amount
 
         withdrawn_lifetime = 0.0
         for w in self.withdrawals.values():
@@ -1562,9 +1666,9 @@ class Storage:
                 continue
             if resolved.tzinfo is None:
                 resolved = resolved.replace(tzinfo=timezone.utc)
-            bucket = withdrawn_buckets.get(resolved.astimezone(timezone.utc).date())
+            bucket = withdrawn_buckets.get(resolved.astimezone(STATS_TZ).date())
             if bucket is not None:
-                withdrawn_buckets[resolved.astimezone(timezone.utc).date()] += w.amount
+                withdrawn_buckets[resolved.astimezone(STATS_TZ).date()] += w.amount
 
         today_income = income_buckets.get(today, 0.0)
         last_7 = today - timedelta(days=6)
@@ -1627,7 +1731,7 @@ class Storage:
         views = await self.list_views_by_owner(telegram_id)
         genuine_views = [v for v in views if not v.daily_capped]
 
-        today = datetime.now(timezone.utc).date()
+        today = stats_today()
         earliest = today - timedelta(days=days - 1)
         income_buckets: Dict[object, float] = {earliest + timedelta(days=i): 0.0 for i in range(days)}
         view_buckets: Dict[object, int] = {earliest + timedelta(days=i): 0 for i in range(days)}
@@ -1643,7 +1747,7 @@ class Storage:
                 created = None
             if created is not None and created.tzinfo is None:
                 created = created.replace(tzinfo=timezone.utc)
-            bucket_date = created.astimezone(timezone.utc).date() if created is not None else None
+            bucket_date = created.astimezone(STATS_TZ).date() if created is not None else None
 
             if v.daily_capped:
                 # Only ever tallied into capped_view_buckets — never
@@ -1776,7 +1880,7 @@ class Storage:
         wanted_roles = role_map[normalized_filter]
         target_ids = {a.telegram_id for a in self.admins.values() if a.role in wanted_roles}
 
-        today = datetime.now(timezone.utc).date()
+        today = stats_today()
         if end_date is None:
             end_date = today
         if start_date is None:
@@ -1806,7 +1910,7 @@ class Storage:
                 continue
             if created.tzinfo is None:
                 created = created.replace(tzinfo=timezone.utc)
-            d = created.astimezone(timezone.utc).date()
+            d = created.astimezone(STATS_TZ).date()
             if d < start_date or d > end_date:
                 continue
 
@@ -1937,7 +2041,7 @@ class Storage:
         confirmed_views = [v for v in genuine_views if v.counted_status == CountedStatus.CONFIRMED]
         pending_views = [v for v in genuine_views if v.counted_status == CountedStatus.PENDING_PAYOUT]
 
-        today = datetime.now(timezone.utc).date()
+        today = stats_today()
         today_income = 0.0
         lifetime_income = 0.0
         for v in confirmed_views:
@@ -1950,7 +2054,7 @@ class Storage:
             if created is not None:
                 if created.tzinfo is None:
                     created = created.replace(tzinfo=timezone.utc)
-                if created.date() == today:
+                if created.astimezone(STATS_TZ).date() == today:
                     today_income = round(today_income + amount, 6)
 
         links = await self.list_links_by_owner(telegram_id)
@@ -2008,7 +2112,7 @@ class Storage:
         trend on the Owner's Stats tab.
         """
         cpm_setting = await self.get_cpm_setting()
-        today = datetime.now(timezone.utc).date()
+        today = stats_today()
         earliest = today - timedelta(days=days - 1)
         buckets: Dict[object, dict] = {
             earliest + timedelta(days=i): {"capped": 0, "total": 0} for i in range(days)
@@ -2025,7 +2129,7 @@ class Storage:
                 continue
             if created.tzinfo is None:
                 created = created.replace(tzinfo=timezone.utc)
-            d = created.astimezone(timezone.utc).date()
+            d = created.astimezone(STATS_TZ).date()
             bucket = buckets.get(d)
             if bucket is None:
                 continue
@@ -2114,7 +2218,7 @@ class Storage:
         traffic only; omit it to suggest a platform-wide default from
         every Admin's combined history.
         """
-        today = datetime.now(timezone.utc).date()
+        today = stats_today()
         earliest = today - timedelta(days=days - 1)
         counts: Dict[Tuple[int, int, object], int] = {}
         for v in self.views.values():
@@ -2129,7 +2233,7 @@ class Storage:
                 continue
             if created.tzinfo is None:
                 created = created.replace(tzinfo=timezone.utc)
-            d = created.astimezone(timezone.utc).date()
+            d = created.astimezone(STATS_TZ).date()
             if d < earliest or d > today:
                 continue
             key = (link.owner_telegram_id, v.viewer_telegram_id, d)

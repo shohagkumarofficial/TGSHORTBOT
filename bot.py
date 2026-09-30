@@ -41,6 +41,7 @@ from models import (
     WithdrawStatus,
     effective_ad_count,
 )
+from storage import InsufficientBalanceError
 from validators import bd_mobile_validation_error, normalize_bd_mobile_number
 
 logger = logging.getLogger("bot")
@@ -1005,9 +1006,16 @@ def register_handlers(dp: Dispatcher, storage, settings) -> None:
             )
             return
         data = await state.get_data()
-        req = await storage.create_withdrawal(
-            admin.telegram_id, amount, WithdrawMethod(data["method"]), data["account_number"]
-        )
+        try:
+            req = await storage.create_withdrawal(
+                admin.telegram_id, amount, WithdrawMethod(data["method"]), data["account_number"]
+            )
+        except InsufficientBalanceError as e:
+            await message.answer(
+                f"আপনার আগের pending আবেদনগুলো বাদ দিয়ে উইথড্র করার মতো ব্যালেন্স আছে <b>{e.available:.2f}</b>। "
+                "এর মধ্যে একটি পরিমাণ লিখুন:"
+            )
+            return
         await state.clear()
         await notify_owner_of_withdrawal(message.bot, settings, admin, req)
         panel_url = f"{settings.WEBAPP_BASE_URL}/panel"

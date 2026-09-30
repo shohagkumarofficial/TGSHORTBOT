@@ -6,12 +6,33 @@ SQLite/Postgres later.
 """
 from __future__ import annotations
 
+import os
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+
+def _load_stats_tz() -> timezone:
+    try:
+        hours = float(os.environ.get("STATS_TZ_OFFSET_HOURS", "6"))
+    except ValueError:
+        hours = 6.0
+    return timezone(timedelta(hours=hours))
+
+
+# The calendar the platform's "days" follow: the daily anti-abuse cap,
+# the charts, "today's income", and the Scheduled-mode cap check all
+# bucket by this zone instead of raw UTC. Defaults to UTC+6 (Bangladesh),
+# so a new day starts at local midnight rather than 6 AM. Set the
+# STATS_TZ_OFFSET_HOURS environment variable (e.g. 0 for UTC) to change it.
+STATS_TZ = _load_stats_tz()
+
+
+def stats_today() -> date:
+    return datetime.now(STATS_TZ).date()
 
 
 def now_iso() -> str:

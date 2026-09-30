@@ -10,6 +10,7 @@ Deployed on Render with:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import html
 import json
 import logging
@@ -53,7 +54,8 @@ from models import (
     WithdrawStatus,
     effective_ad_count,
 )
-from storage import Storage
+from storage import InsufficientBalanceError, Storage
+from view_guard import GuardError, ViewGuard
 from telegram_auth import InitDataError, validate_init_data
 from validators import bd_mobile_validation_error, normalize_bd_mobile_number
 
@@ -62,6 +64,7 @@ logger = logging.getLogger("app")
 
 settings = get_settings()
 storage = Storage(settings.SUPABASE_URL, settings.SUPABASE_KEY)
+view_guard = ViewGuard(settings.BOT_TOKEN)
 bot, dp = build_bot_and_dispatcher(settings.BOT_TOKEN)
 register_handlers(dp, storage, settings)
 
@@ -304,7 +307,9 @@ async def telegram_webhook(
     request: Request,
     x_telegram_bot_api_secret_token: Optional[str] = Header(default=None),
 ):
-    if x_telegram_bot_api_secret_token != settings.WEBHOOK_SECRET:
+    if not hmac.compare_digest(
+        (x_telegram_bot_api_secret_token or "").encode("utf-8"), settings.WEBHOOK_SECRET.encode("utf-8")
+    ):
         raise HTTPException(status_code=403, detail="bad secret token")
     data = await request.json()
     update = Update.model_validate(data)
@@ -368,7 +373,7 @@ async def redirect_entry(short_code: str):
         .replace("__AD_CONFIG_JSON__", _json_for_script(ad_config))
         .replace("__AD_VIEW_DELAY_SECONDS__", str(cs.ad_view_delay_seconds))
     )
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/r", response_class=HTMLResponse)
@@ -390,7 +395,7 @@ async def redirect_entry_direct():
         .replace("__AD_CONFIG_JSON__", "null")
         .replace("__AD_VIEW_DELAY_SECONDS__", "0")
     )
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/ad-config/{short_code}")
@@ -426,6 +431,32 @@ async def panel_page():
 # Viewer API
 # ---------------------------------------------------------------------------
 
+# Seconds a real viewer needs per ad (a deliberately low floor — the SDKs'
+# shortest ads are longer) used to reject "instant" log-view calls.
+MIN_SECONDS_PER_AD = 3
+
+
+@app.post("/api/view-session")
+async def open_view_session(
+    payload: dict,
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    """Called by webapp/viewer.html as soon as it has resolved which link
+    it is unlocking. Returns a signed single-use token that
+    POST /api/log-view must present (see view_guard.py)."""
+    user = await _extract_user(x_telegram_init_data)
+    short_code = payload.get("short_code")
+    if not short_code:
+        raise HTTPException(status_code=400, detail="short_code required")
+    if not await storage.get_link(short_code):
+        raise HTTPException(status_code=404, detail="link not found")
+    try:
+        token = view_guard.issue(user["id"], short_code)
+    except GuardError as e:
+        raise HTTPException(status_code=429, detail=e.message)
+    return {"token": token}
+
+
 @app.post("/api/log-view")
 async def log_view(
     payload: dict,
@@ -437,17 +468,46 @@ async def log_view(
     thing still capping repeat views is the Anti-Abuse System's daily
     limit (`daily_capped` on the response), not a one-view-per-link
     ceiling.
+
+    Requires the `session_token` from POST /api/view-session, and that
+    enough time has passed since it was issued for the link's ads to
+    have really been shown. Views by a link's own (non-Owner) Admin on
+    their own link are not recorded, so nobody can farm their own links.
     """
     user = await _extract_user(x_telegram_init_data)
     short_code = payload.get("short_code")
     if not short_code:
         raise HTTPException(status_code=400, detail="short_code required")
+    session_token = payload.get("session_token")
+    if not session_token:
+        raise HTTPException(status_code=400, detail="session_token required — reopen the link")
 
     link = await storage.get_link(short_code)
     if not link:
         raise HTTPException(status_code=404, detail="link not found")
 
     viewer_id = user["id"]
+    owner = await storage.get_admin(link.owner_telegram_id)
+    cs = await storage.get_cpm_setting()
+    ans = await storage.get_ad_network_setting()
+    category = storage._category_for_id(link.owner_telegram_id, link.category_id)
+    ad_count = effective_ad_count(owner, ans, category)
+    min_seconds = max(
+        2.0,
+        ad_count * MIN_SECONDS_PER_AD + max(0, ad_count - 1) * float(cs.ad_view_delay_seconds or 0) - 2.0,
+    )
+    try:
+        outcome = view_guard.redeem(session_token, viewer_id, short_code, min_seconds)
+    except GuardError as e:
+        status = 429 if e.code == "too_fast" else 400
+        raise HTTPException(status_code=status, detail=e.message)
+
+    view_guard.mark_viewed(viewer_id, short_code)
+    if outcome == "replay":
+        return {"ok": True, "daily_capped": False, "replay": True}
+    if viewer_id == link.owner_telegram_id and (owner is None or owner.role != Role.OWNER):
+        return {"ok": True, "daily_capped": False, "self_view": True}
+
     view = await storage.create_view(short_code, viewer_id)
     await cpm_engine.credit_new_view(storage, view, link)
     return {"ok": True, "daily_capped": view.daily_capped}
@@ -458,11 +518,19 @@ async def get_link_destination(
     short_code: str,
     x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
 ):
-    # Only called by viewer.html *after* the view has been logged.
-    await _extract_user(x_telegram_init_data)
+    """Only returns the destination to a viewer whose view of this link
+    was logged moments ago (viewer.html calls this right after
+    /api/log-view). Falls back to the stored views if the in-memory
+    record was lost to a restart mid-flow."""
+    user = await _extract_user(x_telegram_init_data)
     link = await storage.get_link(short_code)
     if not link:
         raise HTTPException(status_code=404, detail="link not found")
+    viewer_id = user["id"]
+    if not view_guard.has_viewed(viewer_id, short_code) and not await storage.has_recent_view(
+        viewer_id, short_code, view_guard.recent_window
+    ):
+        raise HTTPException(status_code=403, detail="watch the ads first")
     return {"destination_url": link.destination_url}
 
 
@@ -1031,7 +1099,13 @@ async def request_withdrawal(payload: dict, admin: Admin = Depends(require_admin
             detail=f"amount is below the minimum withdrawal amount ({cs.min_withdraw_amount:.2f})",
         )
 
-    req = await storage.create_withdrawal(admin.telegram_id, amount, WithdrawMethod(method), account_number)
+    try:
+        req = await storage.create_withdrawal(admin.telegram_id, amount, WithdrawMethod(method), account_number)
+    except InsufficientBalanceError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"amount exceeds available balance ({e.available:.2f}) — other pending withdrawal requests are already counted",
+        )
     await notify_owner_of_withdrawal(bot, settings, admin, req)
     return req.model_dump()
 
@@ -1069,7 +1143,13 @@ async def admin_resolve_withdrawal(request_id: str, payload: dict, owner: Admin 
         raise HTTPException(status_code=400, detail="decision must be 'paid' or 'rejected'")
     reason = payload.get("reason")
     status_enum = WithdrawStatus.PAID if decision == "paid" else WithdrawStatus.REJECTED
-    req = await storage.resolve_withdrawal(request_id, status_enum, reason)
+    try:
+        req = await storage.resolve_withdrawal(request_id, status_enum, reason)
+    except InsufficientBalanceError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Admin's confirmed balance ({e.available:.2f}) is lower than this request — cannot mark as paid. Reject it or fix the balance first.",
+        )
     if not req:
         raise HTTPException(status_code=404, detail="withdrawal not found or already resolved")
     requester = await storage.get_admin(req.admin_telegram_id)
@@ -1680,7 +1760,13 @@ async def v1_request_withdrawal(payload: dict, admin: Admin = Depends(require_ap
             detail=f"amount is below the minimum withdrawal amount ({cs.min_withdraw_amount:.2f})",
         )
 
-    req = await storage.create_withdrawal(admin.telegram_id, amount, WithdrawMethod(method), account_number)
+    try:
+        req = await storage.create_withdrawal(admin.telegram_id, amount, WithdrawMethod(method), account_number)
+    except InsufficientBalanceError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"amount exceeds available balance ({e.available:.2f}) — other pending withdrawal requests are already counted",
+        )
     await notify_owner_of_withdrawal(bot, settings, admin, req)
     return req.model_dump()
 
