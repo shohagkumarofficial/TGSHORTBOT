@@ -1967,6 +1967,11 @@
             <div class="gc-value">${pa.total_admins}</div>
             <div class="gc-label">Admins Counted</div>
           </div>
+          <div class="glow-card violet" style="grid-column:1 / -1;">
+            <div class="gc-icon">${icon("banknote", 16)}</div>
+            <div class="gc-value">${fmt(pa.total_withdrawn || 0)}</div>
+            <div class="gc-label">Total Withdrawn</div>
+          </div>
         </div>
 
         <div class="chart-card">
@@ -2633,8 +2638,12 @@
       btn.addEventListener("click", async () => {
         btn.disabled = true;
         try {
-          await api(`/api/admin/withdrawals/${btn.dataset.id}/resolve`, { method: "POST", body: JSON.stringify({ decision: "paid" }) });
-          toast("Marked as paid", "ok");
+          const paidResp = await api(`/api/admin/withdrawals/${btn.dataset.id}/resolve`, { method: "POST", body: JSON.stringify({ decision: "paid" }) });
+          if (paidResp && paidResp.payout_announced === false) {
+            toast("Marked as paid — but the payout group post failed. Is the bot an admin of that group?", "err");
+          } else {
+            toast(paidResp && paidResp.payout_announced ? "Marked as paid and posted to the payout group" : "Marked as paid", "ok");
+          }
           renderTab();
           renderTopCard();
         } catch (e) { toast(e.message, "err"); btn.disabled = false; }
