@@ -27,3 +27,5 @@ services:
         sync: false
       - key: CPM_CHECK_INTERVAL_SECONDS
         value: "60"
+      - key: PAYOUT_GROUP_ID
+        sync: false

@@ -817,3 +817,14 @@ Database persistence beyond JSON, automated fraud detection beyond the
 daily Anti-Abuse view cap, per-admin CPM mode mixing, withdrawal methods
 beyond bKash/Nagad, and exact per-impression Adsgram revenue sync are all
 deliberately not implemented here — see Section 7 of the PRD.
+
+## Payout group (optional proof-of-payment feed)
+
+Set `PAYOUT_GROUP_ID` (a group/channel id like `-1001234567890`, or `@channelusername`)
+and add the bot to that group as an admin who can post. From then on, every time the
+Owner marks a withdrawal **Paid**, the bot posts an automatic "payment sent" message
+(the Admin's Telegram profile name, amount, method, time, short reference). The post
+never contains the bKash/Nagad number, the Admin's @username, or their Telegram ID, so
+nobody can message an Admin from the group. Leave the variable empty to turn the feature off. If the post
+fails (e.g. the bot isn't in the group), the payout still goes through and the panel
+shows a warning.

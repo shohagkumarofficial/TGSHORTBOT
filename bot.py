@@ -7,8 +7,10 @@ logic for the same operation.
 """
 from __future__ import annotations
 
+import html as _html
 import logging
 import random
+import re
 import string
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -33,6 +35,7 @@ from aiogram.types import (
 )
 
 from models import (
+    STATS_TZ,
     AdminRequestStatus,
     CountedStatus,
     CPMMode,
@@ -380,6 +383,83 @@ async def notify_admin_of_withdrawal_resolution(bot: Bot, settings, admin, req) 
         await bot.send_message(admin.telegram_id, text)
     except Exception:
         logger.exception("failed to notify admin about withdrawal resolution")
+
+
+_HANDLE_OR_LINK_RE = re.compile(r"(@\w+|https?://\S+|t\.me/\S+|www\.\S+)", re.IGNORECASE)
+
+
+def public_profile_name(profile_name: str | None, fallback_name: str | None = None) -> str:
+    """The only identity shown in the public payout group: the Admin's
+    Telegram *profile name* (first + last name), which every Telegram
+    account has. Never the @username and never the numeric ID, so nobody
+    can message an Admin straight from the group. Any @handle or link a
+    person put inside their own profile name is stripped too."""
+    for raw in (profile_name, fallback_name):
+        cleaned = _HANDLE_OR_LINK_RE.sub("", raw or "")
+        cleaned = " ".join(cleaned.split())[:40]
+        if cleaned:
+            return cleaned
+    return "Admin"
+
+
+def payout_announcement_text(admin, req, profile_name: str | None = None) -> str:
+    """The public "payment sent" post for the payout group.
+
+    PRIVACY: this text must never contain the withdrawal's account number
+    (or any part of it), the Admin's @username, or their Telegram ID — the
+    group is public and Admins shouldn't get inboxed from it. Only the
+    amount, method, time and the Admin's profile name go in; tests assert
+    all of this.
+    """
+    method_label = "bKash" if req.method.value == "bkash" else "Nagad"
+    name = _html.escape(public_profile_name(profile_name, getattr(admin, "display_name", None) if admin else None))
+    try:
+        paid_at = datetime.fromisoformat(req.resolved_at) if req.resolved_at else datetime.now(timezone.utc)
+    except ValueError:
+        paid_at = datetime.now(timezone.utc)
+    if paid_at.tzinfo is None:
+        paid_at = paid_at.replace(tzinfo=timezone.utc)
+    when = paid_at.astimezone(STATS_TZ).strftime("%d %b %Y, %I:%M %p")
+    ref = str(req.request_id)[-6:].upper()
+    return (
+        "✅ <b>পেমেন্ট সম্পন্ন</b>\n\n"
+        f"👤 Admin: <b>{name}</b>\n"
+        f"💰 পরিমাণ: <b>৳{req.amount:.2f}</b>\n"
+        f"🏦 পদ্ধতি: {method_label}\n"
+        f"🕒 সময়: {when}\n"
+        f"🧾 রেফারেন্স: <code>#{ref}</code>"
+    )
+
+
+async def notify_payout_group(bot: Bot, settings, admin, req) -> bool | None:
+    """Posts the Paid withdrawal to the payout group, if one is configured.
+
+    Returns None when no group is configured, True when posted, False when
+    the post failed (e.g. the bot isn't a member/admin of the group). It
+    never raises: a failed announcement must not undo or block the payout.
+    """
+    chat = (getattr(settings, "PAYOUT_GROUP_ID", "") or "").strip()
+    if not chat:
+        return None
+    chat_id = int(chat) if chat.lstrip("-").isdigit() else chat
+
+    # The Admin's current Telegram profile name, fetched live (so nothing
+    # new needs storing). If Telegram can't give it, we fall back to the
+    # Owner-set nickname, then plain "Admin" — never the @username or ID.
+    profile_name = None
+    if admin is not None:
+        try:
+            tg_chat = await bot.get_chat(admin.telegram_id)
+            profile_name = " ".join(p for p in (tg_chat.first_name, tg_chat.last_name) if p)
+        except Exception:
+            logger.warning("could not read the Telegram profile name for a payout announcement")
+
+    try:
+        await bot.send_message(chat_id, payout_announcement_text(admin, req, profile_name))
+        return True
+    except Exception:
+        logger.exception("failed to post the payout announcement to the payout group")
+        return False
 
 
 ADMIN_REQUEST_APPROVE_PREFIX = "areq:approve:"

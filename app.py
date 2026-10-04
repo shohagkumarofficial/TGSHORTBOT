@@ -33,6 +33,7 @@ from bot import (
     notify_admin_of_withdrawal_resolution,
     notify_owner_of_admin_request,
     notify_owner_of_withdrawal,
+    notify_payout_group,
     notify_sub_admin_of_admin_request_resolution,
     notify_sub_admin_of_auto_delete_change,
     notify_sub_admin_of_cpm_change,
@@ -1155,7 +1156,12 @@ async def admin_resolve_withdrawal(request_id: str, payload: dict, owner: Admin 
     requester = await storage.get_admin(req.admin_telegram_id)
     if requester:
         await notify_admin_of_withdrawal_resolution(bot, settings, requester, req)
-    return req.model_dump()
+    result = req.model_dump()
+    if status_enum == WithdrawStatus.PAID:
+        # Public proof-of-payment post (amount/method/time only — never the
+        # account number). None = no group configured, False = post failed.
+        result["payout_announced"] = await notify_payout_group(bot, settings, requester, req)
+    return result
 
 
 # ---------------------------------------------------------------------------

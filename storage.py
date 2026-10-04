@@ -1958,6 +1958,23 @@ class Storage:
 
         avg_daily_income = round(total_income / num_days, 4) if num_days else 0.0
 
+        # Money actually paid out in the same window and role filter. Counted
+        # on the day the Owner marked the withdrawal Paid (resolved_at), the
+        # same rule platform_stats' withdrawn_trend uses; pending and
+        # rejected requests are not included.
+        total_withdrawn = 0.0
+        for w in self.withdrawals.values():
+            if w.status != WithdrawStatus.PAID or not w.resolved_at or w.admin_telegram_id not in target_ids:
+                continue
+            try:
+                paid_at = datetime.fromisoformat(w.resolved_at)
+            except ValueError:
+                continue
+            if paid_at.tzinfo is None:
+                paid_at = paid_at.replace(tzinfo=timezone.utc)
+            if start_date <= paid_at.astimezone(STATS_TZ).date() <= end_date:
+                total_withdrawn += w.amount
+
         return {
             "role_filter": normalized_filter,
             "start_date": start_date.isoformat(),
@@ -1968,6 +1985,7 @@ class Storage:
             "total_views": total_views,
             "total_capped_views": total_capped_views,
             "avg_daily_income": avg_daily_income,
+            "total_withdrawn": round(total_withdrawn, 4),
             "income_trend": [
                 {"date": d.isoformat(), "amount": round(income_buckets[d], 4)} for d in sorted(income_buckets)
             ],

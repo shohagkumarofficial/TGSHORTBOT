@@ -25,6 +25,9 @@ class Settings:
     SUPABASE_KEY: str
     CPM_CHECK_INTERVAL_SECONDS: int
     MINI_APP_SHORT_NAME: str
+    # Optional public group/channel where every Paid withdrawal is announced
+    # automatically (proof of payment, no account numbers). "" = off.
+    PAYOUT_GROUP_ID: str = ""
 
 
 def _require(name: str) -> str:
@@ -69,4 +72,5 @@ def get_settings() -> Settings:
         # bot falls back to the original t.me/<bot>?start=<code> flow (opens
         # the chat first with a "চালিয়ে যান" button). See README.md.
         MINI_APP_SHORT_NAME=os.environ.get("MINI_APP_SHORT_NAME", "").strip().lstrip("@"),
+        PAYOUT_GROUP_ID=os.environ.get("PAYOUT_GROUP_ID", "").strip(),
     )
