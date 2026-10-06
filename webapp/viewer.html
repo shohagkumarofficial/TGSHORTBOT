@@ -145,6 +145,21 @@
   .status-line.error{ color: var(--red); }
   .status-line.ok{ color: var(--emerald); }
 
+  /* ---- Banner slots (header above the dial, footer below the button).
+     In normal flow with auto margins: the header sticks to the top, the
+     footer to the bottom, and the unlock content stays together between
+     them. On a short screen the page scrolls — a banner can never cover
+     the Watch ad button. A slot with nothing to show is display:none, so
+     no empty space is left. ---- */
+  .bslot{ display:none; flex-direction:column; align-items:center; gap:3px; width:100%; }
+  .bslot.show{ display:flex; }
+  .bslot.top{ order:-1; margin-bottom:auto; padding-bottom:18px; }
+  .bslot.bottom{ margin-top:auto; padding-top:22px; }
+  .blabel{ font-size:9.5px; letter-spacing:.06em; color:#6b7188; text-transform:uppercase; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .bbox{ width:320px; max-width:calc(100% - 24px); aspect-ratio:32/5; border-radius:8px; overflow:hidden; background:#1e2230; border:1px solid #2b3040; display:block; }
+  .bbox img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .bbox iframe{ width:320px; height:50px; border:0; display:block; max-width:none; }
+  .bbox.frame{ aspect-ratio:auto; height:52px; background:transparent; border:0; overflow:hidden; }
   .footer-note{
     position:fixed; bottom:14px; left:0; right:0;
     text-align:center;
@@ -177,6 +192,7 @@
 </head>
 <body>
   <div class="wrap">
+    <div class="bslot top" id="bannerHeader"></div>
     <div class="eyebrow">TGSHORTBOT · SPONSORED UNLOCK</div>
 
     <div class="dial">
@@ -199,6 +215,7 @@
     <button class="ghost" id="retryBtn" style="display:none;">Try that ad again</button>
 
     <div class="status-line" id="statusLine"></div>
+    <div class="bslot bottom" id="bannerFooter"></div>
   </div>
 
   <div class="footer-note">Ads served by our ad partners · <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a></div>
@@ -623,6 +640,85 @@
     }
   }
 
+  // ---- Header / footer banners (Adsterra or the Owner's custom ads) -----
+  // Purely decorative: showing or tapping one never counts as an ad view
+  // and never changes anyone's earnings. Any failure just leaves the slot
+  // hidden, so a broken banner can never get in the way of unlocking.
+  function bannerMemory(slot, value) {
+    try {
+      if (value === undefined) return localStorage.getItem("bn_last_" + slot) || "";
+      localStorage.setItem("bn_last_" + slot, value);
+    } catch (e) { /* storage unavailable */ }
+    return "";
+  }
+  function bannerEvent(adId, event) {
+    try {
+      fetch("/api/banner-event", {
+        method: "POST",
+        keepalive: true,
+        headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": tg ? tg.initData : "" },
+        body: JSON.stringify({ ad_id: adId, event: event }),
+      }).catch(() => {});
+    } catch (e) { /* ignore */ }
+  }
+  function renderBanner(slot, data) {
+    const host = document.getElementById(slot === "header" ? "bannerHeader" : "bannerFooter");
+    if (!host || !data) return;
+    const label = document.createElement("div");
+    label.className = "blabel";
+    host.appendChild(label);
+    if (data.type === "adsterra") {
+      label.textContent = "বিজ্ঞাপন";
+      const box = document.createElement("div");
+      box.className = "bbox frame";
+      const frame = document.createElement("iframe");
+      frame.src = data.frame_url;
+      frame.setAttribute("sandbox", "allow-scripts allow-popups allow-popups-to-escape-sandbox");
+      frame.setAttribute("scrolling", "no");
+      frame.setAttribute("title", "Advertisement");
+      box.appendChild(frame);
+      host.appendChild(box);
+      host.classList.add("show");
+      return;
+    }
+    if (data.type !== "custom") return;
+    label.textContent = "বিজ্ঞাপন" + (data.title ? " · " + data.title : "");
+    const link = document.createElement("a");
+    link.className = "bbox";
+    link.href = data.link_url;
+    link.rel = "noopener nofollow sponsored";
+    const img = document.createElement("img");
+    img.alt = data.title || "Advertisement";
+    img.addEventListener("load", () => {
+      host.classList.add("show");
+      bannerMemory(slot, data.ad_id);
+      bannerEvent(data.ad_id, "view");
+    });
+    img.addEventListener("error", () => { host.innerHTML = ""; });
+    img.src = data.image_url;
+    link.appendChild(img);
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      bannerEvent(data.ad_id, "click");
+      if (tg && tg.openLink) tg.openLink(data.link_url);
+      else window.open(data.link_url, "_blank", "noopener");
+    });
+    host.appendChild(link);
+  }
+  async function loadBanners() {
+    try {
+      const resp = await fetch(
+        "/api/banners?last_header=" + encodeURIComponent(bannerMemory("header")) +
+        "&last_footer=" + encodeURIComponent(bannerMemory("footer")),
+        { headers: { "X-Telegram-Init-Data": tg ? tg.initData : "" } }
+      );
+      if (!resp.ok) return;
+      const data = await resp.json();
+      renderBanner("header", data.header);
+      renderBanner("footer", data.footer);
+    } catch (e) { /* banners are optional */ }
+  }
+
   // Server-issued, single-use proof that this page really started an ad
   // flow for this link (see view_guard.py). Requested up front so the
   // server can measure how long the viewer actually took.
@@ -698,6 +794,7 @@
   renderProgress();
   showAdStep(1);
   startSession();
+  loadBanners();
   ensureNetworkLoaded(AD_CONFIG.sequence[0]).catch(() => {});
   } // end initViewer
 

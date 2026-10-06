@@ -61,6 +61,10 @@ from models import (
     AdminStatus,
     AdNetwork,
     AdNetworkSetting,
+    BannerMode,
+    BannerSetting,
+    BannerSource,
+    CustomAd,
     ApiKey,
     Category,
     CountedStatus,
@@ -118,6 +122,8 @@ class Storage:
         self.cpm_setting: CPMSetting = CPMSetting()
         self.policy_setting: PolicySetting = PolicySetting()
         self.ad_network_setting: AdNetworkSetting = AdNetworkSetting()
+        self.banner_setting: BannerSetting = BannerSetting()
+        self.custom_ads: Dict[str, CustomAd] = {}
         self.cpm_history: List[CPMHistoryEntry] = []
         self.api_keys: Dict[str, ApiKey] = {}
 
@@ -212,6 +218,22 @@ class Storage:
             # back to the three-Adsgram-slots default until the Owner
             # saves something from the panel's Ad Networks tab.
             self.ad_network_setting = AdNetworkSetting()
+
+        # Banner slots + custom ads: both tables are optional (see
+        # supabase_banners.sql) — a missing table just means "no banners yet".
+        try:
+            banner_res = await self.client.table("banner_settings").select("*").eq("id", 1).execute()
+            if banner_res.data:
+                b_row = dict(banner_res.data[0])
+                b_row.pop("id", None)
+                self.banner_setting = BannerSetting(**b_row)
+        except Exception as exc:
+            if "PGRST205" in str(exc) or "Could not find the table" in str(exc):
+                logger.warning("Supabase table 'banner_settings' doesn't exist yet — banners stay off until supabase_banners.sql is run")
+            else:
+                raise
+        custom_ads_res = await self._select_or_empty("custom_ads", "ad_id")
+        self.custom_ads = {row["ad_id"]: CustomAd(**row) for row in custom_ads_res.data}
 
         self.cpm_history = [CPMHistoryEntry(**row) for row in cpm_history_res.data]
         self.api_keys = {row["key_id"]: ApiKey(**row) for row in api_keys_res.data}
@@ -403,6 +425,8 @@ class Storage:
         policy_setting_row = {"id": 1, **self.policy_setting.model_dump(mode="json")}
         ad_network_setting_row = {"id": 1, **self.ad_network_setting.model_dump(mode="json")}
         cpm_history_rows = [e.model_dump(mode="json") for e in self.cpm_history]
+        banner_setting_row = {"id": 1, **self.banner_setting.model_dump(mode="json")}
+        custom_ad_rows = [a.model_dump(mode="json") for a in self.custom_ads.values()]
         api_key_rows = [k.model_dump(mode="json") for k in self.api_keys.values()]
 
         await self._flush_table("admins", admin_rows, "telegram_id")
@@ -414,6 +438,8 @@ class Storage:
         await self._flush_table("cpm_settings", [cpm_setting_row], "id")
         await self._flush_table("policy_settings", [policy_setting_row], "id")
         await self._flush_table("ad_network_settings", [ad_network_setting_row], "id")
+        await self._flush_table("banner_settings", [banner_setting_row], "id", tolerate_missing_table=True)
+        await self._flush_table("custom_ads", custom_ad_rows, "ad_id", tolerate_missing_table=True)
         await self._flush_table("cpm_history", cpm_history_rows, "entry_id")
         await self._flush_table("api_keys", api_key_rows, "key_id", tolerate_missing_table=True)
 
@@ -1554,6 +1580,141 @@ class Storage:
     # Same single-row pattern as CPMSetting/PolicySetting above. Bounded
     # by MIN_AD_COUNT/MAX_AD_COUNT below since a slot sequence longer
     # than the max possible Link.ad_count could never be fully reached.
+
+    # ------------------------------------------------------------------
+    # Viewer-page banner slots + the Owner's custom ads
+    # ------------------------------------------------------------------
+    BANNER_SLOTS = ("header", "footer")
+    MAX_CUSTOM_ADS = 50
+    MAX_ADSTERRA_CODE_CHARS = 6000
+
+    def _slot_fields(self, slot: str) -> tuple[str, str, str, str]:
+        return (f"{slot}_source", f"{slot}_mode", f"{slot}_pinned_ad_id", f"{slot}_adsterra_code")
+
+    def _eligible_ads(self, slot: str) -> List[CustomAd]:
+        return [a for a in self.custom_ads.values() if a.active and a.slot in (slot, "both")]
+
+    async def get_banner_setting(self) -> BannerSetting:
+        return self.banner_setting
+
+    async def list_custom_ads(self) -> List[CustomAd]:
+        return sorted(self.custom_ads.values(), key=lambda a: a.created_at)
+
+    async def update_banner_slot(
+        self,
+        slot: str,
+        *,
+        source: BannerSource,
+        mode: BannerMode,
+        pinned_ad_id: Optional[str],
+        adsterra_code: str,
+        updated_by: Optional[int] = None,
+    ) -> BannerSetting:
+        if slot not in self.BANNER_SLOTS:
+            raise ValueError("slot must be header or footer")
+        code = (adsterra_code or "").strip()
+        if len(code) > self.MAX_ADSTERRA_CODE_CHARS:
+            raise ValueError("Adsterra code is too long")
+        if source == BannerSource.ADSTERRA and not code:
+            raise ValueError("Paste the Adsterra banner code first")
+        async with self._lock:
+            if pinned_ad_id and pinned_ad_id not in self.custom_ads:
+                raise ValueError("pinned ad not found")
+            f_source, f_mode, f_pin, f_code = self._slot_fields(slot)
+            bs = self.banner_setting
+            setattr(bs, f_source, source)
+            setattr(bs, f_mode, mode)
+            setattr(bs, f_pin, pinned_ad_id or None)
+            setattr(bs, f_code, code)
+            bs.updated_at = now_iso()
+            bs.updated_by = updated_by
+            await self._save_locked()
+            return bs
+
+    async def create_custom_ad(self, *, title: str, image_url: str, link_url: str, slot: str, active: bool = True) -> CustomAd:
+        if slot not in ("header", "footer", "both"):
+            raise ValueError("slot must be header, footer or both")
+        async with self._lock:
+            if len(self.custom_ads) >= self.MAX_CUSTOM_ADS:
+                raise ValueError(f"You can have at most {self.MAX_CUSTOM_ADS} custom ads")
+            ad = CustomAd(title=title, image_url=image_url, link_url=link_url, slot=slot, active=active)
+            self.custom_ads[ad.ad_id] = ad
+            await self._save_locked()
+            return ad
+
+    async def update_custom_ad(self, ad_id: str, **fields) -> Optional[CustomAd]:
+        allowed = {"title", "image_url", "link_url", "slot", "active"}
+        async with self._lock:
+            ad = self.custom_ads.get(ad_id)
+            if not ad:
+                return None
+            if "slot" in fields and fields["slot"] not in ("header", "footer", "both"):
+                raise ValueError("slot must be header, footer or both")
+            for k, v in fields.items():
+                if k in allowed and v is not None:
+                    setattr(ad, k, v)
+            await self._save_locked()
+            return ad
+
+    async def delete_custom_ad(self, ad_id: str) -> bool:
+        async with self._lock:
+            if ad_id not in self.custom_ads:
+                return False
+            del self.custom_ads[ad_id]
+            # A slot pinned to the deleted ad falls back to "first active ad".
+            bs = self.banner_setting
+            for slot in self.BANNER_SLOTS:
+                if getattr(bs, f"{slot}_pinned_ad_id") == ad_id:
+                    setattr(bs, f"{slot}_pinned_ad_id", None)
+            await self._save_locked()
+            return True
+
+    async def pick_banner(self, slot: str, last_ad_id: Optional[str] = None) -> Optional[dict]:
+        """What the viewer page should show in `slot` right now, or None
+        (slot hidden). Rotating slots never repeat `last_ad_id` — the ad
+        this same viewer saw last time — unless it's the only active ad."""
+        if slot not in self.BANNER_SLOTS:
+            return None
+        bs = self.banner_setting
+        f_source, f_mode, f_pin, f_code = self._slot_fields(slot)
+        source = getattr(bs, f_source)
+        if source == BannerSource.ADSTERRA:
+            return {"type": "adsterra"} if getattr(bs, f_code).strip() else None
+        if source != BannerSource.CUSTOM:
+            return None
+        eligible = self._eligible_ads(slot)
+        if not eligible:
+            return None
+        if getattr(bs, f_mode) == BannerMode.SINGLE:
+            pinned = getattr(bs, f_pin)
+            ad = next((a for a in eligible if a.ad_id == pinned), None) or sorted(eligible, key=lambda a: a.created_at)[0]
+        else:
+            pool = [a for a in eligible if a.ad_id != last_ad_id] if len(eligible) > 1 else eligible
+            ad = secrets.choice(pool)
+        return {"type": "custom", "ad": ad}
+
+    async def get_adsterra_code(self, slot: str) -> Optional[str]:
+        if slot not in self.BANNER_SLOTS:
+            return None
+        bs = self.banner_setting
+        f_source, _, _, f_code = self._slot_fields(slot)
+        code = getattr(bs, f_code).strip()
+        return code if getattr(bs, f_source) == BannerSource.ADSTERRA and code else None
+
+    async def record_banner_event(self, ad_id: str, event: str) -> bool:
+        """Counts one view or click on a custom ad (reporting only)."""
+        if event not in ("view", "click"):
+            return False
+        async with self._lock:
+            ad = self.custom_ads.get(ad_id)
+            if not ad:
+                return False
+            if event == "view":
+                ad.view_count += 1
+            else:
+                ad.click_count += 1
+            await self._save_locked()
+            return True
 
     async def get_ad_network_setting(self) -> AdNetworkSetting:
         return self.ad_network_setting

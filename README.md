@@ -828,3 +828,25 @@ never contains the bKash/Nagad number, the Admin's @username, or their Telegram 
 nobody can message an Admin from the group. Leave the variable empty to turn the feature off. If the post
 fails (e.g. the bot isn't in the group), the payout still goes through and the panel
 shows a warning.
+
+## Viewer-page banners (header + footer) and custom ads
+
+The page a viewer sees while unlocking a link has two banner slots, one above and one
+below the unlock dial. In the Owner panel go to **Settings → Ads**, scroll to **Banner
+slots**, and set each slot to **Off**, **Adsterra**, or **Custom ads**:
+
+- **Adsterra:** paste the full 320×50 banner code from your Adsterra dashboard. It is shown
+  inside a sandboxed frame served from this app (`/banner-frame/header|footer`), so it can
+  run its scripts and open ad links but cannot read the viewer page. Adsterra only serves
+  ads to domains approved in your Adsterra account, so approve this app's domain there.
+  Adsterra's own views/clicks are in Adsterra's dashboard, not here.
+- **Custom ads:** add as many as you like (image URL — best 640×100 px —, optional title,
+  redirect link, and Header / Footer / both). Per slot choose **One ad** (always the pinned
+  one) or **Rotate** (a different active ad each time; one viewer never sees the same ad
+  twice in a row). Each ad keeps its own view and click counters.
+
+Banners are display-only: showing or tapping one never counts as an ad view and never
+changes anyone's income. A slot with nothing to show disappears completely.
+
+**One-time database step:** run `supabase_banners.sql` in Supabase → SQL Editor. Until you
+do, the app works exactly as before; banners just stay off and custom ads can't be saved.

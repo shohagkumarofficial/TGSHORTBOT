@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import time
 import html
 import json
 import logging
@@ -47,6 +48,8 @@ from models import (
     AdminStatus,
     AdNetwork,
     AdNetworkSetting,
+    BannerMode,
+    BannerSource,
     CountedStatus,
     CPMMode,
     CPMSetting,
@@ -1040,6 +1043,182 @@ async def admin_update_ad_networks(payload: dict, owner: Admin = Depends(require
         updated_by=owner.telegram_id,
     )
     return ans.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Viewer-page banners: a header and a footer slot around the unlock dial.
+# Each slot shows nothing, an Adsterra 320x50 banner (the Owner's pasted
+# embed code, served inside a sandboxed frame), or the Owner's own custom
+# ads. Counting views/clicks is reporting only — it never touches income.
+# ---------------------------------------------------------------------------
+
+def _clean_http_url(raw, field: str, max_len: int = 1000) -> str:
+    value = str(raw or "").strip()
+    if not value or len(value) > max_len:
+        raise HTTPException(status_code=400, detail=f"{field} is required (max {max_len} characters)")
+    if not value.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail=f"{field} must start with http:// or https://")
+    return value
+
+
+def _custom_ad_json(ad) -> dict:
+    return ad.model_dump()
+
+
+@app.get("/api/admin/banners")
+async def admin_get_banners(owner: Admin = Depends(require_owner)):
+    return {
+        "setting": (await storage.get_banner_setting()).model_dump(),
+        "ads": [_custom_ad_json(a) for a in await storage.list_custom_ads()],
+    }
+
+
+@app.post("/api/admin/banners/slot")
+async def admin_save_banner_slot(payload: dict, owner: Admin = Depends(require_owner)):
+    slot = str(payload.get("slot") or "")
+    try:
+        source = BannerSource(payload.get("source"))
+        mode = BannerMode(payload.get("mode") or "rotate")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid source or mode")
+    try:
+        bs = await storage.update_banner_slot(
+            slot,
+            source=source,
+            mode=mode,
+            pinned_ad_id=payload.get("pinned_ad_id") or None,
+            adsterra_code=str(payload.get("adsterra_code") or ""),
+            updated_by=owner.telegram_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return bs.model_dump()
+
+
+@app.post("/api/admin/custom-ads")
+async def admin_create_custom_ad(payload: dict, owner: Admin = Depends(require_owner)):
+    try:
+        ad = await storage.create_custom_ad(
+            title=str(payload.get("title") or "").strip()[:60],
+            image_url=_clean_http_url(payload.get("image_url"), "Image URL"),
+            link_url=_clean_http_url(payload.get("link_url"), "Redirect link"),
+            slot=str(payload.get("slot") or "header"),
+            active=bool(payload.get("active", True)),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _custom_ad_json(ad)
+
+
+@app.post("/api/admin/custom-ads/{ad_id}")
+async def admin_update_custom_ad(ad_id: str, payload: dict, owner: Admin = Depends(require_owner)):
+    fields: dict = {}
+    if "title" in payload:
+        fields["title"] = str(payload.get("title") or "").strip()[:60]
+    if "image_url" in payload:
+        fields["image_url"] = _clean_http_url(payload.get("image_url"), "Image URL")
+    if "link_url" in payload:
+        fields["link_url"] = _clean_http_url(payload.get("link_url"), "Redirect link")
+    if "slot" in payload:
+        fields["slot"] = str(payload.get("slot"))
+    if "active" in payload:
+        fields["active"] = bool(payload.get("active"))
+    try:
+        ad = await storage.update_custom_ad(ad_id, **fields)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ad:
+        raise HTTPException(status_code=404, detail="ad not found")
+    return _custom_ad_json(ad)
+
+
+@app.delete("/api/admin/custom-ads/{ad_id}")
+async def admin_delete_custom_ad(ad_id: str, owner: Admin = Depends(require_owner)):
+    if not await storage.delete_custom_ad(ad_id):
+        raise HTTPException(status_code=404, detail="ad not found")
+    return {"ok": True}
+
+
+@app.get("/api/banners")
+async def viewer_banners(
+    last_header: str = "",
+    last_footer: str = "",
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    """What the viewer page puts in its two banner slots. `last_*` is the
+    ad this viewer saw last time (kept in their own browser) so rotating
+    slots never repeat it back to back."""
+    await _extract_user(x_telegram_init_data)
+    out: dict = {}
+    for slot, last in (("header", last_header), ("footer", last_footer)):
+        picked = await storage.pick_banner(slot, last or None)
+        if not picked:
+            out[slot] = None
+        elif picked["type"] == "adsterra":
+            out[slot] = {"type": "adsterra", "frame_url": f"/banner-frame/{slot}"}
+        else:
+            ad = picked["ad"]
+            out[slot] = {
+                "type": "custom",
+                "ad_id": ad.ad_id,
+                "title": ad.title,
+                "image_url": ad.image_url,
+                "link_url": ad.link_url,
+            }
+    return out
+
+
+_banner_event_seen: dict[tuple[int, str, str], float] = {}
+
+
+@app.post("/api/banner-event")
+async def banner_event(
+    payload: dict,
+    x_telegram_init_data: Optional[str] = Header(default=None, alias="X-Telegram-Init-Data"),
+):
+    """Counts a custom-ad view or click. The same viewer repeating the
+    same event on the same ad within a short window is ignored."""
+    user = await _extract_user(x_telegram_init_data)
+    ad_id = str(payload.get("ad_id") or "")
+    event = str(payload.get("event") or "")
+    if event not in ("view", "click") or not ad_id:
+        raise HTTPException(status_code=400, detail="ad_id and event (view|click) required")
+    now = time.time()
+    key = (user["id"], ad_id, event)
+    if now - _banner_event_seen.get(key, 0) < (20 if event == "click" else 45):
+        return {"ok": True, "counted": False}
+    if len(_banner_event_seen) > 5000:
+        for k in [k for k, t in _banner_event_seen.items() if now - t > 120]:
+            _banner_event_seen.pop(k, None)
+    _banner_event_seen[key] = now
+    counted = await storage.record_banner_event(ad_id, event)
+    return {"ok": True, "counted": counted}
+
+
+@app.get("/banner-frame/{slot}")
+async def banner_frame(slot: str):
+    """The Owner's pasted Adsterra banner code, wrapped in a minimal page
+    for viewer.html to show in an <iframe>. The `sandbox` CSP below is
+    enforced by the browser even if someone opens this URL directly: the
+    code can run scripts and open ad links in a new tab, but gets an
+    opaque origin, so it can't read the viewer page or anyone's session."""
+    code = await storage.get_adsterra_code(slot)
+    if not code:
+        raise HTTPException(status_code=404, detail="no banner")
+    page = (
+        '<!doctype html><html><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        "<style>html,body{margin:0;padding:0;background:transparent;overflow:hidden;"
+        "display:flex;justify-content:center}</style></head><body>" + code + "</body></html>"
+    )
+    return HTMLResponse(
+        page,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

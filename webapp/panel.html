@@ -427,6 +427,17 @@
   .nav-item{ position:relative; }
   .nav-badge{ position:absolute; top:1px; left:calc(50% + 6px); background: var(--red); color:#fff; font-size:10px; font-weight:700; min-width:16px; height:16px; border-radius:999px; display:flex; align-items:center; justify-content:center; padding:0 4px; }
   .pd-sec[hidden]{ display:none; }
+  .ad-row{ display:flex; gap:12px; align-items:flex-start; padding:12px 0; }
+  .ad-row + .ad-row{ border-top:1px solid var(--hairline); }
+  .ad-thumb{ width:112px; aspect-ratio:32/5; border-radius:6px; object-fit:cover; background: var(--panel-raised); border:1px solid var(--hairline); flex:none; }
+  .ad-ph{ width:112px; aspect-ratio:32/5; border-radius:6px; border:1px dashed var(--hairline); display:flex; align-items:center; justify-content:center; font-size:9.5px; color: var(--text-faint); flex:none; text-align:center; }
+  .ad-meta{ flex:1; min-width:0; }
+  .ad-meta .t{ font-weight:600; font-size:14px; word-break:break-word; }
+  .ad-meta .u{ font-size:11.5px; color: var(--text-dim); word-break:break-all; }
+  .ad-stats{ display:flex; gap:14px; font-size:11.5px; color: var(--text-dim); margin-top:5px; }
+  .ad-stats b{ color: var(--text); }
+  .pill.slot{ background: var(--violet-soft); color: var(--violet); }
+  textarea.code{ width:100%; min-height:96px; font-family: ui-monospace, Menlo, monospace; font-size:11.5px; background: var(--bg); color: var(--text); border:1px solid var(--hairline); border-radius:10px; padding:10px; resize:vertical; }
   #pdTabs .tab-btn{ flex:1; padding:8px 6px; text-align:center; font-size:12.5px; }
   /* The old top-right Settings drawer is replaced by the bottom-nav Settings tab. */
   .drawer, .drawer-backdrop, .menu-btn{ display:none !important; }
@@ -608,6 +619,10 @@
   // everywhere in this dashboard for a cleaner, more consistent look) ---
 
   const ICON_PATHS = {
+    repeat: '<path d="m17 2 4 4-4 4"></path><path d="M3 11v-1a4 4 0 0 1 4-4h14"></path><path d="m7 22-4-4 4-4"></path><path d="M21 13v1a4 4 0 0 1-4 4H3"></path>',
+    shuffle: '<path d="M2 18h1.4c1.3 0 2.5-.6 3.3-1.7l6.1-8.6c.7-1.1 2-1.7 3.3-1.7H22"></path><path d="m18 2 4 4-4 4"></path><path d="M2 6h1.9c1.5 0 2.9.9 3.6 2.2"></path><path d="M22 18h-5.9c-1.3 0-2.6-.7-3.3-1.8l-.5-.8"></path><path d="m18 14 4 4-4 4"></path>',
+    plus: '<line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>',
+    image: '<rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline>',
     home: '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline>',
     scissors: '<circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><line x1="20" y1="4" x2="8.12" y2="15.88"></line><line x1="14.47" y1="14.48" x2="20" y2="20"></line><line x1="8.12" y1="8.12" x2="12" y2="12"></line>',
     play: '<polygon points="5 3 19 12 5 21 5 3"></polygon>',
@@ -1905,9 +1920,173 @@
   // with the delay-between-ads card underneath (it used to live on the
   // CPM page).
   async function renderAdsPage(el) {
-    el.innerHTML = `<div id="adsMain"></div><div id="adsDelay"></div>`;
+    el.innerHTML = `<div id="adsMain"></div><div id="adsDelay"></div><div id="adsBanners"></div>`;
     await renderAdNetworks(el.querySelector("#adsMain"));
     await renderCpm(el.querySelector("#adsDelay"), "ads");
+    await renderBanners(el.querySelector("#adsBanners"));
+  }
+
+  // ---- Viewer-page banners: header + footer slots and custom ads ---------
+  // `bn` keeps the unsaved edits to each slot card while the Owner switches
+  // between Off / Adsterra / Custom, until they press Save.
+  let bn = null;
+  async function renderBanners(el) {
+    if (!bn || bn.reload) {
+      const data = await api("/api/admin/banners");
+      bn = { setting: data.setting, ads: data.ads, draft: {}, reload: false };
+      ["header", "footer"].forEach((slot) => {
+        bn.draft[slot] = {
+          source: data.setting[slot + "_source"],
+          mode: data.setting[slot + "_mode"],
+          pinned: data.setting[slot + "_pinned_ad_id"] || "",
+          code: data.setting[slot + "_adsterra_code"] || "",
+        };
+      });
+    }
+    const eligible = (slot) => bn.ads.filter((a) => a.active && (a.slot === slot || a.slot === "both"));
+    const pct = (c, v) => (v ? ((c / v) * 100).toFixed(1) + "%" : "—");
+    const segBtns = (slot, key, opts) => opts.map(([v, label, ic]) =>
+      `<button class="tab-btn${bn.draft[slot][key] === v ? " active" : ""}" data-slot="${slot}" data-key="${key}" data-val="${v}">${ic ? icon(ic, 14) + " " : ""}${label}</button>`
+    ).join("");
+
+    function slotCard(slot) {
+      const d = bn.draft[slot], isH = slot === "header", name = isH ? "Header" : "Footer", el2 = eligible(slot);
+      let body = "";
+      if (d.source === "off") {
+        body = `<div class="meta">Nothing is shown here, and no empty space is left on the page.</div>`;
+      } else if (d.source === "adsterra") {
+        body = `
+          <label>Adsterra banner code (320×50)</label>
+          <textarea class="code" data-code="${slot}" spellcheck="false">${esc(d.code)}</textarea>
+          <div class="meta">Paste the full code from Adsterra → Banner → 320×50. It runs in an isolated frame served from your own domain, so it can't touch the rest of the page. Views and clicks are shown in your Adsterra dashboard, not here.</div>`;
+      } else {
+        const pinnedOk = el2.find((a) => a.ad_id === d.pinned) || el2[0];
+        body = `<label>Which ad to show</label>
+          <div class="tabs" style="margin:6px 0 10px;">${segBtns(slot, "mode", [["single", "One ad", "repeat"], ["rotate", "Rotate", "shuffle"]])}</div>`;
+        if (!el2.length) {
+          body += `<div class="meta" style="color:var(--red);">No active custom ad is assigned to the ${name.toLowerCase()} slot — the slot stays hidden. Add one below.</div>`;
+        } else if (d.mode === "single") {
+          body += `<label>Pinned ad</label><select data-pin="${slot}">${el2.map((a) => `<option value="${a.ad_id}"${pinnedOk.ad_id === a.ad_id ? " selected" : ""}>${esc(a.title || a.link_url)}</option>`).join("")}</select>
+            <div class="meta">This ad is always shown here until you change it.</div>`;
+        } else {
+          body += `<div class="meta">${el2.length} active ${el2.length === 1 ? "ad" : "ads"} in rotation: ${el2.map((a) => esc(a.title || a.link_url)).join(" · ")}. A viewer never sees the same ad twice in a row.</div>`;
+        }
+      }
+      return `<div class="card">
+        <h3>${icon("layers", 15)} ${name} banner</h3>
+        <div class="meta">Shown ${isH ? "at the top" : "at the bottom"} of the page a viewer sees while unlocking a link.</div>
+        <div class="tabs" style="margin:10px 0 8px;">${segBtns(slot, "source", [["off", "Off"], ["adsterra", "Adsterra"], ["custom", "Custom ads"]])}</div>
+        ${body}
+        <div class="btn-row"><button class="btn btn-primary btn-block" data-save-slot="${slot}">Save ${name.toLowerCase()} banner</button></div>
+      </div>`;
+    }
+
+    const totalV = bn.ads.reduce((n, a) => n + a.view_count, 0), totalC = bn.ads.reduce((n, a) => n + a.click_count, 0);
+    const slotName = (s) => (s === "both" ? "Header + Footer" : s === "header" ? "Header" : "Footer");
+    el.innerHTML = `
+      <div class="section-title" style="margin-top:6px;">Banner slots · 320×50</div>
+      ${slotCard("header")}${slotCard("footer")}
+      <div class="section-title">Custom ads</div>
+      <div class="card">
+        <div class="row-between"><h3>${icon("image", 15)} Custom ads</h3><button class="btn btn-primary btn-sm" id="bnAdd">${icon("plus", 13)} Add</button></div>
+        <div class="meta">Your own banners. Views and clicks are counted here and never change anyone's earnings.</div>
+        <div class="ad-stats" style="margin:8px 0 2px;"><span>Total views <b>${totalV}</b></span><span>Clicks <b>${totalC}</b></span><span>CTR <b>${pct(totalC, totalV)}</b></span></div>
+        ${bn.ads.length ? bn.ads.map((a) => `
+          <div class="ad-row">
+            <div><img class="ad-thumb" src="${esc(a.image_url)}" alt="" data-thumb></div>
+            <div class="ad-meta">
+              <div class="t">${esc(a.title || "(no title)")}</div>
+              <div class="u">${esc(a.link_url)}</div>
+              <div style="margin-top:5px;"><span class="pill slot">${slotName(a.slot)}</span> <span class="pill ${a.active ? "active" : "banned"}">${a.active ? "active" : "paused"}</span></div>
+              <div class="ad-stats"><span>Views <b>${a.view_count}</b></span><span>Clicks <b>${a.click_count}</b></span><span>CTR <b>${pct(a.click_count, a.view_count)}</b></span></div>
+              <div class="btn-row" style="margin-top:8px; flex-wrap:wrap;">
+                <button class="btn btn-outline btn-sm" data-toggle="${a.ad_id}">${a.active ? "Pause" : "Resume"}</button>
+                <button class="btn btn-outline btn-sm" data-edit="${a.ad_id}">${icon("edit", 13)} Edit</button>
+                <button class="btn btn-outline btn-sm" data-del="${a.ad_id}">${icon("trash", 13)} Delete</button>
+              </div>
+            </div>
+          </div>`).join("") : `<div class="empty">No custom ads yet — add your first one.</div>`}
+      </div>`;
+
+    const redraw = () => renderBanners(el);
+    el.querySelectorAll("img[data-thumb]").forEach((img) => {
+      img.addEventListener("error", () => { img.outerHTML = `<div class="ad-ph">no preview</div>`; });
+    });
+    el.querySelectorAll(".tab-btn[data-slot]").forEach((b) => b.addEventListener("click", () => {
+      bn.draft[b.dataset.slot][b.dataset.key] = b.dataset.val;
+      redraw();
+    }));
+    el.querySelectorAll("textarea[data-code]").forEach((t) => t.addEventListener("input", () => { bn.draft[t.dataset.code].code = t.value; }));
+    el.querySelectorAll("select[data-pin]").forEach((s) => s.addEventListener("change", () => { bn.draft[s.dataset.pin].pinned = s.value; }));
+    el.querySelectorAll("[data-save-slot]").forEach((b) => b.addEventListener("click", async () => {
+      const slot = b.dataset.saveSlot, d = bn.draft[slot];
+      const el2 = eligible(slot);
+      const pinned = d.mode === "single" ? ((el2.find((a) => a.ad_id === d.pinned) || el2[0] || {}).ad_id || "") : "";
+      b.disabled = true;
+      try {
+        await api("/api/admin/banners/slot", { method: "POST", body: JSON.stringify({ slot, source: d.source, mode: d.mode, pinned_ad_id: pinned, adsterra_code: d.code }) });
+        toast((slot === "header" ? "Header" : "Footer") + " banner saved", "ok");
+        bn.reload = true; redraw();
+      } catch (e) { toast(e.message, "err"); b.disabled = false; }
+    }));
+    el.querySelector("#bnAdd").addEventListener("click", () => adForm(null));
+    el.querySelectorAll("[data-edit]").forEach((b) => b.addEventListener("click", () => adForm(bn.ads.find((a) => a.ad_id === b.dataset.edit))));
+    el.querySelectorAll("[data-toggle]").forEach((b) => b.addEventListener("click", async () => {
+      const ad = bn.ads.find((a) => a.ad_id === b.dataset.toggle);
+      try {
+        await api("/api/admin/custom-ads/" + ad.ad_id, { method: "POST", body: JSON.stringify({ active: !ad.active }) });
+        toast(ad.active ? "Ad paused" : "Ad resumed", "ok");
+        bn.reload = true; redraw();
+      } catch (e) { toast(e.message, "err"); }
+    }));
+    el.querySelectorAll("[data-del]").forEach((b) => b.addEventListener("click", async () => {
+      const ad = bn.ads.find((a) => a.ad_id === b.dataset.del);
+      const sure = await confirmAction({
+        iconName: "trash", danger: true, title: "Delete this ad?",
+        bodyHtml: `<div class="meta" style="color:var(--text); font-weight:600; margin-bottom:10px;">${esc(ad.title || ad.link_url)}</div>
+          <div class="meta">Its view and click counts are deleted with it. To keep them, pause the ad instead.</div>`,
+        confirmLabel: "Delete",
+      });
+      if (!sure) return;
+      try {
+        await api("/api/admin/custom-ads/" + ad.ad_id, { method: "DELETE" });
+        toast("Ad deleted", "ok");
+        bn.reload = true; redraw();
+      } catch (e) { toast(e.message, "err"); }
+    }));
+
+    function adForm(ad) {
+      openModal(`
+        <h3>${ad ? "Edit custom ad" : "Add custom ad"}</h3>
+        <label>Image URL</label>
+        <input type="text" id="bnImg" value="${esc(ad ? ad.image_url : "")}" placeholder="https://…/banner.png">
+        <div class="meta">Best size 640×100 px — the same shape as the 320×50 slot.</div>
+        <label>Title <span style="color:var(--text-faint); text-transform:none; letter-spacing:0;">(optional)</span></label>
+        <input type="text" id="bnTitle" maxlength="60" value="${esc(ad ? ad.title : "")}" placeholder="e.g. Eid Mega Sale">
+        <label>Redirect link</label>
+        <input type="text" id="bnLink" value="${esc(ad ? ad.link_url : "")}" placeholder="https://…">
+        <label>Show in</label>
+        <select id="bnSlot">${[["header", "Header"], ["footer", "Footer"], ["both", "Header + Footer"]].map(([v, l]) => `<option value="${v}"${(ad ? ad.slot : "header") === v ? " selected" : ""}>${l}</option>`).join("")}</select>
+        <div class="btn-row"><button class="btn btn-primary btn-block" id="bnSave">${ad ? "Save changes" : "Add ad"}</button></div>
+        <div class="btn-row"><button class="btn btn-outline btn-block" id="bnCancel">Cancel</button></div>`);
+      document.getElementById("bnCancel").addEventListener("click", closeModal);
+      document.getElementById("bnSave").addEventListener("click", async () => {
+        const body = {
+          image_url: document.getElementById("bnImg").value.trim(),
+          title: document.getElementById("bnTitle").value.trim(),
+          link_url: document.getElementById("bnLink").value.trim(),
+          slot: document.getElementById("bnSlot").value,
+        };
+        if (!/^https?:\/\//i.test(body.image_url)) { toast("Enter a valid image URL (http/https)", "err"); return; }
+        if (!/^https?:\/\//i.test(body.link_url)) { toast("Enter a valid redirect link (http/https)", "err"); return; }
+        try {
+          await api(ad ? "/api/admin/custom-ads/" + ad.ad_id : "/api/admin/custom-ads", { method: "POST", body: JSON.stringify(body) });
+          closeModal();
+          toast(ad ? "Ad updated" : "Ad added", "ok");
+          bn.reload = true; redraw();
+        } catch (e) { toast(e.message, "err"); }
+      });
+    }
   }
 
 

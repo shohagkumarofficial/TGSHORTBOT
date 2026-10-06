@@ -608,6 +608,62 @@ class PolicySetting(BaseModel):
     updated_by: Optional[int] = None
 
 
+class BannerSource(str, Enum):
+    OFF = "off"
+    ADSTERRA = "adsterra"
+    CUSTOM = "custom"
+
+
+class BannerMode(str, Enum):
+    SINGLE = "single"  # always the pinned ad
+    ROTATE = "rotate"  # a different active ad each time
+
+
+class BannerSetting(BaseModel):
+    """Single active record (same one-row pattern as AdNetworkSetting)
+    describing what the two banner slots on the viewer page show — the
+    "header" slot above the unlock dial and the "footer" slot below it.
+
+    A slot's `source` is Off, an Adsterra 320x50 banner (the Owner's pasted
+    embed code lives in `<slot>_adsterra_code`), or the Owner's own custom
+    ads (see CustomAd). For custom ads `mode` picks between always showing
+    one pinned ad (`<slot>_pinned_ad_id`) or rotating through every active
+    ad assigned to that slot.
+
+    Banners are display-only: showing or clicking them never touches any
+    Admin's views, income or balance.
+    """
+
+    header_source: BannerSource = BannerSource.OFF
+    header_mode: BannerMode = BannerMode.ROTATE
+    header_pinned_ad_id: Optional[str] = None
+    header_adsterra_code: str = ""
+    footer_source: BannerSource = BannerSource.OFF
+    footer_mode: BannerMode = BannerMode.ROTATE
+    footer_pinned_ad_id: Optional[str] = None
+    footer_adsterra_code: str = ""
+    updated_at: str = Field(default_factory=now_iso)
+    updated_by: Optional[int] = None
+
+
+class CustomAd(BaseModel):
+    """One of the Owner's own banner ads: an image the viewer sees, an
+    optional title (shown as a small "বিজ্ঞাপন · title" caption), and the
+    link opened when it is tapped. `slot` is "header", "footer" or "both".
+    `view_count` / `click_count` are plain counters for the Owner's own
+    reporting; they never affect anyone's earnings."""
+
+    ad_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
+    title: str = ""
+    image_url: str
+    link_url: str
+    slot: str = "header"
+    active: bool = True
+    view_count: int = 0
+    click_count: int = 0
+    created_at: str = Field(default_factory=now_iso)
+
+
 class CPMHistoryEntry(BaseModel):
     """Audit trail entry — every CPM change and payout event (NFR in
     Section 6)."""
