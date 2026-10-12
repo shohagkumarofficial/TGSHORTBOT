@@ -1,0 +1,175 @@
+import os
+import sys
+import time
+import threading
+import logging
+import requests
+import importlib.util
+from flask import Flask, jsonify
+# Load environment variables from .env file for local development if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# Thread placeholders for dynamic status tracking in health check
+shortener_thread = None
+web_thread = None
+approve_thread = None
+
+# ══════════════════════════════════════════════════
+#  লগিং সেটিংস
+# ══════════════════════════════════════════════════
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.FileHandler("main.log"), logging.StreamHandler()]
+)
+logger = logging.getLogger(__name__)
+
+logger.info("🎬 Initializing Unified Server for Shortener Bot & Web Bot...")
+
+# ══════════════════════════════════════════════════
+#  ডাইনামিক মডিউল ইমপোর্ট (ফোল্ডার নেমে স্পেস থাকার কারণে)
+# ══════════════════════════════════════════════════
+
+def load_module_from_path(module_name, file_paths):
+    """স্পেসযুক্ত ডিরেক্টরি থেকে পাইথন ফাইল ইমপোর্ট করার জন্য (মাল্টিপল পাথ সাপোর্টসহ)"""
+    import os
+    if isinstance(file_paths, str):
+        file_paths = [file_paths]
+        
+    selected_path = None
+    for p in file_paths:
+        if os.path.exists(p):
+            selected_path = p
+            break
+            
+    if not selected_path:
+        logger.error(f"❌ Failed to find module {module_name} in any of these paths: {file_paths}")
+        sys.exit(1)
+        
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, selected_path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        logger.info(f"✅ Successfully loaded module: {module_name} from {selected_path}")
+        return module
+    except Exception as e:
+        logger.error(f"❌ Failed to load module {module_name} from {selected_path}: {e}")
+        sys.exit(1)
+
+# Shortener Bot, Web Bot এবং Approve Bot মডিউল লোড করা
+shortenerbot = load_module_from_path("shortenerbot", ["Shortener bot/shortenerbot.py", "shortener bot/shortenerbot.py"])
+webbot = load_module_from_path("webbot", ["Web bot/webbot.py", "web bot/webbot.py"])
+approvebot = load_module_from_path("approvebot", [
+    "APPROVE/telegram_bot.py",
+    "approve/telegram_bot.py",
+    "Approve/telegram_bot.py",
+    "APPROVE BOT/telegram_bot.py",
+    "APPROVE BOT/bot.py",
+    "APPROVE/bot.py",
+    "approve/bot.py",
+    "Approve/bot.py"
+])
+
+# ══════════════════════════════════════════════════
+#  Flask অ্যাপ কনফিগারেশন এবং ব্লুপ্রিন্ট রেজিস্ট্রেশন
+# ══════════════════════════════════════════════════
+
+app = Flask(__name__)
+
+# দুটি বটের Flask রাউটগুলোকে একটি সিঙ্গেল অ্যাপে রেজিস্টার করা
+app.register_blueprint(shortenerbot.shortener_bp)
+app.register_blueprint(webbot.webbot_bp)
+
+# রুট লেভেল হেলথ চেক রাউট
+@app.route('/global_health', methods=['GET'])
+def global_health():
+    status_shortener = "running" if (shortener_thread and shortener_thread.is_alive()) else "stopped"
+    status_web = "running" if (web_thread and web_thread.is_alive()) else "stopped"
+    status_approve = "running" if (approve_thread and approve_thread.is_alive()) else "stopped"
+    
+    is_healthy = status_shortener == "running" and status_web == "running" and status_approve == "running"
+    
+    return jsonify({
+        "status": "healthy" if is_healthy else "degraded",
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "bots": {
+            "shortener_bot": status_shortener,
+            "web_bot": status_web,
+            "approve_bot": status_approve
+        }
+    })
+
+# ══════════════════════════════════════════════════
+#  রেন্ডার কিপ-অ্যালাইভ (Render Keep-Alive)
+# ══════════════════════════════════════════════════
+
+PORT = int(os.environ.get('PORT', 8080))
+
+def keep_alive_worker():
+    """রেন্ডার ফ্রি হোস্টিং স্লিপিং এড়াতে প্রতি ১০ মিনিটে সেলফ-পিং করবে"""
+    time.sleep(20) # সার্ভার বুট হওয়ার জন্য অপেক্ষা
+    
+    # রেন্ডার স্বয়ংক্রিয়ভাবে RENDER_EXTERNAL_URL ভেরিয়েবল প্রদান করে
+    external_url = os.environ.get("RENDER_EXTERNAL_URL")
+    ping_url = f"{external_url}/global_health" if external_url else f"http://localhost:{PORT}/global_health"
+    
+    logger.info(f"🔄 Keep-Alive ping worker active. Target: {ping_url}")
+    
+    while True:
+        try:
+            # ১০ মিনিট (৬০০ সেকেন্ড) পর পর পিং করবে
+            r = requests.get(ping_url, timeout=10)
+            if r.status_code == 200:
+                logger.info("💓 Self keep-alive ping sent successfully.")
+            else:
+                logger.warning(f"⚠️ Self-ping status code: {r.status_code}")
+        except Exception as e:
+            logger.warning(f"⚠️ Self keep-alive ping failed: {e}")
+        time.sleep(600)
+
+# ══════════════════════════════════════════════════
+#  মেন রানার
+# ══════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    logger.info("🤖 Starting Telegram Bot polling threads...")
+    
+    shortener_token = os.environ.get("SHORTENER_BOT_TOKEN") or os.environ.get("BOT_TOKEN")
+    web_token = os.environ.get("WEBBOT_TOKEN")
+    approve_token = os.environ.get("APPROVE_BOT_TOKEN")
+
+    # ১. শর্টনার বটের পোলিং থ্রেড চালু করা
+    if shortener_token:
+        shortener_thread = threading.Thread(target=shortenerbot.run_bot, daemon=True)
+        shortener_thread.start()
+        logger.info("👉 Shortener Bot thread started.")
+    else:
+        logger.warning("⚠️ SHORTENER_BOT_TOKEN / BOT_TOKEN is not set!")
+    
+    # ২. ওয়েব বটের পোলিং থ্রেড চালু করা (টোকেন থাকলে এবং তা ভিন্ন হলে)
+    if web_token and web_token != shortener_token:
+        web_thread = threading.Thread(target=webbot.run_bot, daemon=True)
+        web_thread.start()
+        logger.info("👉 Web Bot thread started.")
+    else:
+        logger.info("ℹ️ Web Bot token is not configured or same as Shortener Bot. Separate polling skipped.")
+    
+    # ৩. অ্যাপ্রুভ বটের পোলিং থ্রেড চালু করা (টোকেন থাকলে এবং তা ভিন্ন হলে)
+    if approve_token and approve_token != shortener_token and approve_token != web_token:
+        approve_thread = threading.Thread(target=approvebot.run_bot, daemon=True)
+        approve_thread.start()
+        logger.info("👉 Approve Bot thread started.")
+    else:
+        logger.info("ℹ️ Approve Bot token is not configured or same as Shortener Bot. Separate polling skipped.")
+    
+    # ৪. সেলফ কিপ-অ্যালাইভ থ্রেড চালু করা
+    threading.Thread(target=keep_alive_worker, daemon=True).start()
+    
+    # ৫. Flask ওয়েব সার্ভার চালু করা ( Render এর রিকোয়েস্ট এক্সেপ্ট করার জন্য)
+    logger.info(f"🚀 Starting Unified Flask server on port {PORT}...")
+    app.run(host='0.0.0.0', port=PORT, debug=False)
